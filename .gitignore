@@ -1,7 +1,15 @@
 /target/
 /.env
 /*.db
+/*.db-shm
+/*.db-wal
 /*.db-journal
+/*.log
+/*.ps1
+/*.json
+/.cargo/
+/.github/workflows/
+/deny.toml
 /*.ogg
 /*.wav
 /data/
