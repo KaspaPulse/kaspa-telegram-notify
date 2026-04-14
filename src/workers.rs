@@ -95,19 +95,20 @@ fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                 }
                                 known.retain(|k| current_outpoints.contains(k));
 
+                                if new_rewards.is_empty() {
+                                    continue;
+                                }
+
+                                // 🕒 Enterprise Temporal Sorting via JoinSet
+                                let mut join_set = tokio::task::JoinSet::new();
+
                                 for (outp, tx_id, diff, daa_score, is_coinbase) in new_rewards {
-                                    let mut live_bal = 0.0;
-                                    if let Ok(live_utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr.clone()]).await {
-                                        live_bal = live_utxos.iter().map(|u| u.utxo_entry.amount as f64).sum::<f64>() / 1e8;
-                                    }
-
-                                    let header_emoji = if is_coinbase { "⚡ <b>Native Node Reward!</b> 💎" } else { "💸 <b>Incoming Transfer!</b> 💸" }.to_string();
-                                    let (f_tx, w_cl, bot_cl, rpc_cl) = (tx_id.clone(), wallet.clone(), bot.clone(), Arc::clone(&ctx.rpc));
-                                    let subs_cl = subs.clone();
-                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+                                    let (f_tx, w_cl, rpc_cl) = (tx_id.clone(), wallet.clone(), Arc::clone(&ctx.rpc));
                                     let pool_cl = ctx.pool.clone();
+                                    let addr_cl = addr.clone();
+                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
 
-                                    tokio::spawn(async move {
+                                    join_set.spawn(async move {
                                         let _p = permit;
                                         if is_coinbase {
                                             crate::state::record_mined_block(&pool_cl, &outp, &w_cl, diff, daa_score).await;
@@ -115,7 +116,11 @@ fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
 
                                         let (acc_block_hash, actual_mined_blocks, extracted_nonce, extracted_worker, block_time_ms) = analyze_block_payload(Arc::clone(&rpc_cl), f_tx.clone(), w_cl.clone(), daa_score, is_coinbase).await;
 
-                                        // 🕒 Formatting the EXACT Block Time with Milliseconds
+                                        let mut live_bal = 0.0;
+                                        if let Ok(live_utxos) = rpc_cl.get_utxos_by_addresses(vec![addr_cl]).await {
+                                            live_bal = live_utxos.iter().map(|u| u.utxo_entry.amount as f64).sum::<f64>() / 1e8;
+                                        }
+
                                         let time_str = if block_time_ms > 0 {
                                             if let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(block_time_ms as i64) {
                                                 dt.format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string()
@@ -126,6 +131,7 @@ fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                             Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string()
                                         };
 
+                                        let header_emoji = if is_coinbase { "⚡ <b>Native Node Reward!</b> 💎" } else { "💸 <b>Incoming Transfer!</b> 💸" }.to_string();
                                         let msg_type = if is_coinbase { "⛏️ Solo Mining Reward" } else { "💳 Normal Transfer" };
                                         let acc_block_str = if acc_block_hash.is_empty() { "<code>Not Found (Archived)</code>".to_string() } else { format_hash(&acc_block_hash, "blocks") };
                                         let mined_block_str = if !is_coinbase { "<code>N/A</code>".to_string() } else if actual_mined_blocks.is_empty() { "<code>Not Found (Unknown Miner)</code>".to_string() } else if actual_mined_blocks.len() == 1 { format_hash(&actual_mined_blocks[0], "blocks") } else {
@@ -140,12 +146,28 @@ fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                         } else { final_msg.push_str(&format!("<b>Type:</b> {}\n<b>Accepting Block:</b> {}\n", msg_type, acc_block_str)); }
                                         final_msg.push_str(&format!("<b>DAA Score:</b> <code>{}</code>\n</blockquote>", daa_score));
 
-                                        info!("💎 [BLOCK DISCOVERED] +{:.8} KAS for {}", diff, w_cl);
-                                        for user_id in subs_cl {
-                                            let _ = bot_cl.send_message(teloxide::types::ChatId(user_id), &final_msg).parse_mode(teloxide::types::ParseMode::Html).link_preview_options(teloxide::types::LinkPreviewOptions { is_disabled: true, url: None, prefer_small_media: false, prefer_large_media: false, show_above_text: false }).await;
-                                            sleep(Duration::from_millis(40)).await;
-                                        }
+                                        (block_time_ms, diff, w_cl, final_msg)
                                     });
+                                }
+
+                                // Wait for all parallel RPC calls to complete and collect results
+                                let mut sorted_messages = Vec::new();
+                                while let Some(res) = join_set.join_next().await {
+                                    if let Ok(data) = res {
+                                        sorted_messages.push(data);
+                                    }
+                                }
+
+                                // Sort the messages precisely by block_time_ms (Temporal Ascending)
+                                sorted_messages.sort_by_key(|(time, _, _, _)| *time);
+
+                                // Broadcast messages sequentially in perfectly sorted order
+                                for (_, diff, w_cl, final_msg) in sorted_messages {
+                                    info!("💎 [BLOCK DISCOVERED] +{:.8} KAS for {}", diff, w_cl);
+                                    for user_id in &subs {
+                                        let _ = bot.send_message(teloxide::types::ChatId(*user_id), &final_msg).parse_mode(teloxide::types::ParseMode::Html).link_preview_options(teloxide::types::LinkPreviewOptions { is_disabled: true, url: None, prefer_small_media: false, prefer_large_media: false, show_above_text: false }).await;
+                                        sleep(Duration::from_millis(40)).await;
+                                    }
                                 }
                             }
                         }

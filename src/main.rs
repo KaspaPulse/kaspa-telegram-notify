@@ -80,7 +80,7 @@ async fn main() -> Result<(), BotError> {
     let pool = crate::state::init_db().await?;
     let cancel_token = CancellationToken::new();
 
-    // FIX: Graceful Shutdown Registry - Provides a buffer for DB and Worker cleanup
+    // Graceful Shutdown Registry
     let pool_shutdown = pool.clone();
     let ct_ctrlc = cancel_token.clone();
     tokio::spawn(async move {
@@ -91,14 +91,12 @@ async fn main() -> Result<(), BotError> {
         ct_ctrlc.cancel();
         sleep(Duration::from_secs(2)).await;
         info!("[SYSTEM] Shutdown complete.");
+        std::process::exit(0);
     });
 
     let state = Arc::new(DashMap::new());
     let memory: crate::context::ContextMemory = Arc::new(DashMap::new());
     let rate_limiter = crate::context::AppContext::new_rate_limiter();
-
-    // Initialize AI RAG Knowledge Base
-    crate::rag::init_knowledge_base().await;
 
     // Migrate old wallets.json if it exists
     if let Ok(data) = fs::read_to_string("wallets.json").await {
@@ -127,12 +125,11 @@ async fn main() -> Result<(), BotError> {
     )
     .map_err(|e| BotError::RpcConnection(format!("Tunnel failed: {}", e)))?;
 
-    // The Global Context (Dependency Injection)
-    // Initialize Local AI Engine (Loads weights into memory ONCE)
-    info!("[INIT] Starting Local AI Engine... This may take a moment to load weights.");
-    let ai_engine = Arc::new(std::sync::Mutex::new(
+    // Initialize Cloud AI Engine (Instant Boot)
+    info!("[INIT] Starting Cloud Gemini AI Engine... (Instant Boot)");
+    let ai_engine = Arc::new(tokio::sync::Mutex::new(
         crate::ai::LocalAiEngine::new()
-            .expect("CRITICAL: Failed to load Local AI Engine. Check HuggingFace connection."),
+            .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."),
     ));
 
     let ctx = AppContext {
@@ -188,6 +185,7 @@ async fn main() -> Result<(), BotError> {
         .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
         .branch(Update::filter_message().endpoint(handlers::handle_raw_message_v2));
 
+    // Initialize AI RAG Knowledge Base
     crate::rag::init_knowledge_base().await;
     info!("🚀 Dispatcher is LIVE! Ready for users.");
 

@@ -351,7 +351,7 @@ async fn handle_blocks(
                     }
                 }
             }
-            text.push_str("\n");
+            text.push('\n');
         }
     }
     text.push_str(&format!(

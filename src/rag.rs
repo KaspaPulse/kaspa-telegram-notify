@@ -1,12 +1,11 @@
 #![allow(dead_code)]
-use candle_core::{Device, Tensor};
-use candle_nn::VarBuilder;
-use candle_transformers::models::bert::{BertModel, Config};
-use hf_hub::{api::sync::Api, Repo, RepoType};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, OnceLock};
-use tokenizers::Tokenizer;
+use serde_json::json;
+use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::fs;
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -17,66 +16,43 @@ pub struct Document {
     pub embedding: Option<Vec<f32>>,
 }
 
-pub struct LocalEmbedder {
-    pub model: BertModel,
-    pub tokenizer: Tokenizer,
-    pub device: Device,
+pub struct CloudEmbedder {
+    pub client: Client,
+    pub api_key: String,
 }
 
-impl LocalEmbedder {
+impl CloudEmbedder {
     pub fn new() -> anyhow::Result<Self> {
-        info!("[RAG] Initializing Local MiniLM Embedding Model...");
-        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
-
-        let api = Api::new()?;
-        let repo = api.repo(Repo::with_revision(
-            "sentence-transformers/all-MiniLM-L6-v2".to_string(),
-            RepoType::Model,
-            "main".to_string(),
-        ));
-
-        let config_path = repo.get("config.json")?;
-        let tokenizer_path = repo.get("tokenizer.json")?;
-        let weights_path = repo.get("model.safetensors")?;
-
-        let config: Config = serde_json::from_str(&std::fs::read_to_string(config_path)?)?;
-        let tokenizer = Tokenizer::from_file(tokenizer_path).map_err(anyhow::Error::msg)?;
-
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, &device)?
-        };
-        let model = BertModel::load(vb, &config)?;
-
-        info!("[RAG] MiniLM Model loaded successfully.");
+        info!("[RAG] Initializing Google Text-Embedding-004...");
+        let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
         Ok(Self {
-            model,
-            tokenizer,
-            device,
+            client: Client::new(),
+            api_key,
         })
     }
 
-    pub fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let tokens = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(anyhow::Error::msg)?;
-        let token_ids = tokens.get_ids();
+    pub async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
+            self.api_key
+        );
+        let body = json!({
+            "model": "models/text-embedding-004",
+            "content": { "parts": [{ "text": text }] }
+        });
 
-        let token_ids_tensor = Tensor::new(token_ids, &self.device)?.unsqueeze(0)?;
-        let token_type_ids = Tensor::zeros_like(&token_ids_tensor)?;
+        let res = self.client.post(&url).json(&body).send().await?;
+        let json_res: serde_json::Value = res.json().await?;
 
-        // Pass None for the attention_mask in standard forward passes
-        let embeddings = self
-            .model
-            .forward(&token_ids_tensor, &token_type_ids, None)?;
-
-        // Apply Mean Pooling to the embeddings
-        let sum_embeddings = embeddings.sum(1)?;
-        let seq_len = token_ids.len() as f64;
-        let mean_embeddings = (sum_embeddings / seq_len)?;
-
-        let vec: Vec<f32> = mean_embeddings.squeeze(0)?.to_vec1()?;
-        Ok(vec)
+        if let Some(values) = json_res["embedding"]["values"].as_array() {
+            let vec: Vec<f32> = values
+                .iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect();
+            Ok(vec)
+        } else {
+            Err(anyhow::anyhow!("Failed to extract embeddings"))
+        }
     }
 }
 
@@ -92,13 +68,13 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 static KNOWLEDGE_BASE: OnceLock<Vec<Document>> = OnceLock::new();
-static EMBEDDER: OnceLock<Arc<Mutex<LocalEmbedder>>> = OnceLock::new();
+static EMBEDDER: OnceLock<Arc<Mutex<CloudEmbedder>>> = OnceLock::new();
 
 pub async fn init_knowledge_base() {
-    if let Ok(embedder) = LocalEmbedder::new() {
+    if let Ok(embedder) = CloudEmbedder::new() {
         let _ = EMBEDDER.set(Arc::new(Mutex::new(embedder)));
     } else {
-        error!("[RAG] Failed to load local embedder model.");
+        error!("[RAG] Failed to load Cloud Embedder.");
         return;
     }
 
@@ -109,27 +85,27 @@ pub async fn init_knowledge_base() {
 
     let embedder_arc = EMBEDDER.get().unwrap().clone();
 
-    info!("[RAG] Generating vector embeddings for local knowledge base...");
+    info!("[RAG] Generating vector embeddings for knowledge base...");
+    let embedder = embedder_arc.lock().await;
     for doc in docs.iter_mut() {
-        let embedder = embedder_arc.lock().unwrap();
-        if let Ok(emb) = embedder.embed(&doc.content) {
+        if let Ok(emb) = embedder.embed(&doc.content).await {
             doc.embedding = Some(emb);
         }
     }
 
     let _ = KNOWLEDGE_BASE.set(docs);
-    info!("[RAG] Knowledge base initialized with local embeddings.");
+    info!("[RAG] Knowledge base initialized securely via Cloud.");
 }
 
-pub fn search_kaspa_docs(query: &str) -> String {
+pub async fn search_kaspa_docs(query: &str) -> String {
     let embedder_arc = match EMBEDDER.get() {
         Some(e) => e.clone(),
         None => return String::new(),
     };
 
     let query_embedding = {
-        let embedder = embedder_arc.lock().unwrap();
-        match embedder.embed(query) {
+        let embedder = embedder_arc.lock().await;
+        match embedder.embed(query).await {
             Ok(emb) => emb,
             Err(_) => return String::new(),
         }
@@ -149,20 +125,16 @@ pub fn search_kaspa_docs(query: &str) -> String {
         })
         .collect();
 
-    // Sort descending by relevance score
     scored_docs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Threshold for relevance (Ignore irrelevant search results)
     if scored_docs.is_empty() || scored_docs[0].1 < 0.2 {
         return "No highly relevant context found in local knowledge base.".to_string();
     }
 
-    // Grab the top 2 relevant documents
     let top_docs: Vec<String> = scored_docs
         .into_iter()
         .take(2)
         .map(|(d, _)| format!("Title: {}\nContent: {}", d.title, d.content))
         .collect();
-
     top_docs.join("\n\n")
 }
