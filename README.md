@@ -1,4 +1,4 @@
-﻿```markdown
+﻿```
 # 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
@@ -205,4 +205,3 @@ Engineering a zero-warning, highly concurrent Rust engine requires countless hou
 `kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g`
 
 *Built with absolute mathematical precision for the Kaspa ecosystem.*
-```
