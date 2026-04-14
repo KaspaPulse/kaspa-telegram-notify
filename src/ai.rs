@@ -32,7 +32,7 @@ impl LocalAiEngine {
         audio_bytes: Option<Vec<u8>>,
     ) -> anyhow::Result<String> {
         let rag_context = crate::rag::search_kaspa_docs(prompt).await;
-        
+
         let system_message = format!(
             "You are an uncompromisingly accurate Kaspa AI Assistant.
 [ABSOLUTE RULES]
@@ -86,7 +86,9 @@ impl LocalAiEngine {
             let json_res: serde_json::Value = res.json().await?;
 
             if status.is_success() {
-                if let Some(text) = json_res["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                if let Some(text) =
+                    json_res["candidates"][0]["content"]["parts"][0]["text"].as_str()
+                {
                     return Ok(text.trim().to_string());
                 } else {
                     tracing::error!("[GEMINI ERROR] Missing text in response: {}", json_res);
@@ -94,16 +96,25 @@ impl LocalAiEngine {
                 }
             } else if status.as_u16() == 503 || status.as_u16() == 429 {
                 attempts += 1;
-                tracing::warn!("⚠️ [API OVERLOAD] Google Servers busy ({}). Attempt {}/{}...", status, attempts, max_attempts);
+                tracing::warn!(
+                    "⚠️ [API OVERLOAD] Google Servers busy ({}). Attempt {}/{}...",
+                    status,
+                    attempts,
+                    max_attempts
+                );
                 tokio::time::sleep(tokio::time::Duration::from_secs(2 * attempts as u64)).await;
                 last_error = json_res.to_string();
                 continue;
             } else {
                 tracing::error!("[GEMINI ERROR] HTTP {}: {}", status, json_res);
-                return Err(anyhow::anyhow!("API Error {}: {}", status, json_res["error"]["message"].as_str().unwrap_or("Unknown")));
+                return Err(anyhow::anyhow!(
+                    "API Error {}: {}",
+                    status,
+                    json_res["error"]["message"].as_str().unwrap_or("Unknown")
+                ));
             }
         }
-        
+
         Err(anyhow::anyhow!("Google AI servers are currently overloaded. Please try again in a few minutes. (Failed after {} attempts). Details: {}", max_attempts, last_error))
     }
 }
@@ -120,7 +131,7 @@ pub async fn inject_live_wallet_context(chat_id: i64, ctx: &crate::context::AppC
             dag_info.virtual_daa_score
         ));
     }
-    
+
     let price = ctx.price_cache.read().await.0;
     if price > 0.0 {
         live_data.push_str(&format!("KAS Price: ${:.4} USD. \n", price));
@@ -132,13 +143,17 @@ pub async fn inject_live_wallet_context(chat_id: i64, ctx: &crate::context::AppC
         .filter(|e| e.value().contains(&chat_id))
         .map(|e| e.key().clone())
         .collect();
-        
+
     if !wallets.is_empty() {
         let mut total = 0.0;
         for w in &wallets {
             if let Ok(addr) = Address::try_from(w.as_str()) {
                 if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr]).await {
-                    total += utxos.iter().map(|u| u.utxo_entry.amount as f64).sum::<f64>() / 1e8;
+                    total += utxos
+                        .iter()
+                        .map(|u| u.utxo_entry.amount as f64)
+                        .sum::<f64>()
+                        / 1e8;
                 }
             }
         }
@@ -161,38 +176,59 @@ pub async fn process_conversational_intent(
     tracing::info!("🗣️ [USER ASKED]: {}", user_text);
 
     let initial_msg = bot
-        .send_message(chat_id, "⏳ <b>Kaspa AI:</b> Analyzing... (Gemini 2.5 Flash)")
+        .send_message(
+            chat_id,
+            "⏳ <b>Kaspa AI:</b> Analyzing... (Gemini 2.5 Flash)",
+        )
         .reply_parameters(teloxide::types::ReplyParameters::new(msg_id))
         .parse_mode(teloxide::types::ParseMode::Html)
         .await?;
 
     let engine_arc = ctx.ai_engine.clone();
-    
+
     let _ = sqlx::query("CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, role TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)").execute(&ctx.pool).await;
     let records: Result<Vec<(String, String)>, _> = sqlx::query_as("SELECT role, message FROM (SELECT role, message, timestamp FROM chat_history WHERE chat_id = ?1 ORDER BY id DESC LIMIT 6) ORDER BY id ASC").bind(chat_id.0).fetch_all(&ctx.pool).await;
-    
+
     let mut history_str = String::new();
     if let Ok(rows) = records {
         for (role, msg) in rows {
             history_str.push_str(&format!("{}: {}\n", role.to_uppercase(), msg));
         }
     }
-    
+
     let enriched_prompt = if history_str.is_empty() {
         user_text.clone()
     } else {
-        format!("[CONVERSATION HISTORY]\n{}\n\n[CURRENT QUESTION]\n{}", history_str, user_text)
+        format!(
+            "[CONVERSATION HISTORY]\n{}\n\n[CURRENT QUESTION]\n{}",
+            history_str, user_text
+        )
     };
 
     let live_ctx_data = inject_live_wallet_context(chat_id.0, &ctx).await;
     let user_text_for_db = user_text.clone();
-    
+
     let engine = engine_arc.lock().await;
-    let response = match engine.generate(&enriched_prompt, &live_ctx_data, None).await {
+    let response = match engine
+        .generate(&enriched_prompt, &live_ctx_data, None)
+        .await
+    {
         Ok(text) => {
             tracing::info!("🧠 [AI REPLIED]: {}", text);
-            let _ = sqlx::query("INSERT INTO chat_history (chat_id, role, message) VALUES (?1, 'user', ?2)").bind(chat_id.0).bind(&user_text_for_db).execute(&ctx.pool).await;
-            let _ = sqlx::query("INSERT INTO chat_history (chat_id, role, message) VALUES (?1, 'assistant', ?2)").bind(chat_id.0).bind(&text).execute(&ctx.pool).await;
+            let _ = sqlx::query(
+                "INSERT INTO chat_history (chat_id, role, message) VALUES (?1, 'user', ?2)",
+            )
+            .bind(chat_id.0)
+            .bind(&user_text_for_db)
+            .execute(&ctx.pool)
+            .await;
+            let _ = sqlx::query(
+                "INSERT INTO chat_history (chat_id, role, message) VALUES (?1, 'assistant', ?2)",
+            )
+            .bind(chat_id.0)
+            .bind(&text)
+            .execute(&ctx.pool)
+            .await;
             format!("🤖 <b>Kaspa AI:</b>\n{}", text)
         }
         Err(e) => {
@@ -201,7 +237,10 @@ pub async fn process_conversational_intent(
         }
     };
 
-    let _ = bot.edit_message_text(chat_id, initial_msg.id, response).parse_mode(teloxide::types::ParseMode::Html).await;
+    let _ = bot
+        .edit_message_text(chat_id, initial_msg.id, response)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
     Ok(())
 }
 
@@ -215,7 +254,10 @@ pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> a
     tracing::info!("🎙️ [USER SENT VOICE MESSAGE]");
 
     let initial_msg = bot
-        .send_message(chat_id, "⏳ <b>Kaspa AI:</b> Processing Audio with Gemini...")
+        .send_message(
+            chat_id,
+            "⏳ <b>Kaspa AI:</b> Processing Audio with Gemini...",
+        )
         .reply_parameters(teloxide::types::ReplyParameters::new(msg.id))
         .parse_mode(teloxide::types::ParseMode::Html)
         .await?;
@@ -227,18 +269,30 @@ pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> a
     let live_ctx_data = inject_live_wallet_context(chat_id.0, &ctx).await;
     let engine = ctx.ai_engine.lock().await;
 
-    let response = match engine.generate("Transcribe this audio precisely, then answer any questions asked in it.", &live_ctx_data, Some(audio_bytes)).await {
+    let response = match engine
+        .generate(
+            "Transcribe this audio precisely, then answer any questions asked in it.",
+            &live_ctx_data,
+            Some(audio_bytes),
+        )
+        .await
+    {
         Ok(reply) => {
             tracing::info!("🧠 [AI REPLIED TO VOICE]: {}", reply);
-            format!("🎙️ <b>Voice Analysis Complete</b>\n\n🤖 <b>Kaspa AI:</b>\n{}", reply)
-        },
+            format!(
+                "🎙️ <b>Voice Analysis Complete</b>\n\n🤖 <b>Kaspa AI:</b>\n{}",
+                reply
+            )
+        }
         Err(e) => {
             tracing::error!("⚠️ [VOICE ERROR]: {}", e);
             format!("⚠️ <b>Voice Error:</b>\n{}", e)
         }
     };
 
-    let _ = bot.edit_message_text(chat_id, initial_msg.id, response).parse_mode(teloxide::types::ParseMode::Html).await;
+    let _ = bot
+        .edit_message_text(chat_id, initial_msg.id, response)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
     Ok(())
 }
-
