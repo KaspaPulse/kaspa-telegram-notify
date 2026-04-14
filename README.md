@@ -97,6 +97,7 @@ ADMIN_ID=your_telegram_user_id
 WS_URL=ws://127.0.0.1:18110
 GEMINI_API_KEY=your_google_ai_studio_key_here
 RUST_LOG=info,kaspa_solo=debug
+---
 
 ---
 
