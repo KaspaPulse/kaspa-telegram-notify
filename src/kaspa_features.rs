@@ -1,4 +1,5 @@
-﻿use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+#![allow(dead_code)]
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
 pub fn main_menu_markup() -> InlineKeyboardMarkup {
     let row1 = vec![
@@ -58,3 +59,4 @@ pub fn format_hashrate(h: f64) -> String {
         format!("{:.2} H/s", h)
     }
 }
+

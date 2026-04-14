@@ -3,7 +3,7 @@ pub mod node;
 pub mod admin;
 
 use chrono::Utc;
-use teloxide::{prelude::*, types::{ChatId, CallbackQuery, ChatMemberUpdated}};
+use teloxide::{prelude::*, types::CallbackQuery};
 use crate::commands::Command;
 use crate::context::AppContext;
 
@@ -22,28 +22,23 @@ pub async fn handle_command(bot: Bot, msg: Message, cmd: Command, ctx: AppContex
         Command::Balance => node::handle_balance(bot, chat_id, &ctx, time, None).await,
         Command::Sys => admin::handle_sys(bot, chat_id, user_id, &ctx, None, time).await,
         _ => { 
-            let _ = bot.send_message(chat_id, "🤖 Routing to Gemini AI...").await;
+             crate::ai::process_conversational_intent(bot, chat_id, msg.id, user_id, "Explain this command".to_string(), ctx).await?;
         }
     }
     Ok(())
 }
 
-pub async fn handle_callback(bot: Bot, q: CallbackQuery, _ctx: AppContext) -> anyhow::Result<()> {
-    if let Some(data) = q.data {
-        let _ = bot.answer_callback_query(q.id).text(format!("Selected: {}", data)).await;
-    }
-    Ok(())
-}
-
-pub async fn handle_block_user(update: ChatMemberUpdated, ctx: AppContext) -> anyhow::Result<()> {
-    if update.new_chat_member.is_banned() {
-        crate::state::remove_all_user_data(&ctx.pool, &ctx.state, update.chat.id.0).await;
-    }
-    Ok(())
-}
-
-pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> anyhow::Result<()> {
+pub async fn handle_text_router(bot: Bot, msg: Message, ctx: AppContext) -> anyhow::Result<()> {
     let user_text = msg.text().unwrap_or("").to_string();
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     crate::ai::process_conversational_intent(bot, msg.chat.id, msg.id, user_id, user_text, ctx).await
 }
+
+#[allow(dead_code)]
+pub async fn handle_callback(bot: Bot, q: CallbackQuery, _ctx: AppContext) -> anyhow::Result<()> {
+    if let Some(data) = q.data {
+        let _ = bot.answer_callback_query(q.id).text(format!("Action: {}", data)).await;
+    }
+    Ok(())
+}
+

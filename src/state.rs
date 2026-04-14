@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use dashmap::DashMap;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::HashSet;
@@ -128,3 +129,12 @@ pub async fn remove_all_user_data(pool: &SqlitePool, state: &SharedState, chat_i
         state.remove(&wallet);
     }
 }
+pub async fn load_state(pool: &sqlx::SqlitePool) -> anyhow::Result<Arc<dashmap::DashMap<String, std::collections::HashSet<i64>>>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT wallet, chat_id FROM tracked_wallets").fetch_all(pool).await?;
+    let map = Arc::new(dashmap::DashMap::new());
+    for (wallet, chat_id) in rows {
+        map.entry(wallet).or_insert_with(std::collections::HashSet::new).insert(chat_id);
+    }
+    Ok(map)
+}
+

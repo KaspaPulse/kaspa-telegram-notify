@@ -1,4 +1,5 @@
-﻿use anyhow::Context;
+#![allow(dead_code)]
+use anyhow::Context;
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
 use std::num::NonZeroU32;
 use std::sync::OnceLock;
@@ -140,3 +141,4 @@ pub fn log_multiline(header: &str, body: &str, is_html: bool) {
         }
     }
 }
+

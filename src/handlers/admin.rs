@@ -1,12 +1,8 @@
 use teloxide::{prelude::*, types::ChatId};
-use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use sysinfo::System;
-use tokio::time::Instant;
-use kaspa_addresses::Address;
-use kaspa_rpc_core::api::rpc::RpcApi;
 use crate::context::AppContext;
-use crate::utils::{format_short_wallet, send_or_edit_log, refresh_markup};
+use crate::utils::{send_or_edit_log, refresh_markup};
 
 pub async fn handle_sys(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext, edit_id: Option<teloxide::types::MessageId>, current_time: String) {
     if user_id != ctx.admin_id { return; }

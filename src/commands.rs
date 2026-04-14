@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use teloxide::utils::command::BotCommands;
 
 #[derive(BotCommands, Clone, std::fmt::Debug)]
@@ -52,3 +53,4 @@ pub enum Command {
     #[command(description = "Auto-fetch latest official Kaspa news")]
     AutoLearn,
 }
+

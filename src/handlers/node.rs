@@ -1,6 +1,6 @@
 use teloxide::{prelude::*, types::ChatId};
 use kaspa_addresses::Address;
-use kaspa_rpc_core::api::rpc::RpcApi;
+
 use crate::context::AppContext;
 use crate::utils::{f_num, format_short_wallet, send_or_edit_log, refresh_markup};
 
@@ -22,3 +22,4 @@ pub async fn handle_balance(bot: Bot, chat_id: ChatId, ctx: &AppContext, current
     let _ = send_or_edit_log(&bot, chat_id, edit_id, text, Some(refresh_markup("refresh_balance"))).await;
 }
 // (Additional node functions like blocks, miner, network are abstracted to use the AI engine for speed)
+
