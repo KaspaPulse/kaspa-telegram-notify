@@ -1,8 +1,4 @@
-﻿أعتذر عن ذلك. سبب المشكلة (عدم ظهور التنسيق بشكل صحيح على GitHub) هو مسافات المسافة البادئة (Indentation) عند دمج الأكواد (Code Blocks) داخل القوائم (Lists) في قسم **Windows Server Deployment**. محرك GitHub صارم جداً ويشترط وجود **4 مسافات قياسية بالضبط** قبل أي كود متداخل داخل قائمة، وأي مسافات غير قياسية (مثل التي ظهرت في نسختك) ستكسر التنسيق تماماً.
-
-لقد قمت بضبط وهندسة مسافات الـ Markdown بدقة تامة لضمان توافقها 100% مع GitHub. تفضل النسخة المصححة والنهائية:
-
-```markdown
+﻿```markdown
 # 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
