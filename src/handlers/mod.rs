@@ -1,18 +1,13 @@
-pub mod admin;
-pub mod node;
 pub mod public;
+pub mod node;
+pub mod admin;
 
-use crate::commands::Command;
-use crate::context::AppContext;
 use chrono::Utc;
 use teloxide::{prelude::*, types::CallbackQuery};
+use crate::commands::Command;
+use crate::context::AppContext;
 
-pub async fn handle_command(
-    bot: Bot,
-    msg: Message,
-    cmd: Command,
-    ctx: AppContext,
-) -> anyhow::Result<()> {
+pub async fn handle_command(bot: Bot, msg: Message, cmd: Command, ctx: AppContext) -> anyhow::Result<()> {
     let chat_id = msg.chat.id;
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     let time = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
@@ -27,7 +22,7 @@ pub async fn handle_command(
         Command::Balance => node::handle_balance(bot, chat_id, &ctx, time, None).await,
         Command::Sys => admin::handle_sys(bot, chat_id, user_id, &ctx, None, time).await,
         _ => {
-            let user_text = msg.text().unwrap_or("Explain command").to_string();
+            let user_text = msg.text().unwrap_or_default().to_string();
             crate::ai::process_conversational_intent(bot, chat_id, msg.id, user_text, ctx).await?;
         }
     }
@@ -35,17 +30,21 @@ pub async fn handle_command(
 }
 
 pub async fn handle_text_router(bot: Bot, msg: Message, ctx: AppContext) -> anyhow::Result<()> {
-    let user_text = msg.text().unwrap_or("").to_string();
-    crate::ai::process_conversational_intent(bot, msg.chat.id, msg.id, user_text, ctx).await
+    let user_text = msg.text().unwrap_or_default().trim();
+    let chat_id = msg.chat.id;
+
+    // 1. AUTO-DETECTION: Is this a Kaspa Address?
+    if user_text.starts_with("kaspa:") && user_text.len() > 60 {
+        public::handle_add(bot, chat_id, user_text.to_string(), &ctx).await; return Ok(());
+    }
+
+    // 2. Otherwise, treat as Gemini Chat
+    crate::ai::process_conversational_intent(bot, chat_id, msg.id, user_text.to_string(), ctx).await
 }
 
 #[allow(dead_code)]
 pub async fn handle_callback(bot: Bot, q: CallbackQuery, _ctx: AppContext) -> anyhow::Result<()> {
-    if let Some(data) = q.data {
-        let _ = bot
-            .answer_callback_query(q.id)
-            .text(format!("Action: {}", data))
-            .await;
-    }
+    let _ = bot.answer_callback_query(q.id).await;
     Ok(())
 }
+
