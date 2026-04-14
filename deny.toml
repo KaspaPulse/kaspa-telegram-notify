@@ -1,0 +1,30 @@
+[licenses]
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "Unlicense",
+    "BSD-3-Clause", "BSD-2-Clause", "0BSD", "ISC", "CC0-1.0",
+    "OpenSSL", "Unicode-DFS-2016", "Unicode-3.0", "Zlib", "MPL-2.0",
+    "LGPL-3.0-only", "CDLA-Permissive-2.0"
+]
+
+[bans]
+multiple-versions = "allow"
+
+[advisories]
+# Ignore ONLY the specific unmaintainable Kaspa dependencies we reviewed
+ignore = [
+    "RUSTSEC-2025-0052",
+    "RUSTSEC-2024-0384",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2024-0370",
+    "RUSTSEC-2024-0375",
+    "RUSTSEC-2021-0145",
+    "RUSTSEC-2024-0407",
+    "RUSTSEC-2026-0097"
+]
+
+[sources]
+unknown-registry = "warn"
+allow-git = [
+    "https://github.com/kaspanet/rusty-kaspa",
+    "https://github.com/RustSec/advisory-db"
+]
