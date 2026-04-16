@@ -277,4 +277,3 @@ This project is licensed under the **MIT License**. See the `LICENSE` file for d
 ## 🧠 Final Note
 
 Built with precision, engineered with Rust, and designed for the true Kaspa ecosystem pioneers. Happy Solo Mining! ⛏️
-```
