@@ -1,4 +1,4 @@
-﻿```markdown
+﻿```
 # 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
