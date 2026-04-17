@@ -13,16 +13,59 @@ pub async fn handle_start(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppCont
     } else {
         crate::kaspa_features::main_menu_markup()
     };
-    let help_text = "🤖 <b>Kaspa Enterprise Node Bot</b>\n━━━━━━━━━━━━━━━━━━\nI am directly connected to your local node. Pasting a wallet address will enable real-time tracking.\n\n🎙️ <b>AI Engine:</b> You can send voice notes or chat with me about Kaspa technology.";
+
+    let welcome_text = "\
+🤖 <b>Kaspa Pulse Enterprise</b>
+━━━━━━━━━━━━━━━━━━
+Welcome to the ultimate Kaspa Solo Mining & Node monitoring engine. I operate with zero-latency, providing direct unindexed BlockDAG forensics.
+
+⚡ <b>Quick Start:</b>
+Simply paste any <code>kaspa:...</code> address in this chat to instantly activate real-time tracking and historical block recovery.
+
+🧠 <b>AI-Powered Intelligence:</b>
+Equipped with an advanced AI. Ask complex Kaspa questions, or send <b>Voice Notes</b> for instant transcription and analysis!
+
+👇 <i>Select an option below or type /help for commands.</i>";
+
     let _ = bot
-        .send_message(chat_id, help_text)
+        .send_message(chat_id, welcome_text)
         .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(markup)
         .await;
 }
 
 pub async fn handle_help(bot: Bot, chat_id: ChatId) {
-    let help_text = "📚 <b>Commands & Features</b>\n━━━━━━━━━━━━━━━━━━\n• /balance - Live node balances\n• /blocks - Database mined blocks\n• /network - Node & Network health\n• Paste a <code>kaspa:...</code> address to start tracking it.";
+    let help_text = "\
+📚 <b>Kaspa Pulse Enterprise - Help Guide</b>
+━━━━━━━━━━━━━━━━━━
+Welcome to the most advanced Kaspa Solo Mining & Node monitoring bot.
+
+🛠️ <b>Public Commands:</b>
+• /start - Main menu & initialization
+• /add <code>kaspa:...</code> - Start tracking a wallet
+• /remove <code>kaspa:...</code> - Stop tracking a wallet
+• /list - View your tracked wallets
+• /balance - Live node balances & UTXOs
+• /blocks - Mined blocks & lifetime value
+• /miner - Real-time solo hashrate estimate
+• /network - Node health, peers, & sync status
+• /dag - BlockDAG metrics & difficulty
+• /price - Live KAS price & market cap
+• /supply - Circulating supply metrics
+• /fees - Current mempool fee estimate
+• /donate - Support the developer
+
+👑 <b>Admin Commands:</b>
+• /stats, /sys, /logs - System diagnostics
+• /pause, /resume, /restart - Engine control
+• /sync - Manual historical reverse-scan
+• /learn, /autolearn - AI Knowledge DB management
+
+✨ <b>Smart Features:</b>
+🎙️ <b>AI Voice & Chat:</b> Ask questions or send voice notes! The AI contextually knows your balance and network stats.
+⚡ <b>Auto-Track:</b> Just paste any <code>kaspa:...</code> address in the chat to start monitoring instantly.
+🔍 <b>Forensics:</b> Extracts Worker IDs and nonces directly from the unindexed BlockDAG.";
+
     let _ = bot
         .send_message(chat_id, help_text)
         .parse_mode(teloxide::types::ParseMode::Html)

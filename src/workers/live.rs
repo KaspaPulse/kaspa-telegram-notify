@@ -73,9 +73,9 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
 
                                         let time_str = if block_time_ms > 0 {
                                             if let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(block_time_ms as i64) {
-                                                dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-                                            } else { Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string() }
-                                        } else { Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string() };
+                                                dt.format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string()
+                                            } else { Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string() }
+                                        } else { Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string() };
 
                                         let header_emoji = if is_coinbase { "⚡ <b>Native Node Reward!</b>" } else { "💸 <b>Incoming Transfer!</b>" };
                                         let acc_block_str = if acc_block_hash.is_empty() { "<code>Archived</code>".to_string() } else { format_hash(&acc_block_hash, "blocks") };
@@ -102,7 +102,7 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                 for (time_ms, diff, w_cl, final_msg) in sorted_messages {
                                     let log_time = if time_ms > 0 {
                                         Utc.timestamp_millis_opt(time_ms as i64).single()
-                                            .map(|dt| dt.format("%H:%M:%S").to_string()).unwrap_or_else(|| "Unknown".to_string())
+                                            .map(|dt| dt.format("%H:%M:%S.%3f").to_string()).unwrap_or_else(|| "Unknown".to_string())
                                     } else { "Real-time".to_string() };
 
                                     info!("💎 [LIVE BLOCK] | Amount: +{:.4} KAS | Wallet: {} | Time: {} | Status: Delivered",

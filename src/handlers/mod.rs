@@ -130,6 +130,10 @@ pub async fn handle_callback(
                 "cmd_sys" => (Some(Command::Sys), false),
                 "refresh_sys" => (Some(Command::Sys), true),
                 "cmd_donate" => (Some(Command::Donate), false),
+                "cmd_logs" => (Some(Command::Logs), false),
+                "cmd_pause" => (Some(Command::Pause), false),
+                "cmd_resume" => (Some(Command::Resume), false),
+                "cmd_restart" => (Some(Command::Restart), false),
                 _ => (None, false),
             };
 
@@ -153,7 +157,8 @@ async fn execute_command(
     edit_msg_id: Option<teloxide::types::MessageId>,
 ) -> anyhow::Result<()> {
     let timer = Instant::now();
-    let current_utc_time = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    // ⏱️ التحديث: إضافة .%3f لطباعة أجزاء الثانية
+    let current_utc_time = Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string();
 
     match cmd {
         Command::Start => public::handle_start(bot, chat_id, user_id, &ctx).await,
