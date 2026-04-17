@@ -49,6 +49,7 @@ pub async fn handle_stats(
             .fetch_one(&ctx.pool)
             .await
             .unwrap_or((0,));
+
         let mut user_names = Vec::new();
         for &u_id in users {
             if let Ok(chat) = bot.get_chat(ChatId(u_id)).await {
@@ -241,26 +242,33 @@ pub async fn handle_learn(
             .await;
         return;
     }
-    let file_path = "knowledge.json";
-    let mut docs: Vec<crate::rag::Document> = if let Ok(data) = std::fs::read_to_string(file_path) {
-        serde_json::from_str(&data).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    docs.push(crate::rag::Document {
-        title: format!("Live Update: {}", Utc::now().format("%Y-%m-%d")),
-        content: new_fact.clone(),
-        embedding: None,
-    });
-    if let Ok(json) = serde_json::to_string_pretty(&docs) {
-        let _ = std::fs::write(file_path, json);
-        tokio::spawn(async move {
-            crate::rag::init_knowledge_base().await;
-        });
+
+    let title = format!("Manual Input: {}", Utc::now().format("%Y-%m-%d %H:%M"));
+    let link = format!("manual-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+
+    // Write directly to the new SQLite Knowledge Base
+    let res = sqlx::query(
+        "INSERT OR IGNORE INTO knowledge_base (title, link, content, source, published_at) VALUES (?1, ?2, ?3, 'Admin Manual Input', CURRENT_TIMESTAMP)"
+    )
+    .bind(&title)
+    .bind(&link)
+    .bind(&new_fact)
+    .execute(&ctx.pool)
+    .await;
+
+    if res.is_ok() {
         let _ = bot
             .send_message(
                 chat_id,
-                "🧠 <b>Knowledge Added!</b>\nI have learned this new information.",
+                "🧠 <b>Knowledge Added!</b>\nI have securely stored this in my vector database.",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+    } else {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "❌ <b>Database Error:</b> Failed to store new knowledge.",
             )
             .parse_mode(teloxide::types::ParseMode::Html)
             .await;
@@ -271,22 +279,17 @@ pub async fn handle_autolearn(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &App
     if user_id != ctx.admin_id {
         return;
     }
-    tracing::info!("🔍 [AUTOLEARN] Connecting to Official RSS...");
+    tracing::info!("🔍 [AUTOLEARN] Connecting to Official RSS via Manual Trigger...");
     let _ = bot
         .send_message(
             chat_id,
-            "🔍 <b>Kaspa AI:</b> Scanning the Official Kaspa News Feed...",
+            "🔍 <b>Kaspa AI:</b> Force-scanning the Official Kaspa News Feed...",
         )
         .parse_mode(teloxide::types::ParseMode::Html)
         .await;
+
     let feeds =
         vec!["https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/kaspa-currency"];
-    let file_path = "knowledge.json";
-    let mut docs: Vec<crate::rag::Document> = if let Ok(data) = std::fs::read_to_string(file_path) {
-        serde_json::from_str(&data).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
     let mut added_count = 0;
     let mut titles_added = String::new();
 
@@ -296,44 +299,49 @@ pub async fn handle_autolearn(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &App
                 if let Some(items) = j["items"].as_array() {
                     for item in items {
                         let title = item["title"].as_str().unwrap_or("Unknown").to_string();
-                        if docs.iter().any(|d| d.title == title) {
-                            continue;
-                        }
+                        let link = item["link"]
+                            .as_str()
+                            .unwrap_or(&format!(
+                                "rss2json-{}",
+                                Utc::now().timestamp_nanos_opt().unwrap_or(0)
+                            ))
+                            .to_string();
                         let content_html = item["description"].as_str().unwrap_or("").to_string();
                         let clean_content = crate::utils::clean_for_log(&content_html);
+
                         if clean_content.len() < 50 {
                             continue;
                         }
-                        let combined_text =
-                            format!("Source Post: {} - Details: {}", title, clean_content);
-                        docs.push(crate::rag::Document {
-                            title: title.clone(),
-                            content: combined_text.chars().take(2000).collect::<String>(),
-                            embedding: None,
-                        });
-                        added_count += 1;
-                        titles_added.push_str(&format!("▪ {}\n", title));
+
+                        // Write directly to the new SQLite Knowledge Base
+                        let res = sqlx::query(
+                            "INSERT OR IGNORE INTO knowledge_base (title, link, content, source, published_at) VALUES (?1, ?2, ?3, 'Admin Autolearn Trigger', CURRENT_TIMESTAMP)"
+                        )
+                        .bind(&title)
+                        .bind(&link)
+                        .bind(&clean_content)
+                        .execute(&ctx.pool)
+                        .await;
+
+                        if let Ok(db_res) = res {
+                            if db_res.rows_affected() > 0 {
+                                added_count += 1;
+                                titles_added.push_str(&format!("▪ {}\n", title));
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
     if added_count > 0 {
-        if let Ok(json) = serde_json::to_string_pretty(&docs) {
-            let _ = std::fs::write(file_path, json);
-            tracing::info!("💾 [AUTOLEARN] Saved {} new articles/posts.", added_count);
-            tokio::spawn(async move {
-                crate::rag::init_knowledge_base().await;
-            });
-            let _ = bot.send_message(chat_id, format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My vector database is updating!</i>", added_count, titles_added)).parse_mode(teloxide::types::ParseMode::Html).await;
-        }
+        tracing::info!(
+            "💾 [AUTOLEARN] Saved {} new articles directly to local database.",
+            added_count
+        );
+        let _ = bot.send_message(chat_id, format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My internal database has been updated instantly!</i>", added_count, titles_added)).parse_mode(teloxide::types::ParseMode::Html).await;
     } else {
-        let _ = bot
-            .send_message(
-                chat_id,
-                "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found.",
-            )
-            .parse_mode(teloxide::types::ParseMode::Html)
-            .await;
+        let _ = bot.send_message(chat_id, "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found. Database is completely up to date.").parse_mode(teloxide::types::ParseMode::Html).await;
     }
 }

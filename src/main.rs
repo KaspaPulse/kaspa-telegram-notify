@@ -3,10 +3,8 @@
 mod ai;
 mod commands;
 mod context;
-mod error;
 mod handlers;
 mod kaspa_features;
-mod rag;
 mod state;
 mod utils;
 mod workers;
@@ -187,8 +185,6 @@ async fn main() -> Result<(), BotError> {
         .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
         .branch(Update::filter_message().endpoint(handlers::handle_raw_message_v2));
 
-    // Initialize static legacy AI Knowledge Base (if still needed)
-    crate::rag::init_knowledge_base().await;
     info!("🚀 Dispatcher is LIVE! Ready for users.");
 
     Dispatcher::builder(bot, handler)

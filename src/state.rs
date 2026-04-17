@@ -35,7 +35,7 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     .execute(&pool)
     .await?;
 
-    // 2. Mined blocks table (with the new sync_source column)
+    // 2. Mined blocks table (with sync_source)
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS mined_blocks (
             outpoint TEXT PRIMARY KEY,
@@ -49,7 +49,7 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     .execute(&pool)
     .await?;
 
-    // Safe schema update for older databases (won't throw an error if the column already exists)
+    // Safe schema update for older databases
     let _ = sqlx::query("ALTER TABLE mined_blocks ADD COLUMN sync_source TEXT DEFAULT 'LIVE'")
         .execute(&pool)
         .await;
@@ -58,7 +58,7 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
         .execute(&pool)
         .await?;
 
-    // 3. New table (sync checkpoint) to protect the server from redundant reverse scanning
+    // 3. Sync checkpoint table
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sync_checkpoint (
             wallet TEXT PRIMARY KEY,
@@ -68,10 +68,24 @@ pub async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     .execute(&pool)
     .await?;
 
+    // 4. AI Knowledge Base (RAG System)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS knowledge_base (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            link TEXT UNIQUE NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            published_at DATETIME
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
     Ok(pool)
 }
 
-// 📌 Used by the live monitor (kept intact to avoid breaking existing functionality)
+// 📌 Used by the live monitor
 pub async fn record_mined_block(
     pool: &SqlitePool,
     outpoint: &str,
@@ -88,7 +102,7 @@ pub async fn record_mined_block(
     }
 }
 
-// 📌 New function dedicated to the Admin sync process (records recovered blocks)
+// 📌 Dedicated to the Admin sync process
 pub async fn record_recovery_block(
     pool: &SqlitePool,
     outpoint: &str,
@@ -105,7 +119,6 @@ pub async fn record_recovery_block(
     }
 }
 
-// 📌 Retrieve the last sync checkpoint for a specific wallet
 pub async fn get_sync_checkpoint(pool: &SqlitePool, wallet: &str) -> u64 {
     let result: Option<i64> =
         sqlx::query_scalar("SELECT last_daa_score FROM sync_checkpoint WHERE wallet = ?1")
@@ -117,7 +130,6 @@ pub async fn get_sync_checkpoint(pool: &SqlitePool, wallet: &str) -> u64 {
     result.unwrap_or(0) as u64
 }
 
-// 📌 Update the checkpoint after a successful synchronization
 pub async fn update_sync_checkpoint(pool: &SqlitePool, wallet: &str, daa_score: u64) {
     let _ = sqlx::query(
         "INSERT INTO sync_checkpoint (wallet, last_daa_score) VALUES (?1, ?2)
