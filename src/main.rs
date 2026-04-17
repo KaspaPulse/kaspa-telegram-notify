@@ -57,7 +57,6 @@ async fn main() -> Result<(), BotError> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
-        .with(console_subscriber::spawn())
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(non_blocking.and(std::io::stdout))
