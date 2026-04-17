@@ -45,7 +45,7 @@ pub async fn process_conversational_intent(
 
     let engine = engine_arc.lock().await;
     let response = match engine
-        .generate(&enriched_prompt, &live_ctx_data, None)
+        .generate(&ctx.pool, &enriched_prompt, &live_ctx_data, None)
         .await
     {
         Ok(text) => {
@@ -103,6 +103,7 @@ pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> a
 
     let response = match engine
         .generate(
+            &ctx.pool,
             "Answer any questions asked in this audio transcript contextually.",
             &live_ctx_data,
             Some(audio_bytes),

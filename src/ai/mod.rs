@@ -8,3 +8,5 @@ pub mod handlers;
 pub use engine::{LocalAiEngine, SharedAiEngine};
 
 pub use handlers::{process_conversational_intent, process_voice_message};
+
+pub mod rag;

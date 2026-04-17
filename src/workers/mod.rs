@@ -16,3 +16,5 @@ pub fn start_all(ctx: AppContext, bot: Bot, token: CancellationToken) {
     live::spawn_utxo_monitor(ctx.clone(), bot, token.clone());
     system::spawn_memory_cleaner(ctx, token);
 }
+
+pub mod rss;

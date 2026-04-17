@@ -6,6 +6,7 @@ license = "MIT"
 description = "Enterprise Kaspa Solo Mining Bot - Synced to v1.1.0"
 
 [dependencies]
+feed-rs = "1.5"
 # Core Frameworks
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-util = "0.7"
@@ -54,3 +55,4 @@ panic = "abort"
 
 [patch.crates-io]
 serde_nested_with = { git = "https://github.com/murar8/serde_nested_with" }
+

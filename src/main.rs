@@ -125,7 +125,7 @@ async fn main() -> Result<(), BotError> {
     .map_err(|e| BotError::RpcConnection(format!("Tunnel failed: {}", e)))?;
 
     // Initialize Cloud AI Engine (Instant Boot)
-    info!("[INIT] Starting Cloud Gemini AI Engine... (Instant Boot)");
+    info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
     let ai_engine = Arc::new(tokio::sync::Mutex::new(
         crate::ai::LocalAiEngine::new()
             .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."),
@@ -170,8 +170,11 @@ async fn main() -> Result<(), BotError> {
         })
         .await;
 
-    // Start detached background workers
-    crate::workers::start_all(ctx.clone(), bot.clone(), cancel_token);
+    // 🚀 Start detached background workers
+    crate::workers::start_all(ctx.clone(), bot.clone(), cancel_token.clone());
+
+    // 🕸️ Start RSS Crawler for Dynamic AI Knowledge Base (RAG)
+    crate::workers::rss::spawn_rss_crawler(ctx.pool.clone(), cancel_token.clone());
 
     // Advanced Routing Engine (dptree)
     let handler = dptree::entry()
@@ -184,7 +187,7 @@ async fn main() -> Result<(), BotError> {
         .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
         .branch(Update::filter_message().endpoint(handlers::handle_raw_message_v2));
 
-    // Initialize AI RAG Knowledge Base
+    // Initialize static legacy AI Knowledge Base (if still needed)
     crate::rag::init_knowledge_base().await;
     info!("🚀 Dispatcher is LIVE! Ready for users.");
 
