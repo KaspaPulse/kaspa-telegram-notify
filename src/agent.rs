@@ -2,40 +2,43 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::env;
+use std::time::Duration;
 use tracing::{error, info, warn};
 
-/// Autonomous Intelligence Agent: Searches the web and updates the local Knowledge Base.
+/// Autonomous Intelligence Agent: Deep Research with Multi-Layer Fallback.
 pub async fn search_and_learn(pool: &PgPool, query: &str) -> Option<String> {
-    // 🛡️ Strict Error Handling: Ensure the API key is actually present.
+    // 🛡️ API Key Validation
     let api_key = match env::var("TAVILY_API_KEY") {
         Ok(key) if !key.is_empty() => key,
         _ => {
-            error!("[AI AGENT] CRITICAL: TAVILY_API_KEY is not set or empty in .env!");
+            error!("[AI AGENT] CRITICAL: TAVILY_API_KEY is missing from .env!");
             return None;
         }
     };
 
-    info!("[AI AGENT] Engaging Deep Research for query: '{}'", query);
+    info!("[AI AGENT] Initiating Deep Intelligence Gathering for: '{}'", query);
     
-    let client = Client::new();
+    // ⚡ Increased Timeout to prevent early exits on deep searches
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| Client::new());
     
-    // 🧠 Dynamic Query Optimization:
-    // If the query mentions code or Rust files, we pivot the search to technical sources.
-    let search_query = if query.to_lowercase().contains(".rs") || query.to_lowercase().contains("code") {
-        format!("Kaspa Rust source code implementation and logic: {}", query)
-    } else {
-        format!("Kaspa network official technical news and data: {}", query)
-    };
+    // Check if query is technical to expand search window
+    let is_tech = query.to_lowercase().contains(".rs") || 
+                  query.to_lowercase().contains("code") || 
+                  query.to_lowercase().contains("ssl") ||
+                  query.to_lowercase().contains("settings");
 
     let res = client.post("https://api.tavily.com/search")
         .json(&json!({
             "api_key": api_key,
-            "query": search_query,
+            "query": query,
             "search_depth": "advanced",
             "include_answer": true,
-            "include_raw_content": false,
-            "max_results": 3,
-            "days": 7 // Prioritize fresh information (last 7 days)
+            "max_results": 5,
+            // Use 365 days for tech/settings, 7 days for market news
+            "days": if is_tech { 365 } else { 7 } 
         }))
         .send()
         .await;
@@ -43,32 +46,48 @@ pub async fn search_and_learn(pool: &PgPool, query: &str) -> Option<String> {
     match res {
         Ok(response) => {
             if let Ok(body) = response.json::<Value>().await {
-                // Priority 1: Use the AI-generated direct answer
+                // Tier 1: Direct AI Summary
                 if let Some(answer) = body.get("answer").and_then(|a| a.as_str()) {
                     let answer_str = answer.to_string();
-                    
-                    // 🔗 Real Link Extraction: Get the actual source URL from results.
-                    let source_link = body["results"][0]["url"]
-                        .as_str()
-                        .unwrap_or("https://kaspadns.net/intelligence");
-
-                    // Step 3: Synchronize with PostgreSQL Knowledge Base
-                    crate::state::add_to_knowledge_base(
-                        pool, 
-                        query, 
-                        source_link, 
-                        &answer_str, 
-                        "Autonomous Internet Search (v2.0)"
-                    ).await;
-
-                    info!("[AI AGENT] Intel Acquired. Knowledge Base updated for '{}'", query);
+                    save_intelligence(pool, query, &body, &answer_str).await;
                     return Some(answer_str);
-                } else {
-                    warn!("[AI AGENT] Search completed but no definitive answer was found.");
+                } 
+                
+                // Tier 2: Content Snippet Aggregation (If Tier 1 fails)
+                if let Some(results) = body.get("results").and_then(|r| r.as_array()) {
+                    if !results.is_empty() {
+                        let mut aggregated_intel = String::new();
+                        for res in results.iter().take(3) {
+                            if let Some(content) = res.get("content").and_then(|c| c.as_str()) {
+                                aggregated_intel.push_str(content);
+                                aggregated_intel.push_str("\n\n");
+                            }
+                        }
+                        if !aggregated_intel.is_empty() {
+                            save_intelligence(pool, query, &body, &aggregated_intel).await;
+                            return Some(aggregated_intel);
+                        }
+                    }
                 }
+                warn!("[AI AGENT] Zero data found for query: {}", query);
             }
         }
-        Err(e) => error!("[AI AGENT] External API failure: {}", e),
+        Err(e) => error!("[AI AGENT] Tavily Connection Error: {}", e),
     }
     None
+}
+
+/// Commits findings to PostgreSQL and keeps the Knowledge Base fresh.
+async fn save_intelligence(pool: &PgPool, query: &str, body: &Value, answer: &str) {
+    let source_link = body["results"][0]["url"].as_str().unwrap_or("https://kaspadns.net/intelligence");
+    
+    crate::state::add_to_knowledge_base(
+        pool, 
+        query, 
+        source_link, 
+        answer, 
+        "Autonomous Agent v2.5 (Deep Search)"
+    ).await;
+    
+    info!("[AI AGENT] Successfully synced intelligence to DB for: {}", query);
 }
