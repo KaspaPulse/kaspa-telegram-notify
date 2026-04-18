@@ -13,7 +13,8 @@ const METRIC_INTENT: &[&str] = &[
     "سعر", "هاشريت", "صعوبة", "امداد", "سوق", "اداء", "احصائيات",
 ];
 
-/// Enterprise RAG Engine: Retrieves local context with manual override priority.
+/// Enterprise RAG Engine: Retrieves local context with manual override priority
+/// and dual-stream execution for live news.
 pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
     let lower_query = user_query.to_lowercase();
 
@@ -23,43 +24,32 @@ pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
 
     info!("[RAG] Analyzing query intent for: '{}'", user_query);
 
-    // Step 1: Attempt to fetch from Local PostgreSQL Knowledge Base
-    // We use a CASE statement in SQL to prioritize "Manual Input" from the /learn command.
-    let result: Result<Vec<(String, String)>, sqlx::Error> = if is_news || is_metric {
-        info!("[RAG] Priority Intent: Global Context Refresh.");
-        sqlx::query_as::<Postgres, (String, String)>(
-            "SELECT title, content FROM knowledge_base 
-             ORDER BY 
-                CASE WHEN title LIKE 'Manual Input%' THEN 0 ELSE 1 END, 
-                published_at DESC 
-             LIMIT 5"
-        )
-        .fetch_all(pool)
-        .await
-    } else {
-        // Multi-word Anchor Extraction to improve Arabic/English matching
-        let search_anchor = user_query
-            .split_whitespace()
-            .filter(|w| w.len() > 2) // Match shorter keywords like 'S9' or 'Pi'
-            .max_by_key(|w| w.len())
-            .unwrap_or("kaspa");
+    // Step 1: Handle News Intent separately to ensure Tavily is triggered
+    if is_news {
+        info!("[RAG] News Intent detected. Bypassing local cache for Live Intelligence.");
+        return trigger_autonomous_agent(pool, user_query).await;
+    }
 
-        info!("[RAG] Search Anchor identified: '{}'", search_anchor);
-        
-        sqlx::query_as::<Postgres, (String, String)>(
-            "SELECT title, content FROM knowledge_base 
-             WHERE content ILIKE $1 OR title ILIKE $1 
-             ORDER BY 
-                CASE WHEN title LIKE 'Manual Input%' THEN 0 ELSE 1 END, 
-                published_at DESC 
-             LIMIT 5"
-        )
-        .bind(format!("%{}%", search_anchor))
-        .fetch_all(pool)
-        .await
-    };
+    // Step 2: Search Local Knowledge Base for non-news queries
+    let search_anchor = user_query
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .max_by_key(|w| w.len())
+        .unwrap_or("kaspa");
 
-    // Step 2: Evaluate Results and Handle Fallbacks
+    let result = sqlx::query_as::<Postgres, (String, String)>(
+        "SELECT title, content FROM knowledge_base 
+         WHERE content ILIKE $1 OR title ILIKE $1 
+         ORDER BY 
+            CASE WHEN title LIKE 'Manual Input%' THEN 0 ELSE 1 END, 
+            published_at DESC 
+         LIMIT 5"
+    )
+    .bind(format!("%{}%", search_anchor))
+    .fetch_all(pool)
+    .await;
+
+    // Step 3: Evaluate Results and Handle Fallbacks
     match result {
         Ok(articles) if !articles.is_empty() => {
             info!("[RAG] Local Knowledge found ({} entries). Injecting context.", articles.len());
@@ -71,16 +61,21 @@ pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
             context_buffer
         }
 
-        // Step 3: Critical Fallback - Trigger Autonomous Agent (Tavily)
+        // Final Fallback: If DB is silent or if query is a Metric, try the Agent
         _ => {
-            info!("[RAG] CACHE MISS: Local DB silent or irrelevant. Engaging Autonomous Agent...");
-            if let Some(agent_answer) = crate::agent::search_and_learn(pool, user_query).await {
-                info!("[RAG] Agent successfully retrieved live external data.");
-                format!("\n[AUTONOMOUS LIVE SEARCH RESULT]:\n{}\n", agent_answer)
-            } else {
-                warn!("[RAG] Final Fallback: Agent failed. Proceeding with base AI knowledge.");
-                String::new()
-            }
+            info!("[RAG] Local DB silent. Engaging Autonomous Agent...");
+            trigger_autonomous_agent(pool, user_query).await
         }
+    }
+}
+
+/// Helper function to invoke the Tavily-powered Autonomous Agent.
+async fn trigger_autonomous_agent(pool: &PgPool, query: &str) -> String {
+    if let Some(agent_answer) = crate::agent::search_and_learn(pool, query).await {
+        info!("[RAG] Agent successfully retrieved live external data.");
+        format!("\n[AUTONOMOUS LIVE SEARCH RESULT]:\n{}\n", agent_answer)
+    } else {
+        warn!("[RAG] Autonomous Agent failed to retrieve data.");
+        String::new()
     }
 }
