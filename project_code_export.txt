@@ -1,0 +1,3365 @@
+
+
+==================================================================
+📁 FILE: Cargo.toml
+==================================================================
+[package]
+name = "kaspa-solo"
+version = "1.2.0"
+edition = "2021"
+license = "MIT"
+description = "Enterprise Kaspa Solo Mining Bot - Synced to v1.1.0"
+
+[dependencies]
+feed-rs = "1.5"
+# Core Frameworks
+tokio = { version = "1", features = ["full", "tracing"] }
+tokio-util = "0.7"
+teloxide = { version = "0.13", features = ["macros", "webhooks-axum"] }
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Kaspa Blockchain Protocol (Strictly using v1.1.0 to match your node)
+kaspa-wrpc-client = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v1.1.0" }
+kaspa-rpc-core = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v1.1.0" }
+kaspa-addresses = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v1.1.0" }
+kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v1.1.0" }
+kaspa-hashes = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v1.1.0" }
+dashmap = "6.1"
+
+# Time & Utilities
+chrono = "0.4"
+dotenvy = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+urlencoding = "2.1"
+strsim = "0.11.1"
+rev_lines = "0.3"
+base64 = "0.22.1"
+
+# Networking & System
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"] }
+sysinfo = "0.30"
+governor = "0.6"
+secrecy = "0.10"
+
+# Logging & Diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio-rustls", "macros", "chrono"] }
+redis = { version = "1.2.0", features = ["tokio-comp", "connection-manager"] }
+axum = "0.8.9"
+
+# Binary Hardening
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[patch.crates-io]
+serde_nested_with = { git = "https://github.com/murar8/serde_nested_with" }
+
+
+
+
+==================================================================
+📁 FILE: deny.toml
+==================================================================
+[licenses]
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "Unlicense",
+    "BSD-3-Clause", "BSD-2-Clause", "0BSD", "ISC", "CC0-1.0",
+    "OpenSSL", "Unicode-DFS-2016", "Unicode-3.0", "Zlib", "MPL-2.0",
+    "LGPL-3.0-only", "CDLA-Permissive-2.0"
+]
+
+[bans]
+multiple-versions = "allow"
+
+[advisories]
+# Ignore ONLY the specific unmaintainable Kaspa dependencies we reviewed
+ignore = [
+    "RUSTSEC-2025-0052",
+    "RUSTSEC-2024-0384",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2024-0370",
+    "RUSTSEC-2024-0375",
+    "RUSTSEC-2021-0145",
+    "RUSTSEC-2024-0407",
+    "RUSTSEC-2026-0097"
+]
+
+[sources]
+unknown-registry = "warn"
+allow-git = [
+    "https://github.com/kaspanet/rusty-kaspa",
+    "https://github.com/RustSec/advisory-db"
+]
+
+
+
+==================================================================
+📁 FILE: knowledge.json
+==================================================================
+[
+  {
+    "title": "The Genesis of Kaspa: Continuing Satoshi's Vision",
+    "content": "Kaspa was created to fulfill the original vision of Satoshi Nakamoto: a pure, decentralized, peer-to-peer electronic cash system. While Bitcoin proved the concept, its Nakamoto Consensus faced severe scalability limits (the blockchain trilemma). Kaspa was born not as a corporate project, but as a scientific breakthrough to solve this trilemma without sacrificing the fundamental ethos of Proof-of-Work decentralization."
+  },
+  {
+    "title": "Dr. Yonatan Sompolinsky and Early Research (2013)",
+    "content": "The conceptual foundation of Kaspa dates back to 2013, when Dr. Yonatan Sompolinsky and Professor Aviv Zohar conceived the GHOST (Greedy Heaviest Observed Sub-Tree) protocol. This research was a monumental shift in cryptographic consensus, aiming to secure networks even with high block creation rates."
+  },
+  {
+    "title": "The Ethereum Whitepaper Citation",
+    "content": "Yonatan Sompolinsky's 2013 GHOST protocol was so foundational to the crypto industry that Vitalik Buterin cited it in the original Ethereum Whitepaper. While Ethereum implemented a modified version for its uncles, Yonatan continued his research to build a network fully dedicated to this architecture."
+  },
+  {
+    "title": "Evolution of Consensus: SPECTRE (2016)",
+    "content": "Following GHOST, Yonatan and his team published the SPECTRE protocol in 2016. SPECTRE proved that a BlockDAG (Directed Acyclic Graph) could achieve fast confirmations by allowing parallel blocks. However, SPECTRE lacked linear ordering, making it unsuitable for smart contracts and full chronological ledgers."
+  },
+  {
+    "title": "The PHANTOM Protocol (2018)",
+    "content": "In 2018, Yonatan Sompolinsky published the PHANTOM protocol. This was the missing link. PHANTOM introduced a mathematical way to linearly order the blocks within a BlockDAG. It differentiated between 'honest' blocks and 'attacker' blocks by looking at the connectivity of the DAG, paving the way for Kaspa's creation."
+  },
+  {
+    "title": "The Mainnet Launch: November 7, 2021",
+    "content": "Kaspa's mainnet officially went live on November 7, 2021. This date marks the launch of the world's first fully functional BlockDAG based on the PHANTOM/GHOSTDAG consensus. It was launched quietly to ensure network stability before widespread adoption."
+  },
+  {
+    "title": "The 100% Fair Launch Ethos",
+    "content": "Kaspa is legendary for its absolute fair launch. There was strictly zero pre-mine, zero Initial Coin Offering (ICO), zero pre-sales, and absolutely no token allocations set aside for the founders, developers, or early investors. Every single KAS in existence was publicly mined. It is one of the few true commodities in the crypto space."
+  },
+  {
+    "title": "The Core Development Team",
+    "content": "Kaspa is an open-source project with no central corporation. The core research and development team features brilliant minds including Dr. Yonatan Sompolinsky, Michael Sutton (Systems architecture and DAGKnight co-author), Shai Wyborski (Quantum and Cryptography researcher), Elichai Turkel (Applied Cryptographer), and Ori Newman. They are funded entirely by community donations."
+  },
+  {
+    "title": "Architecture: Blockchain vs. BlockDAG",
+    "content": "Traditional blockchains (like Bitcoin) are 1-dimensional chains. If two blocks are mined simultaneously, one is kept and the other is discarded as an 'orphan', wasting energy and limiting speed. Kaspa is a BlockDAG (Directed Acyclic Graph); it accepts all valid parallel blocks, merges them, and mathematically orders them. There are no orphans in Kaspa."
+  },
+  {
+    "title": "Consensus: The GHOSTDAG Protocol",
+    "content": "Kaspa currently operates on the GHOSTDAG consensus mechanism. It is a greedy, practical implementation of the PHANTOM protocol. GHOSTDAG secures the network by mathematically sorting the topological structure of the DAG, allowing Kaspa to process 1 block per second (BPS) on its original Go-based node software."
+  },
+  {
+    "title": "Mining Algorithm: kHeavyHash",
+    "content": "Kaspa utilizes a unique Proof-of-Work algorithm called kHeavyHash. Unlike SHA-256, kHeavyHash heavily utilizes matrix multiplication. This design makes it 'Optical-Mining ready' for future hardware, while currently being highly energy-efficient on modern ASIC miners. It ensures a robust and distributed mining ecosystem."
+  },
+  {
+    "title": "Tokenomics: The Maximum Supply",
+    "content": "Kaspa has a strictly hard-capped maximum supply of exactly 28.7 billion KAS. This hard cap ensures absolute scarcity and makes it a sound store of value, completely immune to arbitrary inflation by any central authority."
+  },
+  {
+    "title": "The Chromatic Phase (Emission Schedule)",
+    "content": "Unlike Bitcoin's halving every 4 years, Kaspa uses a smooth, continuous deflationary monetary policy called the 'Chromatic Phase'. Block rewards are reduced smoothly every single month. The formula ensures that the total emission rate exactly halves once per year, creating a highly aggressive scarcity model."
+  },
+  {
+    "title": "Pruning and Node Storage",
+    "content": "To prevent node storage from exploding due to high block rates, Kaspa implements advanced block data pruning. The network only keeps the minimum cryptographic proofs necessary (like UTXO set and block headers) for deep history, allowing standard consumer hardware to run a full node without needing enterprise-grade storage."
+  },
+  {
+    "title": "Rusty Kaspa: The Rewrite (2023-2024)",
+    "content": "Recognizing the limits of the Go programming language, Michael Sutton led a massive community effort to rewrite the entire Kaspa codebase in Rust. Known as 'Rusty Kaspa', this masterpiece of software engineering massively improved node efficiency, reduced memory usage, and unlocked the true speed potential of the network."
+  },
+  {
+    "title": "The 10 BPS Upgrade (10 Blocks Per Second)",
+    "content": "Thanks to Rusty Kaspa, the network is upgrading from 1 Block Per Second to an unprecedented 10 Blocks Per Second (10 BPS). This allows Kaspa to handle thousands of transactions per second, offering near-instant finality (sub-second confirmations) on a decentralized Proof-of-Work Layer 1 network."
+  },
+  {
+    "title": "The Future Upgrade: DAGKnight Protocol",
+    "content": "Kaspa's ultimate evolutionary step is the DAGKnight protocol, co-authored by Yonatan Sompolinsky and Michael Sutton. DAGKnight is a parameterless consensus algorithm. Unlike GHOSTDAG which has a hardcoded block rate, DAGKnight dynamically adapts the network's confirmation speed to real-time internet latency."
+  },
+  {
+    "title": "Smart Contracts and KRC-20 Ecosystem",
+    "content": "While Kaspa's base layer is strictly designed for digital cash and ultimate speed, the ecosystem is expanding. The introduction of KRC-20 tokens allows for meme coins and digital assets on the Kaspa network. Furthermore, comprehensive smart contracts and DeFi applications are planned to be deployed on Layer 2 (L2) rollups."
+  },
+  {
+    "title": "Community and Decentralized Governance",
+    "content": "Kaspa has no CEO, no board of directors, and no formal marketing budget. Everything is driven by a passionate, global grassroots community. Funding for exchange listings, hardware wallet integrations, and developer grants is raised entirely through decentralized crowdfunding initiatives."
+  },
+  {
+    "title": "The Endgame: The Global Payment Layer",
+    "content": "Kaspa's ultimate goal is not just to be a store of value, but to function as the world's primary decentralized payment engine. By solving the trilemma—achieving extreme scalability, instant finality, and Bitcoin-grade PoW security—Kaspa aims to be usable for everyday transactions, from buying coffee to massive international settlements."
+  },
+  {
+    "title": "Kaspa: Accelerating Beyond the Blockchain",
+    "content": "Kaspa: Accelerating Beyond the Blockchain - \nFrom a Concept to a Cutting-Edge Deployment\nAn Evolution, Not a Replication\nThose who follow Kaspa understand the monumental work the developers are undertaking. It’s far from just another entry in the crowded space of crypto-nonsense; it’s not another Bitcoin clone, meme token, or even a blockchain; it’s a project set on a course to redefine the foundations of crypto technology and, by extension, the financial ecosystem.\nYet, there’s a narrative out there, fueled by a mix of misunderstanding, hype, and the fast-paced expectations common in the crypto world, that paints Kaspa’s progress as slow. But let’s be clear: The past eighteen months have been anything but stagnant for Kaspa. This period has been marked by a genuine push towards innovation, the application of cutting-edge scientific methods, and significant advancements, all of which together define the Kaspa standard.\nA group of approximately 20 developers is central to this transformative journey. Through their collaborative efforts, Kaspa has experienced significant changes in its operations, carving a path for a future where scalability and efficiency in crypto are optimized and expected.\nThis rapid evolution and substantial work achieved in just a year and a half spotlight the commitment and expertise behind Kaspa, challenging any notions of slow progress and emphasizing the project’s role in setting new benchmarks for technological excellence in the cryptosphere.\nThe Rust Rewrite\nIn what’s commonly referred to as the Rust rewrite, the developers have realized a comprehensive overhaul of Kaspa’s codebase. To describe this effort as merely a ‘rewrite’ would be to undersell its magnitude; it was, in reality, a complete reconstruction, outstanding in its approach and execution. The mission extended beyond routine updates or refinements; it’s a visionary goal to reimagine Kaspa’s architecture from scratch. This foundational revamp demanded technical understanding a"
+  },
+  {
+    "title": "On Crypto Forks",
+    "content": "Source Post: On Crypto Forks - Details: \nThe differences and reasons of hard and soft forks.\nCrypto Forks\nDo you ever wonder what a fork actually is in cryptocurrency? What is the difference between a hard and a soft fork, and why does it matter? Why do people make such a big deal over a fork in the road? Imagine standing at the edge of a vast, digital city, where the streets and intersections beneath your feet are the possible paths a network could travel. Now, envision this gridiron intersecting with these countless routes, turns, and junctions, each representing a potential direction for a network. Forks, in this context, are junctures where the community decides which path to take, shaping the future of the network.\nThis article was created based on insights from a thread posted by Shai Deshe Wyborski on X/Twitter.\nhttps://medium.com/media/92560f81402b7e0cfeac2fe074eff832/hrefDeciphering Forks\nAt its essence, a fork represents a divergence in the network, a moment of decision that can alter the network’s trajectory. But not all forks are created equal; they come in different forms, namely ‘soft’ and ‘hard,’ each with its own implications and outcomes.\nThe Subtlety of Soft Forks\nSoft forks in crypto can be likened to software updates on your smartphone — they roll out new functionalities or corrections without interfering with your current applications or data. When applied to a network, a soft fork narrows the criteria for a valid block, ensuring the network can function smoothly without mandating an update from every node.\nAn excellent example of a soft fork is the Taproot update in Bitcoin, designed to augment privacy and efficiency without necessitating an upgrade from all participants in the network. Soft forks achieve this through backward-compatible changes, meaning the network remains operational even as some nodes operate on legacy versions. The Taproot enhancements, for instance, aimed at optimizing block space utilization and boosting privacy for intri"
+  },
+  {
+    "title": "Kaspa on Rust: Evolving Testnet 11",
+    "content": "Source Post: Kaspa on Rust: Evolving Testnet 11 - Details: \nBreaking New Ground in PoW Efficiency with Rust\nPushing Boundaries… Again!\nOn the evening of January 7th, at 8 PM UTC, another pivotal chapter in the Kaspa saga will be written in code and history with the second unveiling of Testnet 11 (TN 11). This public release is the second expedition into the new Rust codebase that brings the promise of the impossible 10 blocks per second (10 BPS) on a proof-of-work (PoW) network. The digital experiment provides an arena where developers and enthusiasts will come together to push the envelope, exploring the dynamics of the PHANTOM GHOSTDAG protocol live on the Rust programming language.\nTestnet 11 is far more than a proving ground; it’s a digital recreation of the real world. Focused on simulating and stress-testing a miniature version of an entire ecosystem, a world’s worth of transactions, all anxious to settle instantly to buy their favorite snacks. Its evolution on fast-forward, where the protocol endures rigorous trials, loads of simulated throughput, real-world mining and use, all while ensuring efficiency and security against any real-world scenario.\nRusty Kaspa\nRewriting the Kaspa programming language from Go to Rust is an essential development to enhance performance and manage the complexities of the BlockDAG. This transition enables the groundbreaking achievement of 10 BPS, which allows for greater scalability and throughput. By increasing the BPS, the potential transactions per second go upwards to 3,000 TPS, as demonstrated in the highly successful first public release of TN11. The Rust programming language offers advantages such as higher efficiency and improved performance, memory safety, interoperability, error handling, and a growing crypto ecosystem and developer community.\nTestnet 11 Updates\nSince the first public Testnet 11 captivated the crypto world, several enhancements have been implemented to optimize network efficiency and performance. Improvi"
+  },
+  {
+    "title": "A Year of Insight and Innovation",
+    "content": "Source Post: A Year of Insight and Innovation - Details: \nOverview of the Kaspa Currency Medium\nWhere to Start…\nAs the curtains close on 2023, I find myself caught in a blizzard of reflection, asking, ‘What the hell just happened?’ The year seems like a blur; each day, a block was swiftly added to the ledger at a dizzying 1 BPS pace. Trying to focus on a single event from this year is like attempting to spot a specific green jellybean in a jar crammed with jellybros. Each moment is so intricately intertwined with the next that distinguishing one from another turns into a chaotic ‘Candy Jar Guess’ game. My writing naturally slowed this past summer when I returned to work, resulting in fewer posts and leaving me pondering how Stella got her groove back. Only when my fingers start plodding across the mechanical keyboard, bashing through the accumulated rust and cobwebs, that I can really embrace a moment of introspection.\nThis year has been like a bazillion-piece puzzle, each segment a small yet significant part of a broader picture. In my role at Kaspa’s Medium, I’ve traversed the intricate terrain of crypto technology and its community, distilling complex ideas into engaging, bite-sized narratives. These articles, I hope, have been more than just pieces of writing; I’ve aimed for them to act as bridges, offering a pathway for our audience to navigate the often dense world of math and code in their pursuit of understanding.\nReflecting on this journey with Kaspa, I realize how each article contributed to our readers’ knowledge and my own growth. Delving into topics like decentralized finance and cryptographic protocols, I found myself growing — both as a writer and as a thinker in the tech space. This intertwining of personal and professional development has been the cornerstone of my year. In fact, the research and fascination with Kaspa and its blockDAG made this possible. These posts, in essence, were my study notes, openly shared, inviting everyone to learn alongsi"
+  },
+  {
+    "title": "Wrapped Kaspa Bridges to Polygon and BNB",
+    "content": "Source Post: Wrapped Kaspa Bridges to Polygon and BNB - Details: \nA Development for Connectivity\nAnother Chapter in DeFi\nKaspa is venturing into exciting new frontiers by introducing Wrapped Kaspa (wKAS) to the vibrant blockchain ecosystems of Polygon and BNB. This advancement, brought about by the expertise of Chainge Finance, is a significant milestone in Kaspa’s evolution within the DeFi realm, bringing on a new era of blockchain integration and interoperability.\nGetting Technical, But Keeping It Simple\nHere’s the scoop on the technical side: each network has its own unique contract address.\nBNB: 0x51e72dd1f2628295cc2ef931cb64fdbdc3a0c599Polygon: 0x3562ddf1f5ce2c02ef109e9d5a72e2fdb702711d\nDisclaimer: Please double-check these addresses to keep your crypto transactions safe and sound.\nThe Expansion\nWelcoming Wrapped Kaspa to Polygon and BNB is a significant stride beyond just marking its presence on new platforms. It’s about elevating the Kaspa ecosystem to an entirely new level. This expansion translates into a broader spectrum of choices and enhanced freedom for users in the DeFi space, unlocking a new world brimming with possibilities for managing and growing digital assets in exciting, innovative ways.\nThis integration with Polygon and BNB networks provides users access to a more diverse and dynamic DeFi landscape. It’s not just about having more options; it’s about the quality and variety of those options. Users of Kaspa and those already on the Polygon and BNB networks can now tap into different functionalities and experiences. Polygon and BNB users can also discover and engage with Kaspa, exploring its unique features and potential uses within their platforms. From engaging in novel decentralized applications to leveraging the unique advantages of each network, the possibilities are vast and varied.\nThis move promises greater flexibility in how all users interact with their digital assets, whether from Kaspa or the newly integrated networks. Whether explori"
+  },
+  {
+    "title": "Kaspium v1.0.1 Release",
+    "content": "Source Post: Kaspium v1.0.1 Release - Details: \nThe Kaspa Mobile Wallet\nKaspium\nIn crypto and likewise with Kaspa, there’s always some new innovation on the horizon. Riding this wave of continuous evolution and aiming to specifically accommodate the needs of the KAS community is Kaspium. Kaspium isn’t just any mobile wallet; it’s a sleek, modern, and intuitive wallet solution designed from the ground up to flawlessly integrate with the Kaspa network.\nKaspium has a new range of features designed to make managing your digital assets as easy as checking your email. Plus, with a name like “Kaspium v1.0.1,” you can be assured that it’s the latest and possibly the best version out there, having gone through refinements and improvements from earlier iterations. Whether you’re a novice or a crypto veteran, Kaspium promises a seamless experience, ensuring that managing your Kaspa assets is as straightforward and secure as possible. Welcome to the next chapter of Kaspa native wallets with Kaspium, now fully released and available on both iOS and Android app stores. Here’s a deep dive into its extensive feature set:\nWallet Creation and Import Options\n\n\nNew Wallet Creation: Users can set up a new wallet using a 24-word secret phrase.\n\nWallet Import: For those who already have a wallet, Kaspium provides multiple import options: 24-word and 12-word (Web Wallet/KDX)secret phrase wallets.\n\nWatch-only wallets: For use with an extended public key tied to a 24-word compatible wallet.\n\nMultiple Wallets: Users aren’t restricted to a single wallet. The platform supports the creation and import of multiple wallets.\n\nComprehensive Wallet Functionalities\n\n\nTransactions and Details: Send and receive KAS natively on the Kaspa network. Stay informed with a detailed transaction history, UTXO views, and a list of all wallet addresses.\n\nAddress Utility: Users can filter to view only addresses with funds for added convenience.\n\nSend and Receive: Integrated with the ‘@Contacts’ feature, users can s"
+  },
+  {
+    "title": "A Kaspa Performance Update",
+    "content": "Source Post: A Kaspa Performance Update - Details: \nNew Mempool Implementation Manages Thousands of Pending Transactions\nRusty Kaspa Mempool Update\nKaspa recently unveiled another significant advancement in the performance of their mempool, a term referring to the temporary holding space for unconfirmed transactions. The new mempool design can now manage a high-frequency 10-BPS network, even when saturated with hundreds of thousands of pending transactions.\nBehind this achievement stands Michael Sutton at the helm and documenting the process on Twitter/X, joined by the Rust powerlifter Tiram_88.\nSome months back, Kaspa halted its eleventh testnet, TN11. This decision was primarily made to refine everything associated with the pathways of the mempool’s operations. Before this intervention, the focus was mainly on refining their consensus validation engine. This engine, created with parallel processing in mind, was tested and proved capable of handling approximately 32 BPS. However, challenges arose when attention shifted to the mempool. Its initial design was straightforward and needed to be refined to manage heavy loads, revealing bottlenecks that hindered performance.\nMempool Bottleneck\nFigure 1This graph, Figure 1, illustrates the challenges of the previous mempool system under constant pressure. It showed significant strain when subjected to an influx of transactions more than a 10-BPS BlockDAG could efficiently manage. The system nearly halted at one point, especially between the 60 to 80-second marks, even though it was handling a mere 35,000 transactions. Two metrics stood out in this figure. The left demonstrates the operation time, while the right showcased the real-time mempool size. Both metrics reflected that the Build Block Template (BBT) and the block submission times were increasing at a high rate in correlation with the mempool size. This indicated the need for internal mempool algorithm optimization.\nOptimization objectives\n— The system needed to qui"
+  },
+  {
+    "title": "Kaspa Pool Addition — Hiveon",
+    "content": "Source Post: Kaspa Pool Addition — Hiveon - Details: \nHassle-free mining. Maximum performance and speed.\nHiveon Kaspa Pool\nHiveon is proud to announce the addition of a new mining pool designed explicitly for Kaspa (KAS) mining. This addition accommodates the needs of the Kaspa mining community, who are interested in exploring new mining opportunities. This Hiveon Kaspa Pool allows miners to leverage these characteristics and optimize their mining activities.\nPool Features\nAn affordable pool fee of only 1%Pay Per Share Plus (PPS+) reward typeA manageable minimum payout threshold of just 50 KASAbsence of transaction fees, covered entirely by HiveonMining servers located across the globeAn automatic server selection that allows Hiveon to select the nearest server for your minersIf these compelling features have piqued your interest, you can initiate the process of setting up your Hiveon Kaspa Pool.\nHiveon OS\nCreate a Hiveon account here. After establishing your account, or if you opt for anonymous usage, the next step is to create a Flight Sheet within your Hiveon OS account. Applying this Flight Sheet to your worker(s) enables the start of mining.\nConnecting to Kaspa Pool\nYou also have the option to connect directly to the Kaspa Pool using a server address. Enter the following addresses in your ASIC miner settings:\nstratum+tcp://kas.hiveon.com:4444stratum+tcp://kas.hiveon.com:8888SSL port number: 20443\nBecoming a part of the Hiveon Kaspa Pool guarantees stable daily rewards without hidden transaction fees or extra charges. In addition, you will join a community of supportive ‘Hivers.’ Experience the pinnacle of cryptocurrency mining with Hiveon!\nYou can contact their customer support team at bee@hiveon.com for any questions or issues.\nTip: Hiveon OS is an operating system that helps to keep your crypto farms at their peak and monitor their info in one place.\nKASPA | KASPA WIKI | MEDIUM | TELETYPE | DISCORD | TELEGRAM\nTWITTER | REDDIT | GITHUB | EXPLORER | Bubblegum L"
+  },
+  {
+    "title": "Kaspa Integrated on NOWPayments",
+    "content": "Source Post: Kaspa Integrated on NOWPayments - Details: \nFully Supported by August 31st\nNOWCommerce with Kaspa\nThe primary use of Kaspa and the original use case of cryptocurrency, in general, is stateless money and P2P transactions of decentralized money. The journey starts with commerce, and this is where NOWPayments comes into the picture. As a significant player in the crypto payment gateway space, NOWPayments is making waves with its recent integration with Kaspa (KAS), furthering the practical use and decentralization mission.\nNOWPayments\nNOWPayments is a crypto payment gateway that stands out for its tailored solutions and accessibility. By integrating Kaspa, NOWPayments adds a new dimension to its offerings, fostering the broader acceptance of decentralized money.\nFocusing on industries like gaming, NFT marketplaces, and e-commerce platforms, NOWPayments provides customized API solutions that seamlessly integrate crypto payments. This commitment to personalization ensures that various sectors can embrace crypto practically and realistically with the ability to fit each business model.\nIntegration lies at the heart of NOWPayments. With its user-friendly platform, businesses can effortlessly integrate with platforms like Shopify, accepting crypto payments as part of their regular operations. This ease of integration bridges the gap between traditional and digital currencies, embodying the original concept of stateless money.\nWhile maintaining a solid focus on crypto payments, NOWPayments offers Fiat conversion to onboard more traditional users into the digital currency. The system’s lightning-fast speeds ensure that payments are quickly recognized on the blockchain, keeping transactions smooth and efficient.\nWhile maintaining a solid focus on crypto payments, NOWPayments offers Fiat conversion to onboard more traditional users into the digital currency. With the integration of Kaspa, merchants can receive KAS and instantly exchange it for a stablecoin. This pr"
+  },
+  {
+    "title": "Kaspa Community AMA with Guest @realKateL from ChangeNOW &amp; NOWPayments",
+    "content": "Source Post: Kaspa Community AMA with Guest @realKateL from ChangeNOW &amp; NOWPayments - Details: \nHeld on July 27th— Hosted by @BubblegumLtng\nChangeNOW &amp; NOWPayments\nThe Kaspa Community hosted an AMA on July 27th with guest @realKateL, a partnership lead from two exciting projects: ChangeNOW and NOWPayments, each offering unique solutions for users and merchants with their latest KAS integration.\nA Unique Swap Exchange\nChangeNOW is a unique exchange service and liquidity aggregator that caters to individuals and businesses. Supporting 900 cryptocurrencies across 60 blockchains enables cost-effective cross-chain swaps by sourcing the best rate from several centralized and decentralized exchanges.\nHere are some key takeaways:\n\n\nVersatility: ChangeNOW can be used by users, projects, and businesses.\n\nIntegration: Businesses and projects can integrate cross-chain swaps using ChangeNOW’s exchange API.\n\nEase of Use: It doesn’t require an EVM-compatible wallet or a wallet connector. Users can send funds to an address or have ChangeNOW send the exchanged funds to their wallet.\n\nSpeed: It’s aiming for fast confirmation times, aligned with the desire for cryptocurrencies to be used for everyday transactions.\n\nNow Wallet &amp; Tracker: The NOWWallet can integrate anything listed on ChangeNOW. At the same time, the NOWTracker is a portfolio tracker for asset performance analysis.\n\nCrypto Loans: Through a partnership with Coin Rabbit, ChangeNOW offers crypto loans as an additional feature.\n\nA New Crypto Payment Gateway\nNOWPayments is a crypto payment gateway offering many tools for businesses to accept payments. Here’s what you need to know:\n\n\nCustom Solutions: NOWPayments offers customized API solutions for gaming, NFT marketplaces, and e-commerce platforms.\n\nEase of Integration: Integrating platforms like Shopify for accepting crypto payments is effortless.\n\nFiat Conversion: While focusing on crypto payments, it also facilitates Fiat conversion to onboard more people.\n\nLi"
+  }
+]
+
+
+==================================================================
+📁 FILE: .cargo\config.toml
+==================================================================
+[build]
+rustflags = ["--cfg", "tokio_unstable"]
+
+
+
+==================================================================
+📁 FILE: src\agent.rs
+==================================================================
+use reqwest::Client;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use std::env;
+use tracing::{error, info};
+
+pub async fn search_and_learn(pool: &PgPool, query: &str) -> Option<String> {
+    let api_key = env::var("TAVILY_API_KEY").unwrap_or_default();
+    if api_key.is_empty() {
+        error!("[AI AGENT] CRITICAL: TAVILY_API_KEY is missing!");
+        return None;
+    }
+
+    info!("[AI AGENT] Fetching live intelligence from internet for: {}", query);
+    
+    let client = Client::new();
+    let res = client.post("https://api.tavily.com/search")
+        .json(&json!({
+            "api_key": api_key,
+            "query": format!("Kaspa network official technical info: {}", query),
+            "search_depth": "advanced",
+            "include_answer": true,
+            "days": 30
+        }))
+        .send()
+        .await;
+
+    match res {
+        Ok(response) => {
+            if let Ok(body) = response.json::<Value>().await {
+                if let Some(answer) = body.get("answer").and_then(|a| a.as_str()) {
+                    let answer_str = answer.to_string();
+                    let safe_link = format!("tavily://search/{}", query.replace(" ", "_"));
+                    
+                    crate::state::add_to_knowledge_base(
+                        pool, 
+                        query, 
+                        &safe_link, 
+                        &answer_str, 
+                        "Autonomous Internet Search"
+                    ).await;
+
+                    info!("[AI AGENT] Memory Synchronized: Learned new facts about '{}'", query);
+                    return Some(answer_str);
+                }
+            }
+        }
+        Err(e) => error!("[AI AGENT] External network error: {}", e),
+    }
+    None
+}
+
+
+
+==================================================================
+📁 FILE: src\commands.rs
+==================================================================
+use teloxide::utils::command::BotCommands;
+
+#[derive(BotCommands, Clone, std::fmt::Debug)]
+#[command(
+    rename_rule = "lowercase",
+    description = "Kaspa Enterprise AI Bot Commands:"
+)]
+pub enum Command {
+    // --- Public Commands ---
+    #[command(description = "Start the bot and show main menu.")]
+    Start,
+    #[command(description = "Show the ultimate guide and features.")]
+    Help,
+    #[command(description = "Add a wallet: /add <address>")]
+    Add(String),
+    #[command(description = "Remove a wallet: /remove <address>")]
+    Remove(String),
+    #[command(description = "List all tracked wallets.")]
+    List,
+    #[command(description = "Check Live Balance & UTXOs.")]
+    Balance,
+    #[command(description = "Estimate your solo-mining hashrate.")]
+    Miner,
+    #[command(description = "Count your unspent mined blocks.")]
+    Blocks,
+    #[command(description = "Support the Developer.")]
+    Donate,
+
+    // --- Node & Market Stats ---
+    #[command(description = "Show full node and network health.")]
+    Network,
+    #[command(description = "Show BlockDAG consensus details.")]
+    Dag,
+    #[command(description = "Check KAS Price & Market Cap.")]
+    Price,
+    #[command(description = "Check Market Cap details.")]
+    Market,
+    #[command(description = "Check circulating and max supply.")]
+    Supply,
+    #[command(description = "Check real-time Mempool fees.")]
+    Fees,
+
+    // --- Admin Enterprise Commands (Restricted) ---
+    #[command(description = "Admin: Global Analytics & User Report.")]
+    Stats,
+    #[command(description = "Admin: System Hardware Diagnostics.")]
+    Sys,
+    #[command(description = "Admin: Global Reverse Sync from Pruning Point.")]
+    Sync,
+    #[command(description = "Admin: Pause UTXO monitoring.")]
+    Pause,
+    #[command(description = "Admin: Resume UTXO monitoring.")]
+    Resume,
+    #[command(description = "Admin: Safe restart of the bot binary.")]
+    Restart,
+    #[command(description = "Admin: Broadcast message to all users.")]
+    Broadcast(String),
+    #[command(description = "Admin: Tail last 25 lines of bot.log.")]
+    Logs,
+    #[command(description = "Admin: Teach AI new Kaspa facts.")]
+    Learn(String),
+    #[command(description = "Admin: Auto-fetch latest official Kaspa news.")]
+    AutoLearn,
+}
+
+
+
+==================================================================
+📁 FILE: src\context.rs
+==================================================================
+use crate::ai::SharedAiEngine;
+use crate::state::{SharedState, UtxoState};
+use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
+use kaspa_wrpc_client::KaspaRpcClient;
+use redis::aio::ConnectionManager;
+use sqlx::postgres::PgPool;
+use std::num::NonZeroU32;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+pub type PriceCache = Arc<RwLock<(f64, f64)>>;
+pub type SpamLimiter = Arc<RateLimiter<i64, DefaultKeyedStateStore<i64>, DefaultClock>>;
+
+#[derive(Clone)]
+pub struct AppContext {
+    pub rpc: Arc<KaspaRpcClient>,
+    pub pool: PgPool,             // 🐘 Moved to PostgreSQL
+    pub redis: ConnectionManager, // ⚡ Added Redis for Distributed RAM
+    pub state: SharedState,
+    pub utxo_state: UtxoState,
+    pub monitoring: Arc<AtomicBool>,
+    pub price_cache: PriceCache,
+    pub admin_id: i64,
+    pub rate_limiter: SpamLimiter,
+    pub ai_engine: SharedAiEngine,
+}
+
+impl AppContext {
+    pub fn new_rate_limiter() -> SpamLimiter {
+        Arc::new(RateLimiter::keyed(
+            Quota::per_second(NonZeroU32::new(2).unwrap()).allow_burst(NonZeroU32::new(3).unwrap()),
+        ))
+    }
+}
+
+
+
+
+==================================================================
+📁 FILE: src\kaspa_features.rs
+==================================================================
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+/// 🟢 PUBLIC USER MENU: Complete features with BlockDAG & Support
+pub fn main_menu_markup() -> InlineKeyboardMarkup {
+    let rows = vec![
+        vec![
+            InlineKeyboardButton::callback("💰 My Balances", "cmd_balance"),
+            InlineKeyboardButton::callback("⛏️ My Hashrate", "cmd_miner"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🧱 Mined Blocks", "cmd_blocks"),
+            InlineKeyboardButton::callback("💼 Tracked Wallets", "cmd_list"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🌐 Network Stats", "cmd_network"),
+            InlineKeyboardButton::callback("💵 KAS Price", "cmd_price"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🪙 Coin Supply", "cmd_supply"),
+            InlineKeyboardButton::callback("⛽ Mempool Fees", "cmd_fees"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📦 BlockDAG Details", "cmd_dag"),
+            InlineKeyboardButton::callback("❤️ Support", "cmd_donate"),
+        ],
+    ];
+
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// 🔴 ADMIN TERMINAL: Hybrid View including ALL features + Management
+pub fn admin_menu_markup() -> InlineKeyboardMarkup {
+    let rows = vec![
+        // Section 1: User Features (Compact)
+        vec![
+            InlineKeyboardButton::callback("💰 Balances", "cmd_balance"),
+            InlineKeyboardButton::callback("⛏️ Hashrate", "cmd_miner"),
+            InlineKeyboardButton::callback("🧱 Blocks", "cmd_blocks"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🌐 Network", "cmd_network"),
+            InlineKeyboardButton::callback("💵 Price", "cmd_price"),
+            InlineKeyboardButton::callback("💼 Wallets", "cmd_list"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🪙 Supply", "cmd_supply"),
+            InlineKeyboardButton::callback("⛽ Fees", "cmd_fees"),
+            InlineKeyboardButton::callback("📦 DAG Info", "cmd_dag"), // Re-added here
+        ],
+        vec![InlineKeyboardButton::callback(
+            "❤️ Support Developer",
+            "cmd_donate",
+        )], // Re-added here
+        // Section 2: Visual Separator
+        vec![InlineKeyboardButton::callback(
+            "─── ⚙️ ADMIN TERMINAL ⚙️ ───",
+            "none",
+        )],
+        // Section 3: Professional Management Tools
+        vec![
+            InlineKeyboardButton::callback("📊 Admin Stats", "cmd_stats"),
+            InlineKeyboardButton::callback("🔄 Sync All Blocks", "admin_sync_blocks"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🖥️ System Status", "cmd_sys"),
+            InlineKeyboardButton::callback("📜 View Logs", "cmd_logs"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("⏸️ Pause", "cmd_pause"),
+            InlineKeyboardButton::callback("▶️ Resume", "cmd_resume"),
+            InlineKeyboardButton::callback("🔄 Restart", "cmd_restart"),
+        ],
+        vec![InlineKeyboardButton::callback(
+            "📢 Broadcast Message",
+            "cmd_broadcast",
+        )],
+    ];
+
+    InlineKeyboardMarkup::new(rows)
+}
+
+pub fn format_difficulty(val: f64) -> String {
+    if val <= 0.0 {
+        return "0.00".to_string();
+    }
+    if val >= 1e15 {
+        format!("{:.2} P", val / 1e15)
+    } else if val >= 1e12 {
+        format!("{:.2} T", val / 1e12)
+    } else if val >= 1e9 {
+        format!("{:.2} G", val / 1e9)
+    } else {
+        format!("{:.2}", val)
+    }
+}
+
+pub fn format_hashrate(h: f64) -> String {
+    if h >= 1e15 {
+        format!("{:.2} PH/s", h / 1e15)
+    } else if h >= 1e12 {
+        format!("{:.2} TH/s", h / 1e12)
+    } else if h >= 1e9 {
+        format!("{:.2} GH/s", h / 1e9)
+    } else if h >= 1e6 {
+        format!("{:.2} MH/s", h / 1e6)
+    } else {
+        format!("{:.2} H/s", h)
+    }
+}
+
+
+
+==================================================================
+📁 FILE: src\main.rs
+==================================================================
+#![allow(clippy::manual_range_contains)]
+
+mod ai;
+mod commands;
+mod context;
+mod handlers;
+mod kaspa_features;
+mod state;
+pub mod agent;
+mod utils;
+mod workers;
+
+use dashmap::DashMap;
+use dotenvy::dotenv;
+use kaspa_consensus_core::network::NetworkId;
+use kaspa_wrpc_client::{KaspaRpcClient, WrpcEncoding};
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
+use teloxide::dptree;
+use teloxide::prelude::*;
+use teloxide::types::Update;
+use teloxide::utils::command::BotCommands;
+use tokio::fs;
+use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
+use tracing_subscriber::{
+    fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
+};
+
+use crate::commands::Command;
+use crate::context::AppContext;
+
+#[derive(thiserror::Error, Debug)]
+pub enum BotError {
+    #[error("Environment Variable Missing: {0}")]
+    EnvVarMissing(String),
+    #[error("Database Initialization Failed: {0}")]
+    DatabaseInit(#[from] sqlx::Error),
+    #[error("RPC Connection Failed: {0}")]
+    RpcConnection(String),
+}
+
+#[tokio::main]
+async fn main() -> Result<(), BotError> {
+    dotenv().ok();
+
+    // Setup logging telemetry
+    let file_appender = tracing_appender::rolling::never(".", "bot.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking.and(std::io::stdout))
+                .with_ansi(false)
+                .with_target(false)
+                .with_thread_ids(true),
+        )
+        .with(filter)
+        .init();
+
+    info!("[INIT] Secure Enterprise Rust Engine Started");
+
+    let admin_id_str =
+        env::var("ADMIN_ID").map_err(|_| BotError::EnvVarMissing("ADMIN_ID".into()))?;
+    let admin_id: i64 = admin_id_str.parse().unwrap_or(0);
+    let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:18110".to_string());
+    let network_id = NetworkId::from_str("mainnet")
+        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap());
+
+    let db_url = env::var("DATABASE_URL").expect("CRITICAL: DATABASE_URL is missing in .env");
+    let pool = crate::state::init_db(&db_url).await?;
+
+    // Initialize Redis Distributed RAM
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_client = redis::Client::open(redis_url).expect("CRITICAL: Invalid Redis URL");
+    let redis = redis::aio::ConnectionManager::new(redis_client)
+        .await
+        .expect("CRITICAL: Failed to connect to Redis Cluster");
+    let cancel_token = CancellationToken::new();
+
+    // Graceful Shutdown Registry
+    let pool_shutdown = pool.clone();
+    let ct_ctrlc = cancel_token.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        warn!("[SYSTEM] CRITICAL: SIGINT received. Executing Graceful Database Shutdown...");
+        pool_shutdown.close().await;
+        info!("[SYSTEM] Database connections closed safely. Cleaning up workers...");
+        ct_ctrlc.cancel();
+        sleep(Duration::from_secs(2)).await;
+        info!("[SYSTEM] Shutdown complete.");
+        std::process::exit(0);
+    });
+
+    let state = Arc::new(DashMap::new());
+    let rate_limiter = crate::context::AppContext::new_rate_limiter();
+
+    // Migrate old wallets.json if it exists
+    if let Ok(data) = fs::read_to_string("wallets.json").await {
+        if let Ok(parsed) = serde_json::from_str::<HashMap<String, HashSet<i64>>>(&data) {
+            for (k, v) in parsed {
+                for chat_id in v {
+                    crate::state::add_wallet_to_db(&pool, &k, chat_id).await;
+                }
+            }
+            let _ = fs::rename("wallets.json", "wallets.json.migrated").await;
+        }
+    }
+
+    // Load active state into RAM
+    if let Err(e) = crate::state::load_state_from_db(&pool, &state).await {
+        error!("[DB ERROR] Data load failed: {}", e);
+    }
+
+    // Establish Kaspa wRPC Tunnel
+    let rpc_client = KaspaRpcClient::new(
+        WrpcEncoding::SerdeJson,
+        Some(&ws_url),
+        None,
+        Some(network_id),
+        None,
+    )
+    .map_err(|e| BotError::RpcConnection(format!("Tunnel failed: {}", e)))?;
+
+    // Initialize Cloud AI Engine (Instant Boot)
+    info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
+    let ai_engine = Arc::new(tokio::sync::Mutex::new(
+        crate::ai::LocalAiEngine::new()
+            .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."),
+    ));
+
+    let ctx = AppContext {
+        rpc: Arc::new(rpc_client),
+        pool,
+        redis,
+        state,
+        utxo_state: Arc::new(DashMap::new()),
+        monitoring: Arc::new(AtomicBool::new(true)),
+        price_cache: Arc::new(RwLock::new((0.0, 0.0))),
+        admin_id,
+        rate_limiter,
+        ai_engine,
+    };
+
+    let bot_token =
+        env::var("BOT_TOKEN").map_err(|_| BotError::EnvVarMissing("BOT_TOKEN".into()))?;
+    let bot = Bot::new(bot_token);
+
+    // Clear old updates to prevent message flooding on restart
+    let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
+
+    // Command Menu Setup
+    let public_commands = vec![
+        teloxide::types::BotCommand::new("start", "Start the bot and show help"),
+        teloxide::types::BotCommand::new("help", "Show the ultimate guide and features"),
+        teloxide::types::BotCommand::new("add", "Track a wallet"),
+        teloxide::types::BotCommand::new("remove", "Stop tracking a wallet"),
+        teloxide::types::BotCommand::new("balance", "Check live balance & UTXOs"),
+        teloxide::types::BotCommand::new("blocks", "Count unspent mined blocks"),
+        teloxide::types::BotCommand::new("miner", "Estimate solo-mining hashrate"),
+        teloxide::types::BotCommand::new("network", "View node & network stats"),
+    ];
+    let _ = bot.set_my_commands(public_commands).await;
+    let _ = bot
+        .set_my_commands(Command::bot_commands())
+        .scope(teloxide::types::BotCommandScope::Chat {
+            chat_id: teloxide::types::Recipient::Id(teloxide::types::ChatId(admin_id)),
+        })
+        .await;
+
+    // 🚀 Start detached background workers
+    crate::workers::start_all(ctx.clone(), bot.clone(), cancel_token.clone());
+
+    // 🕸️ Start RSS Crawler for Dynamic AI Knowledge Base (RAG)
+    crate::workers::rss::spawn_rss_crawler(ctx.pool.clone(), cancel_token.clone());
+
+    // Advanced Routing Engine (dptree)
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .filter_command::<crate::commands::Command>()
+                .endpoint(handlers::handle_command),
+        )
+        .branch(Update::filter_callback_query().endpoint(handlers::handle_callback))
+        .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
+        .branch(Update::filter_message().endpoint(handlers::handle_raw_message_v2));
+
+    info!("🚀 Dispatcher is LIVE! Ready for users.");
+
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![ctx])
+        .enable_ctrlc_handler()
+        .default_handler(|update: Arc<Update>| async move {
+            tracing::debug!(
+                "[SYSTEM] Dropped completely unhandled update type: {:?}",
+                update.id
+            );
+        })
+        .build()
+        .dispatch()
+        .await;
+
+    Ok(())
+}
+
+
+
+
+
+
+==================================================================
+📁 FILE: src\state.rs
+==================================================================
+use dashmap::DashMap;
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use std::collections::HashSet;
+use std::sync::Arc;
+use tracing::{error, info};
+
+pub type SharedState = Arc<DashMap<String, HashSet<i64>>>;
+pub type UtxoState = Arc<DashMap<String, HashSet<String>>>;
+
+pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(50).connect(db_url).await?;
+
+    // Added last_active for Data Retention Policy
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS user_wallets (
+            wallet VARCHAR(255) NOT NULL,
+            chat_id BIGINT NOT NULL,
+            last_active TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (wallet, chat_id)
+        )",
+    ).execute(&pool).await?;
+
+    // Safe migration if the column doesn't exist
+    let _ = sqlx::query("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP").execute(&pool).await;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS mined_blocks (
+            outpoint VARCHAR(255) PRIMARY KEY,
+            wallet VARCHAR(255) NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
+            daa_score BIGINT NOT NULL,
+            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            sync_source VARCHAR(50) DEFAULT 'LIVE'
+        )",
+    ).execute(&pool).await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_wallet_stats ON mined_blocks(wallet, timestamp)").execute(&pool).await?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS sync_checkpoint (wallet VARCHAR(255) PRIMARY KEY, last_daa_score BIGINT NOT NULL)").execute(&pool).await?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS knowledge_base (id SERIAL PRIMARY KEY, title TEXT NOT NULL, link TEXT UNIQUE NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL, published_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)").execute(&pool).await?;
+
+    Ok(pool)
+}
+
+#[allow(dead_code)]
+pub async fn update_user_activity(pool: &PgPool, chat_id: i64) {
+    let _ = sqlx::query("UPDATE user_wallets SET last_active = CURRENT_TIMESTAMP WHERE chat_id = $1")
+        .bind(chat_id).execute(pool).await;
+}
+
+#[allow(dead_code)]
+pub async fn enforce_retention_policy(pool: &PgPool) {
+    // GDPR Standard: Delete PII (wallet linkage) after 90 days of inactivity
+    match sqlx::query("DELETE FROM user_wallets WHERE last_active < CURRENT_TIMESTAMP - INTERVAL '90 days'")
+        .execute(pool).await {
+        Ok(res) => {
+            if res.rows_affected() > 0 {
+                info!("🛡️ [PRIVACY] Retention Policy Enforced: Deleted {} inactive user linkages.", res.rows_affected());
+            }
+        }
+        Err(e) => error!("⚠️ [PRIVACY] Failed to enforce retention policy: {}", e),
+    }
+}
+
+pub async fn record_mined_block(pool: &PgPool, outpoint: &str, wallet: &str, amount: f64, daa: u64) {
+    if let Err(e) = sqlx::query("INSERT INTO mined_blocks (outpoint, wallet, amount, daa_score, sync_source) VALUES ($1, $2, $3, $4, 'LIVE') ON CONFLICT (outpoint) DO NOTHING")
+        .bind(outpoint).bind(wallet).bind(amount).bind(daa as i64).execute(pool).await { error!("[DB ERROR] {}", e); }
+}
+
+pub async fn record_recovery_block(pool: &PgPool, outpoint: &str, wallet: &str, amount: f64, daa: u64) {
+    if let Err(e) = sqlx::query("INSERT INTO mined_blocks (outpoint, wallet, amount, daa_score, sync_source) VALUES ($1, $2, $3, $4, 'RECOVERY') ON CONFLICT (outpoint) DO NOTHING")
+        .bind(outpoint).bind(wallet).bind(amount).bind(daa as i64).execute(pool).await { error!("[DB ERROR] {}", e); }
+}
+
+pub async fn get_sync_checkpoint(pool: &PgPool, wallet: &str) -> u64 {
+    sqlx::query_scalar("SELECT last_daa_score FROM sync_checkpoint WHERE wallet = $1")
+        .bind(wallet).fetch_optional(pool).await.unwrap_or(None).unwrap_or(0) as u64
+}
+
+pub async fn update_sync_checkpoint(pool: &PgPool, wallet: &str, daa_score: u64) {
+    let _ = sqlx::query("INSERT INTO sync_checkpoint (wallet, last_daa_score) VALUES ($1, $2) ON CONFLICT (wallet) DO UPDATE SET last_daa_score = EXCLUDED.last_daa_score")
+        .bind(wallet).bind(daa_score as i64).execute(pool).await;
+}
+
+pub async fn get_lifetime_stats(pool: &PgPool, wallet: &str) -> Result<(i64, f64), sqlx::Error> {
+    sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(amount), 0.0) FROM mined_blocks WHERE wallet = $1").bind(wallet).fetch_one(pool).await
+}
+
+pub async fn load_state_from_db(pool: &PgPool, state: &SharedState) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT wallet, chat_id FROM user_wallets").fetch_all(pool).await?;
+    for (wallet, chat_id) in rows { state.entry(wallet).or_insert_with(HashSet::new).insert(chat_id); }
+    info!("[DB] Synchronized {} active wallets.", state.len());
+    Ok(())
+}
+
+pub async fn add_wallet_to_db(pool: &PgPool, wallet: &str, chat_id: i64) {
+    let _ = sqlx::query("INSERT INTO user_wallets (wallet, chat_id) VALUES ($1, $2) ON CONFLICT (wallet, chat_id) DO UPDATE SET last_active = CURRENT_TIMESTAMP")
+        .bind(wallet).bind(chat_id).execute(pool).await;
+}
+
+pub async fn remove_wallet_from_db(pool: &PgPool, wallet: &str, chat_id: i64) {
+    let _ = sqlx::query("DELETE FROM user_wallets WHERE wallet = $1 AND chat_id = $2").bind(wallet).bind(chat_id).execute(pool).await;
+}
+
+pub async fn remove_all_user_data(pool: &PgPool, _state: &SharedState, chat_id: i64) {
+    let _ = sqlx::query("DELETE FROM user_wallets WHERE chat_id = $1").bind(chat_id).execute(pool).await;
+}
+
+
+
+// --- START OF AI KNOWLEDGE BASE EXTENSIONS ---
+pub async fn add_to_knowledge_base(pool: &PgPool, title: &str, link: &str, content: &str, source: &str) {
+    let _ = sqlx::query(
+        "INSERT INTO knowledge_base (title, link, content, source) VALUES ($1, $2, $3, $4) ON CONFLICT (link) DO NOTHING"
+    )
+    .bind(title)
+    .bind(link)
+    .bind(content)
+    .bind(source)
+    .execute(pool)
+    .await;
+}
+
+#[allow(dead_code)]
+pub async fn get_knowledge_context(pool: &PgPool, keyword: &str) -> Option<String> {
+    let search_term = format!("%{}%", keyword);
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT content FROM knowledge_base WHERE title ILIKE $1 OR content ILIKE $1 ORDER BY published_at DESC LIMIT 1"
+    )
+    .bind(search_term)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    result.map(|r| r.0)
+}
+// --- END OF AI KNOWLEDGE BASE EXTENSIONS ---
+
+
+
+
+==================================================================
+📁 FILE: src\utils.rs
+==================================================================
+use anyhow::Context;
+use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
+use std::num::NonZeroU32;
+use std::sync::OnceLock;
+use teloxide::{
+    prelude::*,
+    types::{ChatId, InlineKeyboardMarkup},
+};
+
+type SpamLimiter = RateLimiter<i64, DefaultKeyedStateStore<i64>, DefaultClock>;
+
+pub fn f_num(n: f64) -> String {
+    let s = format!("{:.0}", n);
+    let mut result = String::new();
+    let len = s.len();
+    for (i, c) in s.chars().enumerate() {
+        result.push(c);
+        if (len - i - 1) % 3 == 0 && i != len - 1 {
+            result.push(',');
+        }
+    }
+    result
+}
+
+// 🔄 Unified Enterprise Function for Sending or In-Place Editing
+pub async fn send_or_edit_log<T: AsRef<str>>(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: Option<teloxide::types::MessageId>,
+    text: T,
+    markup: Option<InlineKeyboardMarkup>,
+) -> anyhow::Result<()> {
+    let text_ref = text.as_ref();
+    crate::utils::log_multiline(
+        &format!("📤 [BOT OUT] Chat: {}\n[RESPONSE]:", chat_id.0),
+        text_ref,
+        true,
+    );
+
+    let preview_opts = teloxide::types::LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
+    };
+
+    if let Some(id) = msg_id {
+        let mut req = bot
+            .edit_message_text(chat_id, id, text_ref.to_string())
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .link_preview_options(preview_opts);
+        if let Some(ref m) = markup {
+            req = req.reply_markup(m.clone());
+        }
+
+        match req.await {
+            Ok(_) => Ok(()),
+            Err(teloxide::RequestError::Api(teloxide::ApiError::MessageNotModified)) => Ok(()), // Gracefully ignore unchanged text
+            Err(e) => Err(anyhow::anyhow!("API Error: {}", e)),
+        }
+    } else {
+        let mut req = bot
+            .send_message(chat_id, text_ref.to_string())
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .link_preview_options(preview_opts);
+        if let Some(ref m) = markup {
+            req = req.reply_markup(m.clone());
+        }
+        req.await.context("API Error")?;
+        Ok(())
+    }
+}
+
+// 🔄 Helper to generate the Refresh Button
+pub fn refresh_markup(cmd_callback: &str) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![vec![teloxide::types::InlineKeyboardButton::callback(
+        "🔄 Refresh",
+        cmd_callback,
+    )]])
+}
+
+pub fn format_short_wallet(w: &str) -> String {
+    let chars: Vec<char> = w.chars().collect();
+    if chars.len() > 18 {
+        let start: String = chars[0..12].iter().collect();
+        let end: String = chars[chars.len() - 6..].iter().collect();
+        format!("{}...{}", start, end)
+    } else {
+        w.to_string()
+    }
+}
+
+pub fn format_hash(hash: &str, link_type: &str) -> String {
+    format!(
+        "<a href=\"https://kaspa.stream/{}/{}\">{}</a>",
+        link_type,
+        hash,
+        format_short_wallet(hash)
+    )
+}
+
+pub fn is_spam(chat_id: i64) -> bool {
+    static LIMITER: OnceLock<SpamLimiter> = OnceLock::new();
+    let limiter =
+        LIMITER.get_or_init(|| RateLimiter::keyed(Quota::per_second(NonZeroU32::new(1).unwrap())));
+
+    limiter.check_key(&chat_id).is_err()
+}
+
+pub fn clean_for_log(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+    result
+}
+
+pub fn log_multiline(header: &str, body: &str, is_html: bool) {
+    for line in header.lines() {
+        if !line.trim().is_empty() {
+            tracing::info!("{}", line);
+        }
+    }
+    let body_to_print = if is_html {
+        clean_for_log(body)
+    } else {
+        body.to_string()
+    };
+    for line in body_to_print.lines() {
+        if !line.trim().is_empty() {
+            tracing::info!("   | {}", line);
+        }
+    }
+}
+
+
+
+==================================================================
+📁 FILE: src\ai\context.rs
+==================================================================
+use kaspa_addresses::Address;
+use kaspa_rpc_core::api::rpc::RpcApi;
+
+use crate::context::AppContext;
+
+pub async fn inject_live_wallet_context(chat_id: i64, ctx: &AppContext) -> String {
+    let mut live_data = String::new();
+
+    if let Ok(dag_info) = ctx.rpc.get_block_dag_info().await {
+        live_data.push_str(&format!(
+            "Network Difficulty: {}. \nDAA Score: {}. \n",
+            crate::kaspa_features::format_difficulty(dag_info.difficulty),
+            dag_info.virtual_daa_score
+        ));
+    }
+
+    let price = ctx.price_cache.read().await.0;
+    if price > 0.0 {
+        live_data.push_str(&format!("KAS Price: ${:.4} USD. \n", price));
+    }
+
+    let wallets: Vec<String> = ctx
+        .state
+        .iter()
+        .filter(|e| e.value().contains(&chat_id))
+        .map(|e| e.key().clone())
+        .collect();
+
+    if !wallets.is_empty() {
+        let mut total = 0.0;
+        for w in &wallets {
+            if let Ok(addr) = Address::try_from(w.as_str()) {
+                if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr]).await {
+                    total += utxos
+                        .iter()
+                        .map(|u| u.utxo_entry.amount as f64)
+                        .sum::<f64>()
+                        / 1e8;
+                }
+            }
+        }
+        live_data.push_str(&format!("User Balance: {:.8} KAS.\n", total));
+    } else {
+        live_data.push_str("User Balance: 0 KAS (No wallet tracked).\n");
+    }
+
+    live_data
+}
+
+
+
+==================================================================
+📁 FILE: src\ai\engine.rs
+==================================================================
+use reqwest::Client;
+use serde_json::json;
+use sqlx::PgPool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+pub struct LocalAiEngine {
+    pub client: Client,
+    pub api_key: String,
+    pub base_url: String,
+    pub chat_model: String,
+    pub audio_model: String,
+}
+
+pub type SharedAiEngine = Arc<Mutex<LocalAiEngine>>;
+
+impl LocalAiEngine {
+    pub fn new() -> anyhow::Result<Self> {
+        tracing::info!("[AI ENGINE] Initializing Universal OpenAI-Standard API Engine...");
+
+        // 🔑 Configuration
+        let api_key = std::env::var("AI_API_KEY").expect("⚠️ AI_API_KEY is missing in .env");
+        let base_url = std::env::var("AI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com/openai/v1".to_string());
+        let chat_model = std::env::var("AI_CHAT_MODEL")
+            .unwrap_or_else(|_| "llama-3.3-70b-versatile".to_string());
+        let audio_model =
+            std::env::var("AI_AUDIO_MODEL").unwrap_or_else(|_| "whisper-large-v3".to_string());
+
+        tracing::info!("[AI ENGINE] Target: {} | Model: {}", base_url, chat_model);
+
+        Ok(Self {
+            client: Client::new(),
+            api_key,
+            base_url,
+            chat_model,
+            audio_model,
+        })
+    }
+
+    pub async fn generate(
+        &self,
+        pool: &PgPool, // 🆕 Added Pool for RAG access
+        prompt: &str,
+        live_context: &str,
+        audio_bytes: Option<Vec<u8>>,
+    ) -> anyhow::Result<String> {
+        let mut final_prompt = prompt.to_string();
+
+        // 🎙️ STEP 1: Handle Audio Transcriptions
+        if let Some(bytes) = audio_bytes {
+            tracing::info!("[AI ENGINE] Transcribing audio via {}...", self.audio_model);
+            let url = format!("{}/audio/transcriptions", self.base_url);
+
+            let part = reqwest::multipart::Part::bytes(bytes)
+                .file_name("audio.ogg")
+                .mime_str("audio/ogg")?;
+
+            let form = reqwest::multipart::Form::new()
+                .part("file", part)
+                .text("model", self.audio_model.clone());
+
+            let res = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .multipart(form)
+                .send()
+                .await?;
+
+            let status = res.status();
+            let json_res: serde_json::Value = res.json().await?;
+
+            if status.is_success() {
+                if let Some(transcription) = json_res["text"].as_str() {
+                    tracing::info!("[AUDIO PARSED]: {}", transcription);
+                    // Use the transcription as the primary prompt if it exists
+                    final_prompt = transcription.to_string();
+                }
+            } else {
+                tracing::error!("[AUDIO ERROR] HTTP {}: {}", status, json_res);
+                return Err(anyhow::anyhow!(
+                    "Audio transcription failed. Ensure the provider supports Whisper API."
+                ));
+            }
+        }
+
+        // 🧠 STEP 2: Semantic RAG Execution (Retrieval-Augmented Generation)
+        // We pass the parsed text (or original text) to find relevant RSS news.
+        let rag_context = crate::ai::rag::get_rag_context(pool, &final_prompt).await;
+
+        // 🏗️ STEP 3: Construct the Enterprise System Prompt
+        let system_message = format!(
+            "You are Kaspa Pulse, an uncompromisingly accurate, highly professional Kaspa AI Assistant.
+
+[ABSOLUTE RULES]
+1. DO NOT invent, hallucinate, or assume facts. If you don't know, state it clearly.
+2. Kaspa is a pure Proof-of-Work (PoW) BlockDAG. It has NO CEO, NO PoS, NO Smart Contracts.
+3. Keep answers concise, factual, and formatted beautifully using Telegram HTML tags (<b>, <i>, <code>).
+4. Always prioritize the Knowledge Base and Live Data provided below over your base training data.
+
+[LIVE NODE DATA]
+(Use this to answer questions about the user's balance, hashrate, or current network state)
+{}
+
+{}",
+            live_context, rag_context
+        );
+
+        // 🌐 STEP 4: Execute Chat Completion Request
+        let url = format!("{}/chat/completions", self.base_url);
+        let body = json!({
+            "model": self.chat_model,
+            "messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": final_prompt}
+            ],
+            "temperature": 0.2 // Lower temperature for high factual accuracy
+        });
+
+        // 🔄 STEP 5: Enterprise Exponential Backoff & Retry Logic
+        let mut attempts = 0;
+        let max_attempts = 4;
+        let mut last_error = String::new();
+
+        while attempts < max_attempts {
+            let res = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await?;
+
+            let status = res.status();
+            let json_res: serde_json::Value = res.json().await?;
+
+            if status.is_success() {
+                if let Some(text) = json_res["choices"][0]["message"]["content"].as_str() {
+                    return Ok(text.trim().to_string());
+                } else {
+                    tracing::error!(
+                        "[API ERROR] Missing standard text choice in response: {}",
+                        json_res
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to parse standard API response structure."
+                    ));
+                }
+            } else if status.as_u16() == 503 || status.as_u16() == 429 {
+                attempts += 1;
+                tracing::warn!(
+                    "⚠️ [API OVERLOAD] Servers busy ({}). Attempt {}/{}...",
+                    status,
+                    attempts,
+                    max_attempts
+                );
+                // Exponential backoff
+                tokio::time::sleep(tokio::time::Duration::from_secs(2 * attempts as u64)).await;
+                last_error = json_res.to_string();
+                continue;
+            } else {
+                tracing::error!("[API ERROR] HTTP {}: {}", status, json_res);
+                return Err(anyhow::anyhow!(
+                    "API Error {}: {}",
+                    status,
+                    json_res["error"]["message"]
+                        .as_str()
+                        .unwrap_or("Unknown error")
+                ));
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "AI servers are currently overloaded after multiple retries. Details: {}",
+            last_error
+        ))
+    }
+}
+
+
+
+==================================================================
+📁 FILE: src\ai\handlers.rs
+==================================================================
+use super::context::inject_live_wallet_context;
+use crate::context::AppContext;
+use teloxide::net::Download;
+use teloxide::prelude::*;
+
+pub async fn process_conversational_intent(
+    bot: Bot,
+    chat_id: teloxide::types::ChatId,
+    msg_id: teloxide::types::MessageId,
+    _user_id: i64,
+    user_text: String,
+    ctx: AppContext,
+) -> anyhow::Result<()> {
+    tracing::info!("🗣️ [USER ASKED]: {}", user_text);
+
+    let initial_msg = bot
+        .send_message(chat_id, "⏳ <b>Kaspa AI:</b> Analyzing... (Universal API)")
+        .reply_parameters(teloxide::types::ReplyParameters::new(msg_id))
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
+
+    let engine_arc = ctx.ai_engine.clone();
+
+    // 🛠️ FIXED: PostgreSQL Syntax for Table Creation
+    let _ = sqlx::query("CREATE TABLE IF NOT EXISTS chat_history (id SERIAL PRIMARY KEY, chat_id BIGINT, role TEXT, message TEXT, timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)").execute(&ctx.pool).await;
+    
+    // 🛠️ FIXED: PostgreSQL Syntax for Select ( instead of ?1)
+    let records: Result<Vec<(String, String)>, _> = sqlx::query_as("SELECT role, message FROM (SELECT id, role, message, timestamp FROM chat_history WHERE chat_id = $1 ORDER BY id DESC LIMIT 6) AS sub ORDER BY id ASC").bind(chat_id.0).fetch_all(&ctx.pool).await;
+
+    let mut history_str = String::new();
+    if let Ok(rows) = records {
+        for (role, msg) in rows {
+            history_str.push_str(&format!("{}: {}\n", role.to_uppercase(), msg));
+        }
+    }
+
+    let enriched_prompt = if history_str.is_empty() {
+        user_text.clone()
+    } else {
+        format!(
+            "[CONVERSATION HISTORY]\n{}\n\n[CURRENT QUESTION]\n{}",
+            history_str, user_text
+        )
+    };
+
+    let live_ctx_data = inject_live_wallet_context(chat_id.0, &ctx).await;
+    let user_text_for_db = user_text.clone();
+
+    let engine = engine_arc.lock().await;
+    let response = match engine
+        .generate(&ctx.pool, &enriched_prompt, &live_ctx_data, None)
+        .await
+    {
+        Ok(text) => {
+            tracing::info!("🧠 [AI REPLIED]: {}", text);
+            // 🛠️ FIXED: PostgreSQL Syntax for Insert (,  instead of ?1, ?2)
+            let _ = sqlx::query(
+                "INSERT INTO chat_history (chat_id, role, message) VALUES ($1, 'user', $2)",
+            )
+            .bind(chat_id.0)
+            .bind(&user_text_for_db)
+            .execute(&ctx.pool)
+            .await;
+            
+            let _ = sqlx::query(
+                "INSERT INTO chat_history (chat_id, role, message) VALUES ($1, 'assistant', $2)",
+            )
+            .bind(chat_id.0)
+            .bind(&text)
+            .execute(&ctx.pool)
+            .await;
+            format!("🤖 <b>Kaspa AI:</b>\n{}", text)
+        }
+        Err(e) => {
+            tracing::error!("⚠️ [AI ERROR]: {}", e);
+            format!("⚠️ <b>AI Error:</b>\n{}", e)
+        }
+    };
+
+    let _ = bot
+        .edit_message_text(chat_id, initial_msg.id, response)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+    Ok(())
+}
+
+pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> anyhow::Result<()> {
+    let chat_id = msg.chat.id;
+    let voice = match msg.voice() {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    tracing::info!("🎙️ [USER SENT VOICE MESSAGE]");
+
+    let initial_msg = bot
+        .send_message(chat_id, "⏳ <b>Kaspa AI:</b> Processing Audio...")
+        .reply_parameters(teloxide::types::ReplyParameters::new(msg.id))
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
+
+    let file = bot.get_file(voice.file.id.clone()).await?;
+    let mut audio_bytes = Vec::new();
+    bot.download_file(&file.path, &mut audio_bytes).await?;
+
+    let live_ctx_data = inject_live_wallet_context(chat_id.0, &ctx).await;
+    let engine = ctx.ai_engine.lock().await;
+
+    let response = match engine
+        .generate(
+            &ctx.pool,
+            "Answer any questions asked in this audio transcript contextually.",
+            &live_ctx_data,
+            Some(audio_bytes),
+        )
+        .await
+    {
+        Ok(reply) => {
+            tracing::info!("🧠 [AI REPLIED TO VOICE]: {}", reply);
+            format!(
+                "🎙️ <b>Voice Analysis Complete</b>\n\n🤖 <b>Kaspa AI:</b>\n{}",
+                reply
+            )
+        }
+        Err(e) => {
+            tracing::error!("⚠️ [VOICE ERROR]: {}", e);
+            format!("⚠️ <b>Voice Error:</b>\n{}", e)
+        }
+    };
+
+    let _ = bot
+        .edit_message_text(chat_id, initial_msg.id, response)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+    Ok(())
+}
+
+
+
+==================================================================
+📁 FILE: src\ai\mod.rs
+==================================================================
+#![allow(dead_code)]
+
+pub mod context;
+pub mod engine;
+pub mod handlers;
+
+// Re-export for external use so we don't break existing code in main.rs or handlers.rs
+pub use engine::{LocalAiEngine, SharedAiEngine};
+
+pub use handlers::{process_conversational_intent, process_voice_message};
+
+pub mod rag;
+
+
+
+==================================================================
+📁 FILE: src\ai\rag.rs
+==================================================================
+use sqlx::{PgPool, Postgres};
+use tracing::info;
+
+const NEWS_INTENT: &[&str] = &[
+    "news", "update", "latest", "recent", "announcement", "release", "roadmap", "whats new",
+    "خبر", "اخبار", "جديد", "اخر", "مستجدات", "تحديث", "تطورات", "اعلان",
+];
+
+const TECH_INTENT: &[&str] = &[
+    "protocol", "algorithm", "mining", "consensus", "dagknight", "smart", "pow", "kheavyhash",
+    "تقني", "بروتوكول", "خوارزمية", "تعدين", "اجماع", "بلوك", "داج",
+];
+
+const METRIC_INTENT: &[&str] = &[
+    "hashrate", "price", "difficulty", "supply", "market", "daa", "tps", "bps",
+    "سعر", "هاشريت", "صعوبة", "امداد", "سوق", "اداء", "احصائيات",
+];
+
+pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
+    let lower_query = user_query.to_lowercase();
+
+    let is_news = NEWS_INTENT.iter().any(|&k| lower_query.contains(k));
+    let is_metric = METRIC_INTENT.iter().any(|&k| lower_query.contains(k));
+    let _is_tech = TECH_INTENT.iter().any(|&k| lower_query.contains(k));
+
+    let result: Result<Vec<(String, String)>, sqlx::Error> = if is_news || is_metric {
+        info!("[RAG] High-priority intent detected. Fetching latest global context...");
+        sqlx::query_as::<Postgres, (String, String)>(
+            "SELECT title, content FROM knowledge_base ORDER BY published_at DESC LIMIT 5",
+        )
+        .fetch_all(pool)
+        .await
+    } else {
+        let search_anchor = user_query
+            .split_whitespace()
+            .filter(|w| w.len() > 3)
+            .max_by_key(|w| w.len())
+            .unwrap_or("kaspa");
+
+        info!("[RAG] Specific search intent: '{}'", search_anchor);
+        sqlx::query_as::<Postgres, (String, String)>(
+            "SELECT title, content FROM knowledge_base WHERE content ILIKE $1 OR title ILIKE $1 ORDER BY published_at DESC LIMIT 3"
+        )
+        .bind(format!("%{}%", search_anchor))
+        .fetch_all(pool).await
+    };
+
+    match result {
+        Ok(articles) if !articles.is_empty() => {
+            let mut context_buffer = String::from("\n[OFFICIAL KASPA KNOWLEDGE & UPDATES]:\n");
+            for (title, content) in articles {
+                let snippet = if content.len() > 500 {
+                    &content[..500]
+                } else {
+                    &content
+                };
+                context_buffer.push_str(&format!("- Source: {}\n  Details: {}\n", title, snippet));
+            }
+            context_buffer
+        }
+        _ => {
+            info!("[RAG] CACHE MISS: No relevant context found in DB. Triggering Autonomous Agent...");
+            // 🧠 MAGIC HAPPENS HERE: If DB doesn't know, ask the Internet Agent!
+            if let Some(agent_answer) = crate::agent::search_and_learn(pool, user_query).await {
+                format!("\n[AUTONOMOUS INTERNET SEARCH RESULT]:\n{}\n", agent_answer)
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+
+
+==================================================================
+📁 FILE: src\handlers\admin.rs
+==================================================================
+use chrono::Utc;
+use kaspa_addresses::Address;
+use kaspa_rpc_core::api::rpc::RpcApi;
+use rev_lines::RevLines;
+use std::collections::HashSet;
+use std::io::BufReader;
+use std::sync::atomic::Ordering;
+use sysinfo::System;
+use teloxide::{prelude::*, types::ChatId};
+use tokio::time::Instant;
+
+use crate::context::AppContext;
+use crate::utils::{format_short_wallet, refresh_markup, send_or_edit_log};
+
+pub async fn handle_stats(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    ctx: &AppContext,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+    current_utc_time: String,
+) {
+    if user_id != ctx.admin_id {
+        return;
+    }
+    let total_users: HashSet<i64> = ctx.state.iter().flat_map(|e| e.value().clone()).collect();
+    let ping = Instant::now();
+    let status = match ctx.rpc.get_server_info().await {
+        Ok(_) => format!("Online 🟢 ({}ms)", ping.elapsed().as_millis()),
+        Err(_) => "Offline 🔴".to_string(),
+    };
+    let mut text = format!("📊 <b>Enterprise Analytics</b>\n━━━━━━━━━━━━━━━━━━\n👥 <b>Active Users:</b> {}\n💼 <b>Tracked Wallets:</b> {}\n🌐 <b>Node Ping:</b> {}\n\n📋 <b>Detailed User Report:</b>\n", total_users.len(), ctx.state.len(), status);
+
+    for e in ctx.state.iter() {
+        let wallet = e.key();
+        let users = e.value();
+        let mut bal = 0.0;
+        if let Ok(addr) = Address::try_from(wallet.as_str()) {
+            if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr]).await {
+                bal = utxos
+                    .iter()
+                    .map(|u| u.utxo_entry.amount as f64)
+                    .sum::<f64>()
+                    / 1e8;
+            }
+        }
+        let blocks: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mined_blocks WHERE wallet = $1")
+            .bind(wallet)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap_or((0,));
+
+        let mut user_names = Vec::new();
+        for &u_id in users {
+            if let Ok(chat) = bot.get_chat(ChatId(u_id)).await {
+                let name = chat
+                    .username()
+                    .map(|u| format!("@{}", u))
+                    .unwrap_or_else(|| "User".to_string());
+                user_names.push(format!("{} [{}]", name, u_id));
+            } else {
+                user_names.push(u_id.to_string());
+            }
+        }
+        text.push_str(&format!(
+            "▪ <code>{}</code>\n  ├ Users: {}\n  ├ Balance: {:.2} KAS\n  └ Mined Blocks: {}\n\n",
+            format_short_wallet(wallet),
+            user_names.join(", "),
+            bal,
+            blocks.0
+        ));
+    }
+    text.push_str(&format!("⏱️ <code>{}</code>", current_utc_time));
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_stats")),
+    )
+    .await;
+}
+
+pub async fn handle_sys(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    ctx: &AppContext,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+    current_time: String,
+) {
+    if user_id != ctx.admin_id {
+        return;
+    }
+    let monitoring = ctx.monitoring.load(Ordering::Relaxed);
+    let (used_mem, total_mem, cores, uptime_secs, os_name, used_disk, total_disk) =
+        tokio::task::spawn_blocking(move || {
+            let mut s = System::new_all();
+            s.refresh_all();
+            let used_m = s.used_memory() / 1024 / 1024;
+            let total_m = s.total_memory() / 1024 / 1024;
+            let c = s.physical_core_count().unwrap_or(0);
+            let up = sysinfo::System::uptime();
+            let os = sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown OS".to_string());
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            let mut total_d_bytes = 0;
+            let mut avail_d_bytes = 0;
+            for disk in &disks {
+                total_d_bytes += disk.total_space();
+                avail_d_bytes += disk.available_space();
+            }
+            let used_d_gb = (total_d_bytes.saturating_sub(avail_d_bytes)) / 1024 / 1024 / 1024;
+            let total_d_gb = total_d_bytes / 1024 / 1024 / 1024;
+            (used_m, total_m, c, up, os, used_d_gb, total_d_gb)
+        })
+        .await
+        .unwrap_or((0, 0, 0, 0, "Unknown".to_string(), 0, 0));
+
+    let days = uptime_secs / 86400;
+    let hours = (uptime_secs % 86400) / 3600;
+    let minutes = (uptime_secs % 3600) / 60;
+    let text = format!("⚙️ <b>Enterprise Node Diagnostics:</b>\n🖥️ <b>OS:</b> <code>{}</code>\n⏳ <b>Uptime:</b> <code>{}d {}h {}m</code>\n🎛️ <b>CPU:</b> <code>{} Cores</code>\n🧠 <b>RAM:</b> <code>{} / {} MB</code>\n💾 <b>Storage:</b> <code>{} / {} GB</code>\n👀 <b>Monitor:</b> <code>{}</code>\n\n⏱️ <code>{}</code>", os_name, days, hours, minutes, cores, used_mem, total_mem, used_disk, total_disk, monitoring, current_time);
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_sys")),
+    )
+    .await;
+}
+
+pub async fn handle_pause(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    if user_id == ctx.admin_id {
+        ctx.monitoring.store(false, Ordering::Relaxed);
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            None,
+            "⏸️ <b>Monitoring Paused.</b>".to_string(),
+            None,
+        )
+        .await;
+    }
+}
+
+pub async fn handle_resume(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    if user_id == ctx.admin_id {
+        ctx.monitoring.store(true, Ordering::Relaxed);
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            None,
+            "▶️ <b>Monitoring Active.</b>".to_string(),
+            None,
+        )
+        .await;
+    }
+}
+
+pub async fn handle_restart(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    if user_id == ctx.admin_id {
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            None,
+            "🔄 <b>Restarting safely...</b>".to_string(),
+            None,
+        )
+        .await;
+        std::process::exit(0);
+    }
+}
+
+pub async fn handle_broadcast(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    m: String,
+    ctx: &AppContext,
+) {
+    if user_id == ctx.admin_id {
+        let users: HashSet<i64> = ctx.state.iter().flat_map(|e| e.value().clone()).collect();
+        let count = users.len();
+        for u in users {
+            let bot_clone = bot.clone();
+            let msg_text = format!("📢 <b>Admin Broadcast:</b>\n\n{}", m);
+            tokio::spawn(async move {
+                let _ = bot_clone
+                    .send_message(ChatId(u), msg_text)
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await;
+            });
+        }
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            None,
+            format!("✅ Broadcast sent to {} users.", count),
+            None,
+        )
+        .await;
+    }
+}
+
+pub async fn handle_logs(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    if user_id == ctx.admin_id {
+        if let Ok(file) = std::fs::File::open("bot.log") {
+            let mut lines: Vec<String> = RevLines::new(BufReader::new(file))
+                .take(25)
+                .filter_map(Result::ok)
+                .collect();
+            lines.reverse();
+            let _ = send_or_edit_log(
+                &bot,
+                chat_id,
+                None,
+                format!(
+                    "📜 <b>System Logs (Tail):</b>\n<pre>{}</pre>",
+                    lines.join("\n")
+                ),
+                None,
+            )
+            .await;
+        }
+    }
+}
+
+pub async fn handle_learn(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    new_fact: String,
+    ctx: &AppContext,
+) {
+    if user_id != ctx.admin_id {
+        return;
+    }
+    if new_fact.trim().is_empty() {
+        let _ = bot
+            .send_message(chat_id, "⚠️ Usage: /learn [New Kaspa Information]")
+            .await;
+        return;
+    }
+
+    let title = format!("Manual Input: {}", Utc::now().format("%Y-%m-%d %H:%M"));
+    let link = format!("manual-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+
+    // Write directly to the new SQLite Knowledge Base
+    let res = sqlx::query(
+        "INSERT INTO knowledge_base (title, link, content, source, published_at) VALUES ($1, $2, $3, 'Admin Manual Input', CURRENT_TIMESTAMP) ON CONFLICT (link) DO NOTHING"
+    )
+    .bind(&title)
+    .bind(&link)
+    .bind(&new_fact)
+    .execute(&ctx.pool)
+    .await;
+
+    if res.is_ok() {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "🧠 <b>Knowledge Added!</b>\nI have securely stored this in my vector database.",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+    } else {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "❌ <b>Database Error:</b> Failed to store new knowledge.",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+    }
+}
+
+pub async fn handle_autolearn(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    if user_id != ctx.admin_id {
+        return;
+    }
+    tracing::info!("🔍 [AUTOLEARN] Connecting to Official RSS via Manual Trigger...");
+    let _ = bot
+        .send_message(
+            chat_id,
+            "🔍 <b>Kaspa AI:</b> Force-scanning the Official Kaspa News Feed...",
+        )
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+
+    let feeds =
+        vec!["https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/kaspa-currency"];
+    let mut added_count = 0;
+    let mut titles_added = String::new();
+
+    for feed_url in feeds {
+        if let Ok(r) = reqwest::get(feed_url).await {
+            if let Ok(j) = r.json::<serde_json::Value>().await {
+                if let Some(items) = j["items"].as_array() {
+                    for item in items {
+                        let title = item["title"].as_str().unwrap_or("Unknown").to_string();
+                        let link = item["link"]
+                            .as_str()
+                            .unwrap_or(&format!(
+                                "rss2json-{}",
+                                Utc::now().timestamp_nanos_opt().unwrap_or(0)
+                            ))
+                            .to_string();
+                        let content_html = item["description"].as_str().unwrap_or("").to_string();
+                        let clean_content = crate::utils::clean_for_log(&content_html);
+
+                        if clean_content.len() < 50 {
+                            continue;
+                        }
+
+                        // Write directly to the new SQLite Knowledge Base
+                        let res = sqlx::query(
+                            "INSERT INTO knowledge_base (title, link, content, source, published_at) VALUES ($1, $2, $3, 'Admin Autolearn Trigger', CURRENT_TIMESTAMP) ON CONFLICT (link) DO NOTHING"
+                        )
+                        .bind(&title)
+                        .bind(&link)
+                        .bind(&clean_content)
+                        .execute(&ctx.pool)
+                        .await;
+
+                        if let Ok(db_res) = res {
+                            if db_res.rows_affected() > 0 {
+                                added_count += 1;
+                                titles_added.push_str(&format!("▪ {}\n", title));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if added_count > 0 {
+        tracing::info!(
+            "💾 [AUTOLEARN] Saved {} new articles directly to local database.",
+            added_count
+        );
+        let _ = bot.send_message(chat_id, format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My internal database has been updated instantly!</i>", added_count, titles_added)).parse_mode(teloxide::types::ParseMode::Html).await;
+    } else {
+        let _ = bot.send_message(chat_id, "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found. Database is completely up to date.").parse_mode(teloxide::types::ParseMode::Html).await;
+    }
+}
+
+
+
+
+==================================================================
+📁 FILE: src\handlers\events.rs
+==================================================================
+use kaspa_addresses::Address;
+use std::collections::HashSet;
+use teloxide::{prelude::*, types::ChatId};
+
+use super::is_local_node;
+use crate::context::AppContext;
+
+pub async fn handle_block_user(
+    update: teloxide::types::ChatMemberUpdated,
+    ctx: AppContext,
+) -> anyhow::Result<()> {
+    if update.new_chat_member.is_banned() || update.new_chat_member.is_left() {
+        tracing::info!(
+            "[USER EVENT] User {} blocked the bot. Cleaning up data...",
+            update.chat.id.0
+        );
+        crate::state::remove_all_user_data(&ctx.pool, &ctx.state, update.chat.id.0).await;
+    }
+    Ok(())
+}
+
+pub async fn fallback_heuristic_text(
+    bot: Bot,
+    chat_id: ChatId,
+    raw_text: &str,
+    ctx: AppContext,
+) -> anyhow::Result<()> {
+    let lower_text = raw_text.to_lowercase();
+
+    // 🔍 1. Smart Auto-Track Detection (Kaspa Addresses)
+    if lower_text.starts_with("kaspa:") || (lower_text.starts_with('q') && lower_text.len() >= 60) {
+        let clean_address = if lower_text.starts_with("kaspa:") {
+            raw_text.to_string()
+        } else {
+            format!("kaspa:{}", raw_text)
+        };
+
+        if Address::try_from(clean_address.as_str()).is_ok() {
+            ctx.state
+                .entry(clean_address.clone())
+                .or_insert_with(HashSet::new)
+                .insert(chat_id.0);
+
+            crate::state::add_wallet_to_db(&ctx.pool, &clean_address, chat_id.0).await;
+
+            let is_local = is_local_node();
+            let sync_status_msg = if is_local {
+                "\n\n🔄 <i>Historical sync triggered successfully...</i>"
+            } else {
+                "\n\n⚠️ <i>Live tracking active. (Historical sync disabled on public nodes)</i>"
+            };
+
+            let _ = bot
+                .send_message(
+                    chat_id,
+                    format!(
+                        "⚡ <b>Smart Auto-Track Activated!</b>\n✅ Now monitoring:\n<code>{}</code>{}",
+                        clean_address, sync_status_msg
+                    ),
+                )
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+
+            if is_local {
+                let ctx_c = ctx.clone();
+                let wallet_c = clean_address.clone();
+                tokio::spawn(async move {
+                    let _ = crate::workers::sync_single_wallet(ctx_c, wallet_c).await;
+                });
+            }
+        }
+        return Ok(());
+    }
+
+    // 🔍 2. Command Typo Correction (Levenshtein Distance)
+    if raw_text.starts_with('/') {
+        let known_commands = vec![
+            "/start", "/help", "/add", "/remove", "/list", "/balance", "/blocks", "/miner",
+            "/network", "/dag", "/price", "/market", "/supply", "/fees", "/donate",
+        ];
+
+        for cmd in known_commands {
+            if strsim::levenshtein(&lower_text, cmd) <= 2 && lower_text.len() > 2 {
+                let _ = bot
+                    .send_message(
+                        chat_id,
+                        format!("🤖 <b>Command not found.</b>\nDid you mean {} ?", cmd),
+                    )
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await;
+                return Ok(());
+            }
+        }
+    }
+
+    // 🔍 3. Legacy Keyword Routing
+    let response = if lower_text.contains("balance") || lower_text.contains("funds") {
+        "💰 Tap /balance to view your live node data."
+    } else if lower_text.contains("hashrate") || lower_text.contains("speed") {
+        "⛏️ Tap /miner to estimate your solo hashrate."
+    } else if lower_text.contains("block") || lower_text.contains("mined") {
+        "🧱 Tap /blocks to view mined blocks."
+    } else {
+        "🤖 <b>Unrecognized Command.</b> Please press /start to view the main menu or simply chat with the AI."
+    };
+
+    let _ = bot
+        .send_message(chat_id, response)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+
+    Ok(())
+}
+
+pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> anyhow::Result<()> {
+    let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
+
+    // 🛡️ Security: Anti-Spam Rate Limiting
+    if user_id != ctx.admin_id && ctx.rate_limiter.check_key(&user_id).is_err() {
+        tracing::warn!("[SECURITY] Spam blocked for UserID: {}", user_id);
+        let _ = bot
+            .send_message(msg.chat.id, "🛑 <b>Rate Limit Exceeded!</b>\nPlease wait a moment before sending more requests.")
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+        return Ok(());
+    }
+
+    // 🎙️ Routing: Voice Audio
+    if msg.voice().is_some() {
+        return crate::ai::process_voice_message(bot, msg, ctx).await;
+    }
+
+    // 💬 Routing: Text Messages
+    if let Some(text) = msg.text() {
+        let raw_text = text.trim();
+        let lower_text = raw_text.to_lowercase();
+
+        // Check if it's a command or a wallet address
+        if raw_text.starts_with('/')
+            || lower_text.starts_with("kaspa:")
+            || (lower_text.starts_with('q') && lower_text.len() >= 60)
+        {
+            return fallback_heuristic_text(bot, msg.chat.id, raw_text, ctx).await;
+        }
+
+        // Pass generic conversational text to the RAG AI Engine
+        return crate::ai::process_conversational_intent(
+            bot,
+            msg.chat.id,
+            msg.id,
+            user_id,
+            raw_text.to_string(),
+            ctx, // The RAG engine will extract ctx.pool from this context
+        )
+        .await;
+    }
+
+    Ok(())
+}
+
+
+
+==================================================================
+📁 FILE: src\handlers\mod.rs
+==================================================================
+#![allow(clippy::too_many_arguments, clippy::redundant_pattern_matching)]
+
+pub mod admin;
+pub mod events;
+pub mod public;
+
+use chrono::Utc;
+use teloxide::{prelude::*, types::ChatId};
+use tokio::time::Instant;
+
+use crate::commands::Command;
+use crate::context::AppContext;
+
+// Re-export event handlers for main.rs
+pub use events::{handle_block_user, handle_raw_message_v2};
+
+// ==========================================
+// SECTION 0: SAFETY & SECURITY PROTOCOLS
+// ==========================================
+pub fn is_local_node() -> bool {
+    // 1. Fetch all possible variable names including WS_URL
+    let urls = format!(
+        "{} {} {} {} {}",
+        std::env::var("KASPA_RPC_URL").unwrap_or_default(),
+        std::env::var("KASPA_NODE_URL").unwrap_or_default(),
+        std::env::var("RPC_URL").unwrap_or_default(),
+        std::env::var("NODE_URL").unwrap_or_default(),
+        std::env::var("WS_URL").unwrap_or_default()
+    )
+    .to_lowercase();
+
+    // 2. Empty means FALSE (Not Local)
+    if urls.trim().is_empty() {
+        return false;
+    }
+
+    // 3. Only return true if an explicit local IP is found
+    urls.contains("127.0.0.1")
+        || urls.contains("localhost")
+        || urls.contains("::1")
+        || urls.contains("0.0.0.0")
+}
+
+// ==========================================
+// SECTION 1: ROUTING CONTROLLERS
+// ==========================================
+pub async fn handle_command(
+    bot: Bot,
+    msg: Message,
+    cmd: Command,
+    ctx: AppContext,
+) -> anyhow::Result<()> {
+    let chat_id = msg.chat.id;
+    let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
+    execute_command(bot, chat_id, user_id, cmd, ctx, None).await
+}
+
+pub async fn handle_callback(
+    bot: Bot,
+    q: teloxide::types::CallbackQuery,
+    ctx: AppContext,
+) -> anyhow::Result<()> {
+    let user_id = q.from.id.0 as i64;
+    if crate::utils::is_spam(user_id) {
+        let _ = bot
+            .answer_callback_query(q.id.clone())
+            .text("⚠️ Processing... Please wait!")
+            .show_alert(false)
+            .await;
+        return Ok(());
+    }
+
+    if let Some(data) = q.data.clone() {
+        if data == "admin_sync_blocks" {
+            if user_id == ctx.admin_id {
+                let chat_id = q
+                    .regular_message()
+                    .map(|m| m.chat.id)
+                    .unwrap_or(ChatId(user_id));
+                if is_local_node() {
+                    let bot_clone = bot.clone();
+                    let ctx_clone = ctx.clone();
+                    bot.send_message(chat_id, "🚀 <b>Admin:</b> Global Reverse Sync started...")
+                        .parse_mode(teloxide::types::ParseMode::Html)
+                        .await?;
+                    tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::workers::sync_all_wallets_from_pruning_point(ctx_clone).await
+                        {
+                            tracing::error!("❌ [ADMIN SYNC ERROR]: {}", e);
+                        } else {
+                            let _ = bot_clone
+                                .send_message(ChatId(user_id), "✅ <b>Global Sync Complete!</b>")
+                                .parse_mode(teloxide::types::ParseMode::Html)
+                                .await;
+                        }
+                    });
+                } else {
+                    let _ = bot.send_message(chat_id, "⚠️ <b>Sync Blocked (Safety Protocol)</b>\nDisabled on Public Nodes to prevent IP bans. You must connect the bot to a local node (127.0.0.1) to use this feature.").parse_mode(teloxide::types::ParseMode::Html).await;
+                }
+            }
+            let _ = bot.answer_callback_query(q.id).await;
+            return Ok(());
+        }
+
+        if let Some(msg) = q.regular_message() {
+            let (cmd, is_refresh) = match data.as_str() {
+                "cmd_balance" => (Some(Command::Balance), false),
+                "refresh_balance" => (Some(Command::Balance), true),
+                "cmd_miner" => (Some(Command::Miner), false),
+                "refresh_miner" => (Some(Command::Miner), true),
+                "cmd_blocks" => (Some(Command::Blocks), false),
+                "refresh_blocks" => (Some(Command::Blocks), true),
+                "cmd_list" => (Some(Command::List), false),
+                "refresh_list" => (Some(Command::List), true),
+                "cmd_price" => (Some(Command::Price), false),
+                "refresh_price" => (Some(Command::Price), true),
+                "cmd_market" => (Some(Command::Market), false),
+                "refresh_market" => (Some(Command::Market), true),
+                "cmd_network" => (Some(Command::Network), false),
+                "refresh_network" => (Some(Command::Network), true),
+                "cmd_fees" => (Some(Command::Fees), false),
+                "refresh_fees" => (Some(Command::Fees), true),
+                "cmd_supply" => (Some(Command::Supply), false),
+                "refresh_supply" => (Some(Command::Supply), true),
+                "cmd_dag" => (Some(Command::Dag), false),
+                "refresh_dag" => (Some(Command::Dag), true),
+                "cmd_stats" => (Some(Command::Stats), false),
+                "refresh_stats" => (Some(Command::Stats), true),
+                "cmd_sys" => (Some(Command::Sys), false),
+                "refresh_sys" => (Some(Command::Sys), true),
+                "cmd_donate" => (Some(Command::Donate), false),
+                "cmd_logs" => (Some(Command::Logs), false),
+                "cmd_pause" => (Some(Command::Pause), false),
+                "cmd_resume" => (Some(Command::Resume), false),
+                "cmd_restart" => (Some(Command::Restart), false),
+                _ => (None, false),
+            };
+
+            if let Some(c) = cmd {
+                let edit_msg_id = if is_refresh { Some(msg.id) } else { None };
+                let _ =
+                    execute_command(bot.clone(), msg.chat.id, user_id, c, ctx, edit_msg_id).await;
+            }
+        }
+    }
+    let _ = bot.answer_callback_query(q.id).await;
+    Ok(())
+}
+
+async fn execute_command(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    cmd: Command,
+    ctx: AppContext,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) -> anyhow::Result<()> {
+    let timer = Instant::now();
+    // ⏱️ التحديث: إضافة .%3f لطباعة أجزاء الثانية
+    let current_utc_time = Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string();
+
+    match cmd {
+        Command::Start => public::handle_start(bot, chat_id, user_id, &ctx).await,
+        Command::Help => public::handle_help(bot, chat_id).await,
+        Command::Donate => public::handle_donate(bot, chat_id).await,
+        Command::Add(w) => public::handle_add(bot, chat_id, w, &ctx).await,
+        Command::Remove(w) => public::handle_remove(bot, chat_id, w, &ctx).await,
+        Command::List => public::handle_list(bot, chat_id, &ctx).await,
+        Command::Balance => {
+            public::handle_balance(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Blocks => {
+            public::handle_blocks(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Miner => {
+            public::handle_miner(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Network => {
+            public::handle_network(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Dag => public::handle_dag(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await,
+        Command::Price => {
+            public::handle_price(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Market => {
+            public::handle_market(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Supply => {
+            public::handle_supply(bot, chat_id, &ctx, current_utc_time, edit_msg_id).await
+        }
+        Command::Fees => public::handle_fees(bot, chat_id, current_utc_time, edit_msg_id).await,
+        Command::Stats => {
+            admin::handle_stats(bot, chat_id, user_id, &ctx, edit_msg_id, current_utc_time).await
+        }
+        Command::Sys => {
+            admin::handle_sys(bot, chat_id, user_id, &ctx, edit_msg_id, current_utc_time).await
+        }
+        Command::Pause => admin::handle_pause(bot, chat_id, user_id, &ctx).await,
+        Command::Resume => admin::handle_resume(bot, chat_id, user_id, &ctx).await,
+        Command::Restart => admin::handle_restart(bot, chat_id, user_id, &ctx).await,
+        Command::Broadcast(m) => admin::handle_broadcast(bot, chat_id, user_id, m, &ctx).await,
+        Command::Logs => admin::handle_logs(bot, chat_id, user_id, &ctx).await,
+        Command::Learn(f) => admin::handle_learn(bot, chat_id, user_id, f, &ctx).await,
+        Command::AutoLearn => admin::handle_autolearn(bot, chat_id, user_id, &ctx).await,
+        Command::Sync => {
+            if user_id == ctx.admin_id {
+                if is_local_node() {
+                    let bc = bot.clone();
+                    let cc = ctx.clone();
+                    bot.send_message(chat_id, "🚀 <b>Admin:</b> Manual Sync started...")
+                        .parse_mode(teloxide::types::ParseMode::Html)
+                        .await?;
+                    tokio::spawn(async move {
+                        let _ = crate::workers::sync_all_wallets_from_pruning_point(cc).await;
+                        let _ = bc
+                            .send_message(chat_id, "✅ <b>Sync Complete!</b>")
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .await;
+                    });
+                } else {
+                    let _ = bot.send_message(chat_id, "⚠️ <b>Sync Blocked (Safety Protocol)</b>\nDisabled on Public Nodes to prevent IP bans. You must connect the bot to a local node (127.0.0.1) to use this feature.").parse_mode(teloxide::types::ParseMode::Html).await;
+                }
+            }
+        }
+    };
+
+    tracing::info!(
+        "[TIME] Request processed in {}ms | ChatID: {}",
+        timer.elapsed().as_millis(),
+        chat_id.0
+    );
+    Ok(())
+}
+
+
+
+==================================================================
+📁 FILE: src\handlers\public.rs
+==================================================================
+use kaspa_addresses::Address;
+use kaspa_rpc_core::api::rpc::RpcApi;
+use std::collections::HashSet;
+use teloxide::{prelude::*, types::ChatId};
+
+use super::is_local_node;
+use crate::context::AppContext;
+use crate::utils::{f_num, format_short_wallet, refresh_markup, send_or_edit_log};
+
+pub async fn handle_start(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+    let markup = if user_id == ctx.admin_id {
+        crate::kaspa_features::admin_menu_markup()
+    } else {
+        crate::kaspa_features::main_menu_markup()
+    };
+
+    let welcome_text = "\
+🤖 <b>Kaspa Pulse Enterprise</b>
+━━━━━━━━━━━━━━━━━━
+Welcome to the ultimate Kaspa Solo Mining & Node monitoring engine. I operate with zero-latency, providing direct unindexed BlockDAG forensics.
+
+⚡ <b>Quick Start:</b>
+Simply paste any <code>kaspa:...</code> address in this chat to instantly activate real-time tracking and historical block recovery.
+
+🧠 <b>AI-Powered Intelligence:</b>
+Equipped with an advanced AI. Ask complex Kaspa questions, or send <b>Voice Notes</b> for instant transcription and analysis!
+
+👇 <i>Select an option below or type /help for commands.</i>";
+
+    let _ = bot
+        .send_message(chat_id, welcome_text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .reply_markup(markup)
+        .await;
+}
+
+pub async fn handle_help(bot: Bot, chat_id: ChatId) {
+    let help_text = "\
+📚 <b>Kaspa Pulse Enterprise - Help Guide</b>
+━━━━━━━━━━━━━━━━━━
+Welcome to the most advanced Kaspa Solo Mining & Node monitoring bot.
+
+🛠️ <b>Public Commands:</b>
+• /start - Main menu & initialization
+• /add <code>kaspa:...</code> - Start tracking a wallet
+• /remove <code>kaspa:...</code> - Stop tracking a wallet
+• /list - View your tracked wallets
+• /balance - Live node balances & UTXOs
+• /blocks - Mined blocks & lifetime value
+• /miner - Real-time solo hashrate estimate
+• /network - Node health, peers, & sync status
+• /dag - BlockDAG metrics & difficulty
+• /price - Live KAS price & market cap
+• /supply - Circulating supply metrics
+• /fees - Current mempool fee estimate
+• /donate - Support the developer
+
+👑 <b>Admin Commands:</b>
+• /stats, /sys, /logs - System diagnostics
+• /pause, /resume, /restart - Engine control
+• /sync - Manual historical reverse-scan
+• /learn, /autolearn - AI Knowledge DB management
+
+✨ <b>Smart Features:</b>
+🎙️ <b>AI Voice & Chat:</b> Ask questions or send voice notes! The AI contextually knows your balance and network stats.
+⚡ <b>Auto-Track:</b> Just paste any <code>kaspa:...</code> address in the chat to start monitoring instantly.
+🔍 <b>Forensics:</b> Extracts Worker IDs and nonces directly from the unindexed BlockDAG.";
+
+    let _ = bot
+        .send_message(chat_id, help_text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+}
+
+pub async fn handle_donate(bot: Bot, chat_id: ChatId) {
+    let _ = bot.send_message(chat_id, "❤️ <b>Support Development</b>\n\n<b>KAS Address:</b>\n<code>kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g</code>").parse_mode(teloxide::types::ParseMode::Html).await;
+}
+
+pub async fn handle_add(bot: Bot, chat_id: ChatId, wallet: String, ctx: &AppContext) {
+    let wallet = wallet.trim().to_string();
+    if wallet.is_empty() || !wallet.starts_with("kaspa:") {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "⚠️ <b>Invalid Format.</b>\nUse: <code>/add kaspa:q...</code>",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+        return;
+    }
+    crate::state::add_wallet_to_db(&ctx.pool, &wallet, chat_id.0).await;
+    ctx.state
+        .entry(wallet.clone())
+        .or_insert_with(HashSet::new)
+        .insert(chat_id.0);
+
+    let is_local = is_local_node();
+    let sync_status_msg = if is_local {
+        "\n\n🔄 <i>Historical sync started from pruning point...</i>"
+    } else {
+        "\n\n⚠️ <i>Live tracking active. (Historical sync disabled on public nodes)</i>"
+    };
+    let _ = bot
+        .send_message(
+            chat_id,
+            format!(
+                "✅ <b>Wallet Added!</b>\n<code>{}</code> is now monitored.{}",
+                wallet, sync_status_msg
+            ),
+        )
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+
+    if is_local {
+        let ctx_c = ctx.clone();
+        let wallet_c = wallet.clone();
+        tokio::spawn(async move {
+            let _ = crate::workers::sync_single_wallet(ctx_c, wallet_c).await;
+        });
+    }
+}
+
+pub async fn handle_remove(bot: Bot, chat_id: ChatId, wallet: String, ctx: &AppContext) {
+    let wallet = wallet.trim().to_string();
+    crate::state::remove_wallet_from_db(&ctx.pool, &wallet, chat_id.0).await;
+    if let Some(mut users) = ctx.state.get_mut(&wallet) {
+        users.remove(&chat_id.0);
+    }
+    let _ = bot
+        .send_message(chat_id, "🗑️ <b>Wallet Removed.</b>")
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+}
+
+pub async fn handle_list(bot: Bot, chat_id: ChatId, ctx: &AppContext) {
+    let mut tracked = String::new();
+    for e in ctx.state.iter().filter(|e| e.value().contains(&chat_id.0)) {
+        tracked.push_str(&format!("• <code>{}</code>\n", e.key()));
+    }
+    let text = if tracked.is_empty() {
+        "📂 <b>No wallets tracked.</b>".to_string()
+    } else {
+        format!("📂 <b>Tracked Wallets:</b>\n{}", tracked)
+    };
+    let _ = bot
+        .send_message(chat_id, text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await;
+}
+
+pub async fn handle_balance(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let mut total = 0.0;
+    let mut text = format!(
+        "💰 <b>Wallet Analysis & Live Balance</b>\n⏱️ <code>{}</code>\n━━━━━━━━━━━━━━━━━━\n",
+        current_utc_time
+    );
+    let tracked_wallets: Vec<String> = ctx
+        .state
+        .iter()
+        .filter(|e| e.value().contains(&chat_id.0))
+        .map(|e| e.key().clone())
+        .collect();
+    for wallet_str in tracked_wallets {
+        if let Ok(a) = Address::try_from(wallet_str.as_str()) {
+            if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![a.clone()]).await {
+                let k = utxos
+                    .iter()
+                    .map(|u| u.utxo_entry.amount as f64)
+                    .sum::<f64>()
+                    / 1e8;
+                total += k;
+                text.push_str(&format!(
+                    "⏱️ <code>{}</code>\n├ <b>Live Balance:</b> {:.8} KAS\n└ <b>UTXOs:</b> {}\n\n",
+                    format_short_wallet(&wallet_str),
+                    k,
+                    utxos.len()
+                ));
+            }
+        }
+    }
+    text.push_str(&format!(
+        "━━━━━━━━━━━━━━━━━━\n💎 <b>Total Holdings:</b> <code>{} KAS</code>",
+        f_num(total)
+    ));
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_balance")),
+    )
+    .await;
+}
+
+pub async fn handle_blocks(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let tracked: Vec<String> = ctx
+        .state
+        .iter()
+        .filter(|e| e.value().contains(&chat_id.0))
+        .map(|e| e.key().clone())
+        .collect();
+    if tracked.is_empty() {
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            edit_msg_id,
+            "⚠️ <b>No wallets tracked.</b>".to_string(),
+            None,
+        )
+        .await;
+        return;
+    }
+    let mut text = format!(
+        "🧱 <b>Mined Blocks Analysis</b>\n⏱️ <code>{}</code>\n━━━━━━━━━━━━━━━━━━\n",
+        current_utc_time
+    );
+    let (mut global_blocks, mut global_rewards) = (0, 0.0);
+    for w in tracked {
+        if let Ok((total_blocks, total_kas)) = crate::state::get_lifetime_stats(&ctx.pool, &w).await
+        {
+            global_blocks += total_blocks;
+            global_rewards += total_kas;
+            text.push_str(&format!(
+                "💼 <b>{}</b>\n├ <b>Lifetime Blocks:</b> {}\n├ <b>Lifetime Value:</b> {:.8} KAS\n",
+                format_short_wallet(&w),
+                total_blocks,
+                total_kas
+            ));
+            let daily_records: Result<Vec<(String, i64, f64)>, sqlx::Error> = sqlx::query_as("SELECT TO_CHAR(timestamp, 'YYYY-MM-DD'), COUNT(*), SUM(amount) FROM mined_blocks WHERE wallet = $1 GROUP BY TO_CHAR(timestamp, 'YYYY-MM-DD') ORDER BY TO_CHAR(timestamp, 'YYYY-MM-DD') DESC LIMIT 5").bind(&w).fetch_all(&ctx.pool).await;
+            if let Ok(records) = daily_records {
+                if !records.is_empty() {
+                    text.push_str("├ <b>Daily Breakdown:</b>\n");
+                    for (date, count, amount) in records {
+                        text.push_str(&format!(
+                            "│  ▪ <code>{}</code>: {} Blks ({:.2} KAS)\n",
+                            date, count, amount
+                        ));
+                    }
+                }
+            }
+            text.push('\n');
+        }
+    }
+    text.push_str(&format!(
+        "━━━━━━━━━━━━━━━━━━\n🏆 <b>Total Blocks:</b> {}\n💎 <b>Total Value:</b> {:.8} KAS",
+        global_blocks, global_rewards
+    ));
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_blocks")),
+    )
+    .await;
+}
+
+pub async fn handle_miner(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let tracked: Vec<String> = ctx
+        .state
+        .iter()
+        .filter(|e| e.value().contains(&chat_id.0))
+        .map(|e| e.key().clone())
+        .collect();
+    if tracked.is_empty() {
+        return;
+    }
+    let mut text = format!(
+        "⛏️ <b>Solo-Miner Hashrate</b>\n⏱️ <code>{}</code>\n━━━━━━━━━━━━━━━━━━\n",
+        current_utc_time
+    );
+    if let Ok(dag_info) = ctx.rpc.get_block_dag_info().await {
+        if let Ok(net_hashrate) = ctx.rpc.estimate_network_hashes_per_second(1000, None).await {
+            let net_hashrate = net_hashrate as f64;
+            for w in tracked {
+                let db_1h: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mined_blocks WHERE wallet = $1 AND timestamp >= CURRENT_TIMESTAMP - INTERVAL '1 hour'").bind(&w).fetch_one(&ctx.pool).await.unwrap_or((0,));
+                let db_24h: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mined_blocks WHERE wallet = $1 AND timestamp >= CURRENT_TIMESTAMP - INTERVAL '24 hours'").bind(&w).fetch_one(&ctx.pool).await.unwrap_or((0,));
+                let mut live_1h = 0;
+                let mut live_24h = 0;
+                if let Ok(addr) = Address::try_from(w.as_str()) {
+                    if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr]).await {
+                        for u in utxos.into_iter().filter(|u| u.utxo_entry.is_coinbase) {
+                            let age = dag_info
+                                .virtual_daa_score
+                                .saturating_sub(u.utxo_entry.block_daa_score);
+                            if age <= 3600 {
+                                live_1h += 1;
+                            }
+                            if age <= 86400 {
+                                live_24h += 1;
+                            }
+                        }
+                    }
+                }
+                text.push_str(&format!("💼 <b>{}</b>\n📊 <b>Actual Hashrate (Database):</b>\n├ 1 Hour: {} ({} Blks)\n├ 24 Hours: {} ({} Blks)\n⚡ <b>Unspent Hashrate (Live Node):</b>\n├ 1 Hour: {} ({} Blks)\n└ 24 Hours: {} ({} Blks)\n\n", format_short_wallet(&w), crate::kaspa_features::format_hashrate(net_hashrate * (db_1h.0 as f64 / 3600.0)), db_1h.0, crate::kaspa_features::format_hashrate(net_hashrate * (db_24h.0 as f64 / 86400.0)), db_24h.0, crate::kaspa_features::format_hashrate(net_hashrate * (live_1h as f64 / 3600.0)), live_1h, crate::kaspa_features::format_hashrate(net_hashrate * (live_24h as f64 / 86400.0)), live_24h));
+            }
+            text.push_str(&format!(
+                "━━━━━━━━━━━━━━━━━━\n🌐 <b>Global Network Hashrate:</b> {}",
+                crate::kaspa_features::format_hashrate(net_hashrate)
+            ));
+        }
+    }
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_miner")),
+    )
+    .await;
+}
+
+pub async fn handle_network(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let mut text = String::from("🛠️ <b>Node Health & Network</b>\n");
+    if let Ok(info) = ctx.rpc.get_server_info().await {
+        text.push_str(&format!(
+            "├ <b>Version:</b> {} | <b>Net:</b> {}\n├ <b>UTXO Index:</b> {}\n",
+            info.server_version,
+            info.network_id,
+            if info.has_utxo_index {
+                "Enabled ✅"
+            } else {
+                "Disabled ❌"
+            }
+        ));
+    }
+    if let Ok(peers) = ctx.rpc.get_connected_peer_info().await {
+        text.push_str(&format!(
+            "├ <b>Connected Peers:</b> {}\n",
+            peers.peer_info.len()
+        ));
+    }
+    if let Ok(sync) = ctx.rpc.get_sync_status().await {
+        text.push_str(&format!(
+            "└ <b>Sync Status:</b> {}\n\n",
+            if sync {
+                "100% Synced ✅"
+            } else {
+                "Syncing ⚠️"
+            }
+        ));
+    }
+    text.push_str("📊 <b>GHOSTDAG Consensus</b>\n");
+    if let Ok(dag) = ctx.rpc.get_block_dag_info().await {
+        text.push_str(&format!(
+            "├ <b>Total Blocks:</b> {}\n├ <b>DAA Score:</b> {}\n├ <b>Difficulty:</b> {}\n",
+            f_num(dag.block_count as f64),
+            dag.virtual_daa_score,
+            crate::kaspa_features::format_difficulty(dag.difficulty)
+        ));
+    }
+    if let Ok(hashrate) = ctx.rpc.estimate_network_hashes_per_second(1000, None).await {
+        text.push_str(&format!(
+            "├ <b>Hashrate:</b> {}\n",
+            crate::kaspa_features::format_hashrate(hashrate as f64)
+        ));
+    }
+    if let Ok(supply) = ctx.rpc.get_coin_supply().await {
+        let circ = supply.circulating_sompi as f64 / 1e8;
+        let max = supply.max_sompi as f64 / 1e8;
+        text.push_str(&format!(
+            "├ <b>Circulating:</b> {} KAS\n└ <b>Minted:</b> {:.2}%\n\n",
+            f_num(circ),
+            (circ / max) * 100.0
+        ));
+    }
+    text.push_str(&format!("\n⏱️ <code>{}</code>", current_utc_time));
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_network")),
+    )
+    .await;
+}
+
+pub async fn handle_dag(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    if let Ok(info) = ctx.rpc.get_block_dag_info().await {
+        let text = format!("📊 <b>BlockDAG Details:</b>\n🧱 <b>Blocks:</b> <code>{}</code>\n📜 <b>Headers:</b> <code>{}</code>\n\n⏱️ <code>{}</code>", f_num(info.block_count as f64), f_num(info.header_count as f64), current_utc_time);
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            edit_msg_id,
+            text,
+            Some(refresh_markup("refresh_dag")),
+        )
+        .await;
+    }
+}
+
+pub async fn handle_price(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let price = ctx.price_cache.read().await.0;
+    let text = if price > 0.0 {
+        format!(
+            "💵 <b>Price:</b> <code>${:.4} USD</code> (CoinGecko)\n\n⏱️ <code>{}</code>",
+            price, current_utc_time
+        )
+    } else {
+        format!(
+            "⚠️ <b>Price API Syncing...</b>\n\n⏱️ <code>{}</code>",
+            current_utc_time
+        )
+    };
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_price")),
+    )
+    .await;
+}
+
+pub async fn handle_market(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    let mcap = ctx.price_cache.read().await.1;
+    let text = if mcap > 0.0 {
+        format!(
+            "📈 <b>Market Cap:</b> <code>${} USD</code> (CoinGecko)\n\n⏱️ <code>{}</code>",
+            f_num(mcap),
+            current_utc_time
+        )
+    } else {
+        format!(
+            "⚠️ <b>Market Cap API Syncing...</b>\n\n⏱️ <code>{}</code>",
+            current_utc_time
+        )
+    };
+    let _ = send_or_edit_log(
+        &bot,
+        chat_id,
+        edit_msg_id,
+        text,
+        Some(refresh_markup("refresh_market")),
+    )
+    .await;
+}
+
+pub async fn handle_supply(
+    bot: Bot,
+    chat_id: ChatId,
+    ctx: &AppContext,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    if let Ok(supply) = ctx.rpc.get_coin_supply().await {
+        let circ = supply.circulating_sompi as f64 / 1e8;
+        let max = supply.max_sompi as f64 / 1e8;
+        let text = format!("🪙 <b>Coin Supply:</b>\n├ <b>Circulating:</b> <code>{} KAS</code>\n├ <b>Max Supply:</b> <code>{} KAS</code>\n└ <b>Minted:</b> <code>{:.2}%</code>\n\n⏱️ <code>{}</code>", f_num(circ), f_num(max), (circ / max) * 100.0, current_utc_time);
+        let _ = send_or_edit_log(
+            &bot,
+            chat_id,
+            edit_msg_id,
+            text,
+            Some(refresh_markup("refresh_supply")),
+        )
+        .await;
+    }
+}
+
+pub async fn handle_fees(
+    bot: Bot,
+    chat_id: ChatId,
+    current_utc_time: String,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+) {
+    if let Ok(r) = reqwest::get("https://api.kaspa.org/info/fee-estimate").await {
+        if let Ok(j) = r.json::<serde_json::Value>().await {
+            let text = format!(
+                "⛽ <b>Fee Estimate:</b> <code>{:.2} sompi/gram</code>\n\n⏱️ <code>{}</code>",
+                j["normalBuckets"][0]["feerate"].as_f64().unwrap_or(0.0),
+                current_utc_time
+            );
+            let _ = send_or_edit_log(
+                &bot,
+                chat_id,
+                edit_msg_id,
+                text,
+                Some(refresh_markup("refresh_fees")),
+            )
+            .await;
+        }
+    }
+}
+
+
+
+
+==================================================================
+📁 FILE: src\workers\live.rs
+==================================================================
+use chrono::{TimeZone, Utc};
+use kaspa_addresses::Address;
+use kaspa_hashes::Hash;
+use kaspa_rpc_core::api::rpc::RpcApi;
+use kaspa_wrpc_client::KaspaRpcClient;
+use std::collections::HashSet;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use teloxide::prelude::*;
+use teloxide::types::ChatId;
+use tokio::sync::Semaphore;
+use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
+use tracing::info;
+
+use crate::context::AppContext;
+use crate::utils::{format_hash, format_short_wallet};
+
+pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
+    let semaphore = Arc::new(Semaphore::new(50));
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(5)).await;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => { break; }
+                _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                    if !ctx.monitoring.load(Ordering::Relaxed) { continue; }
+                    let check_list: Vec<(String, HashSet<i64>)> = ctx.state.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
+                    if check_list.is_empty() { continue; }
+
+                    for (wallet, subs) in check_list {
+                        if let Ok(addr) = Address::try_from(wallet.as_str()) {
+                            if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr.clone()]).await {
+                                let mut current_outpoints = HashSet::new();
+                                let mut new_rewards = Vec::new();
+                                let mut known = ctx.utxo_state.entry(wallet.clone()).or_insert_with(HashSet::new);
+                                let is_first_run = known.is_empty();
+
+                                for entry in utxos {
+                                    let tx_id = entry.outpoint.transaction_id.to_string();
+                                    let outpoint_id = format!("{}:{}", tx_id, entry.outpoint.index);
+                                    current_outpoints.insert(outpoint_id.clone());
+
+                                    if !is_first_run && !known.contains(&outpoint_id) {
+                                        new_rewards.push((outpoint_id.clone(), tx_id, entry.utxo_entry.amount as f64 / 1e8, entry.utxo_entry.block_daa_score, entry.utxo_entry.is_coinbase));
+                                        known.insert(outpoint_id);
+                                    } else if is_first_run { known.insert(outpoint_id); }
+                                }
+                                known.retain(|k| current_outpoints.contains(k));
+
+                                if new_rewards.is_empty() { continue; }
+
+                                let mut join_set = tokio::task::JoinSet::new();
+
+                                for (outp, tx_id, diff, daa_score, is_coinbase) in new_rewards {
+                                    let (f_tx, w_cl, rpc_cl) = (tx_id.clone(), wallet.clone(), Arc::clone(&ctx.rpc));
+                                    let pool_cl = ctx.pool.clone();
+                                    let addr_cl = addr.clone();
+                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+
+                                    join_set.spawn(async move {
+                                        let _p = permit;
+                                        if is_coinbase {
+                                            crate::state::record_mined_block(&pool_cl, &outp, &w_cl, diff, daa_score).await;
+                                        }
+
+                                        let (acc_block_hash, actual_mined_blocks, extracted_nonce, extracted_worker, block_time_ms) = analyze_block_payload(Arc::clone(&rpc_cl), f_tx.clone(), w_cl.clone(), daa_score, is_coinbase).await;
+
+                                        let mut live_bal = 0.0;
+                                        if let Ok(live_utxos) = rpc_cl.get_utxos_by_addresses(vec![addr_cl]).await {
+                                            live_bal = live_utxos.iter().map(|u| u.utxo_entry.amount as f64).sum::<f64>() / 1e8;
+                                        }
+
+                                        let time_str = if block_time_ms > 0 {
+                                            if let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(block_time_ms as i64) {
+                                                dt.format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string()
+                                            } else { Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string() }
+                                        } else { Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string() };
+
+                                        let header_emoji = if is_coinbase { "⚡ <b>Native Node Reward!</b>" } else { "💸 <b>Incoming Transfer!</b>" };
+                                        let acc_block_str = if acc_block_hash.is_empty() { "<code>Archived</code>".to_string() } else { format_hash(&acc_block_hash, "blocks") };
+                                        let mined_block_str = if !is_coinbase { "<code>N/A</code>".to_string() } else if actual_mined_blocks.is_empty() { "<code>Unknown</code>".to_string() } else { format_hash(&actual_mined_blocks[0], "blocks") };
+
+                                        let mut final_msg = format!("{}\n━━━━━━━━━━━━━━━━━━\n<b>Time:</b> <code>{}</code>\n<b>Wallet:</b> {}\n<b>Amount:</b> <code>+{:.8} KAS</code>\n<b>Balance:</b> <code>{:.8} KAS</code>\n<blockquote expandable>", header_emoji, time_str, format_short_wallet(&w_cl), diff, live_bal);
+                                        final_msg.push_str(&format!("<b>TXID:</b> {}\n", format_hash(&f_tx, "transactions")));
+                                        if is_coinbase {
+                                            final_msg.push_str(&format!("<b>Mined Block:</b> {}\n<b>Accepting Block:</b> {}\n", mined_block_str, acc_block_str));
+                                            if !extracted_nonce.is_empty() { final_msg.push_str(&format!("<b>Worker:</b> <code>{}</code>\n", extracted_worker)); }
+                                        } else { final_msg.push_str(&format!("<b>Accepting Block:</b> {}\n", acc_block_str)); }
+                                        final_msg.push_str(&format!("<b>DAA Score:</b> <code>{}</code>\n</blockquote>", daa_score));
+
+                                        (block_time_ms, diff, w_cl, final_msg)
+                                    });
+                                }
+
+                                let mut sorted_messages = Vec::new();
+                                while let Some(res) = join_set.join_next().await {
+                                    if let Ok(data) = res { sorted_messages.push(data); }
+                                }
+                                sorted_messages.sort_by_key(|(time, _, _, _)| *time);
+
+                                for (time_ms, diff, w_cl, final_msg) in sorted_messages {
+                                    let log_time = if time_ms > 0 {
+                                        Utc.timestamp_millis_opt(time_ms as i64).single()
+                                            .map(|dt| dt.format("%H:%M:%S.%3f").to_string()).unwrap_or_else(|| "Unknown".to_string())
+                                    } else { "Real-time".to_string() };
+
+                                    info!("💎 [LIVE BLOCK] | Amount: +{:.4} KAS | Wallet: {} | Time: {} | Status: Delivered",
+                                          diff, format_short_wallet(&w_cl), log_time);
+
+                                    for user_id in &subs {
+                                        let _ = bot.send_message(ChatId(*user_id), &final_msg)
+                                            .parse_mode(teloxide::types::ParseMode::Html)
+                                            .link_preview_options(teloxide::types::LinkPreviewOptions { url: None, is_disabled: true, show_above_text: false, prefer_small_media: false, prefer_large_media: false })
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub async fn analyze_block_payload(
+    rpc_cl: Arc<KaspaRpcClient>,
+    f_tx: String,
+    w_cl: String,
+    daa_score: u64,
+    is_coinbase: bool,
+) -> (String, Vec<String>, String, String, u64) {
+    let mut acc_block_hash = String::new();
+    let mut actual_mined_blocks: Vec<String> = Vec::new();
+    let mut extracted_nonce = String::new();
+    let mut extracted_worker = String::new();
+    let mut block_time_ms: u64 = 0;
+    let mut visited = HashSet::new();
+    let mut current_hashes = match rpc_cl.get_block_dag_info().await {
+        Ok(info) => info.tip_hashes,
+        Err(_) => vec![],
+    };
+
+    for _attempt in 1..=800 {
+        if current_hashes.is_empty() {
+            break;
+        }
+        let mut next_hashes = vec![];
+        for hash in &current_hashes {
+            if !visited.insert(*hash) {
+                continue;
+            }
+            if let Ok(block) = rpc_cl.get_block(*hash, true).await {
+                let mut found_tx = false;
+                for tx in &block.transactions {
+                    if let Some(tx_verb) = &tx.verbose_data {
+                        if tx_verb.transaction_id.to_string() == f_tx {
+                            found_tx = true;
+                            break;
+                        }
+                    }
+                }
+                if found_tx {
+                    acc_block_hash = hash.to_string();
+                    block_time_ms = block.header.timestamp;
+                    break;
+                }
+                if block.header.daa_score >= daa_score.saturating_sub(60) {
+                    for level in &block.header.parents_by_level {
+                        for p_hash in level {
+                            next_hashes.push(*p_hash);
+                        }
+                    }
+                }
+            }
+        }
+        if !acc_block_hash.is_empty() {
+            break;
+        }
+        current_hashes = next_hashes;
+        sleep(Duration::from_millis(5)).await;
+    }
+
+    if is_coinbase && !acc_block_hash.is_empty() {
+        if let Ok(acc_hash_obj) = acc_block_hash.parse::<Hash>() {
+            if let Ok(full_acc_block) = rpc_cl.get_block(acc_hash_obj, true).await {
+                let mut user_script_bytes: Vec<u8> = Vec::new();
+                if let Some(tx0) = full_acc_block.transactions.first() {
+                    for out in &tx0.outputs {
+                        if let Some(ov) = &out.verbose_data {
+                            if ov.script_public_key_address.to_string() == w_cl {
+                                user_script_bytes = out.script_public_key.script().to_vec();
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !user_script_bytes.is_empty() {
+                    if let Some(verbose) = &full_acc_block.verbose_data {
+                        for blue_hash in &verbose.merge_set_blues_hashes {
+                            if let Ok(blue_block) = rpc_cl.get_block(*blue_hash, true).await {
+                                if let Some(m_tx0) = blue_block.transactions.first() {
+                                    if let Some(pos) = m_tx0
+                                        .payload
+                                        .windows(user_script_bytes.len())
+                                        .position(|w| w == user_script_bytes.as_slice())
+                                    {
+                                        actual_mined_blocks.push(blue_hash.to_string());
+                                        block_time_ms = blue_block.header.timestamp;
+                                        if extracted_nonce.is_empty() {
+                                            extracted_nonce = blue_block.header.nonce.to_string();
+                                            let extra_data =
+                                                &m_tx0.payload[pos + user_script_bytes.len()..];
+                                            extracted_worker = extra_data
+                                                .iter()
+                                                .filter(|&&c| c >= 32 && c <= 126)
+                                                .map(|&c| c as char)
+                                                .collect();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (
+        acc_block_hash,
+        actual_mined_blocks,
+        extracted_nonce,
+        extracted_worker,
+        block_time_ms,
+    )
+}
+
+
+
+==================================================================
+📁 FILE: src\workers\mod.rs
+==================================================================
+pub mod live;
+pub mod sync;
+pub mod system;
+
+use crate::context::AppContext;
+use teloxide::prelude::*;
+use tokio_util::sync::CancellationToken;
+
+// Re-export specific functions so handlers.rs and main.rs don't break
+pub use sync::{sync_all_wallets_from_pruning_point, sync_single_wallet};
+
+/// Master spawner that triggers all background services
+pub fn start_all(ctx: AppContext, bot: Bot, token: CancellationToken) {
+    system::spawn_price_monitor(ctx.clone(), token.clone());
+    system::spawn_node_monitor(ctx.clone(), bot.clone(), token.clone());
+    live::spawn_utxo_monitor(ctx.clone(), bot, token.clone());
+    system::spawn_memory_cleaner(ctx, token);
+}
+
+pub mod rss;
+
+
+
+==================================================================
+📁 FILE: src\workers\rss.rs
+==================================================================
+use chrono::{DateTime, Utc};
+use reqwest::header::{ACCEPT, USER_AGENT};
+use reqwest::Client;
+use sqlx::PgPool;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+
+const RSS_SOURCES: &[&str] = &[
+    "https://medium.com/feed/kaspa-currency",
+    "https://github.com/kaspanet/rusty-kaspa/releases.atom",
+    "https://kaspa.org/feed/",
+];
+
+pub fn spawn_rss_crawler(pool: PgPool, token: CancellationToken) {
+    tokio::spawn(async move {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => { break; }
+                _ = fetch_and_store_feeds(&pool, &client) => {
+                    info!("[RSS] Cycle finished. Sleeping for 6 hours...");
+                    tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+                }
+            }
+        }
+    });
+}
+
+async fn fetch_and_store_feeds(pool: &PgPool, client: &Client) {
+    for &url in RSS_SOURCES {
+        let request = client
+            .get(url)
+            .header(
+                USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) KaspaPulse/1.0",
+            )
+            .header(ACCEPT, "application/rss+xml, application/xml");
+
+        if let Ok(response) = request.send().await {
+            if let Ok(bytes) = response.bytes().await {
+                if let Ok(feed) = feed_rs::parser::parse(&bytes[..]) {
+                    for entry in feed.entries {
+                        let title = entry.title.map_or("Untitled".to_string(), |t| t.content);
+                        let link = entry
+                            .links
+                            .first()
+                            .map_or("".to_string(), |l| l.href.clone());
+                        let content = entry
+                            .summary
+                            .map(|s| s.content)
+                            .unwrap_or_else(|| title.clone());
+                        let published_at: Option<DateTime<Utc>> = entry.published.map(|d| d.into());
+
+                        let _ = sqlx::query(
+                            "INSERT INTO knowledge_base (title, link, content, source, published_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (link) DO NOTHING"
+                        )
+                        .bind(&title).bind(&link).bind(&content).bind(url).bind(published_at)
+                        .execute(pool).await;
+                    }
+                }
+            }
+        } else {
+            error!("[RSS] Network failure fetching source: {}", url);
+        }
+    }
+}
+
+
+
+==================================================================
+📁 FILE: src\workers\sync.rs
+==================================================================
+use kaspa_rpc_core::api::rpc::RpcApi;
+use std::collections::{HashSet, VecDeque};
+use tracing::info;
+
+use crate::context::AppContext;
+use crate::utils::format_short_wallet;
+
+/// Background task to sync all wallets from their last checkpoint to the current tips.
+pub async fn sync_all_wallets_from_pruning_point(ctx: AppContext) -> anyhow::Result<()> {
+    let wallets: Vec<String> = sqlx::query_scalar("SELECT DISTINCT wallet FROM user_wallets")
+        .fetch_all(&ctx.pool)
+        .await?;
+
+    if wallets.is_empty() {
+        info!("ℹ️ [SYNC] No wallets found in database to scan.");
+        return Ok(());
+    }
+
+    info!(
+        "🚀 [GLOBAL SYNC] Starting historical scan for {} wallets...",
+        wallets.len()
+    );
+    for wallet in wallets {
+        let _ = sync_single_wallet(ctx.clone(), wallet).await;
+    }
+    info!("✅ [GLOBAL SYNC] All wallets processed.");
+    Ok(())
+}
+
+/// Core logic for reverse-scanning a single wallet with advanced rich logging.
+pub async fn sync_single_wallet(ctx: AppContext, wallet: String) -> anyhow::Result<()> {
+    info!("🔍 [REVERSE SCAN] Initiated for wallet: {}", wallet);
+
+    let dag_info = ctx.rpc.get_block_dag_info().await?;
+    let pruning_point = dag_info.pruning_point_hash;
+    let last_checkpoint = crate::state::get_sync_checkpoint(&ctx.pool, &wallet).await;
+
+    info!(
+        "📊 [SYNC STATS] Checkpoint Score: {} | Pruning Point: {}",
+        last_checkpoint, pruning_point
+    );
+
+    let mut queue = VecDeque::from(dag_info.tip_hashes.clone());
+    let mut visited = HashSet::new();
+    let mut discovered_rewards = HashSet::new();
+    let mut scanned_count = 0;
+    let mut recovered_count = 0;
+
+    while let Some(current_hash) = queue.pop_front() {
+        if !visited.insert(current_hash) || current_hash == pruning_point {
+            continue;
+        }
+
+        if let Ok(block) = ctx.rpc.get_block(current_hash, true).await {
+            scanned_count += 1;
+
+            if scanned_count % 500 == 0 {
+                info!(
+                    "⏳ [PROGRESS] Scanned {} blocks... current DAA: {}",
+                    scanned_count, block.header.daa_score
+                );
+            }
+
+            if block.header.daa_score <= last_checkpoint {
+                continue;
+            }
+
+            if let Some(tx0) = block.transactions.first() {
+                for (index, output) in tx0.outputs.iter().enumerate() {
+                    if let Some(verbose) = &output.verbose_data {
+                        if verbose.script_public_key_address.to_string() == wallet {
+                            if let Some(block_verbose) = &block.verbose_data {
+                                for blue_hash in &block_verbose.merge_set_blues_hashes {
+                                    if !discovered_rewards.contains(blue_hash) {
+                                        if let Ok(blue_block) =
+                                            ctx.rpc.get_block(*blue_hash, true).await
+                                        {
+                                            let script = output.script_public_key.script().to_vec();
+                                            if blue_block.transactions[0]
+                                                .payload
+                                                .windows(script.len())
+                                                .any(|w| w == script)
+                                            {
+                                                discovered_rewards.insert(*blue_hash);
+                                                let tx_id = blue_block.transactions[0]
+                                                    .verbose_data
+                                                    .as_ref()
+                                                    .map(|v| v.transaction_id.to_string())
+                                                    .unwrap_or_default();
+                                                let outpoint = format!("{}:{}", tx_id, index);
+
+                                                let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mined_blocks WHERE outpoint = $1)")
+                                                    .bind(&outpoint)
+                                                    .fetch_one(&ctx.pool)
+                                                    .await.unwrap_or(false);
+
+                                                if !exists {
+                                                    crate::state::record_recovery_block(
+                                                        &ctx.pool,
+                                                        &outpoint,
+                                                        &wallet,
+                                                        output.value as f64 / 1e8,
+                                                        blue_block.header.daa_score,
+                                                    )
+                                                    .await;
+
+                                                    recovered_count += 1;
+
+                                                    info!("✅ [RECOVERY SUCCESS] | Amount: {:.2} KAS | DAA: {} | Hash: {} | Wallet: {}",
+                                                          output.value as f64 / 1e8,
+                                                          blue_block.header.daa_score,
+                                                          blue_hash,
+                                                          format_short_wallet(&wallet));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            for level in block.header.parents_by_level {
+                for parent in level {
+                    if !visited.contains(&parent) {
+                        queue.push_back(parent);
+                    }
+                }
+            }
+        }
+    }
+
+    crate::state::update_sync_checkpoint(&ctx.pool, &wallet, dag_info.virtual_daa_score).await;
+    info!(
+        "🏁 [SYNC FINISHED] Wallet: {} | Total Scanned: {} | Total Recovered: {}",
+        format_short_wallet(&wallet),
+        scanned_count,
+        recovered_count
+    );
+    Ok(())
+}
+
+
+
+
+==================================================================
+📁 FILE: src\workers\system.rs
+==================================================================
+use kaspa_rpc_core::api::rpc::RpcApi;
+use teloxide::prelude::*;
+use teloxide::types::ChatId;
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+
+use crate::context::AppContext;
+
+pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => { break; }
+                _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                    let client = reqwest::Client::new();
+                    if let Ok(r) = client.get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd&include_market_cap=true")
+                        .header("User-Agent", "Mozilla/5.0").send().await {
+                        if let Ok(j) = r.json::<serde_json::Value>().await {
+                            let price = j["kaspa"]["usd"].as_f64().unwrap_or(0.0);
+                            let mcap = j["kaspa"]["usd_market_cap"].as_f64().unwrap_or(0.0);
+                            let mut write_guard = ctx.price_cache.write().await;
+                            *write_guard = (price, mcap);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
+    tokio::spawn(async move {
+        let _ = ctx.rpc.connect(None).await;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => { break; }
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    if ctx.rpc.get_server_info().await.is_err() {
+                        error!("[NODE ALERT] RPC Connection Lost! Reconnecting...");
+                        let _ = bot.send_message(ChatId(ctx.admin_id), "🚨 <b>ALERT:</b> Node connection lost! Reconnecting...")
+                            .parse_mode(teloxide::types::ParseMode::Html).await;
+                        let _ = ctx.rpc.connect(None).await;
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => { break; }
+                _ = tokio::time::sleep(Duration::from_secs(3600)) => {
+                    let mut conn = ctx.redis.clone(); let _: Result<(), _> = redis::cmd("FLUSHDB").query_async(&mut conn).await;
+                    info!("[MEMORY CLEANER] Purged AI context history.");
+                }
+            }
+        }
+    });
+}
+
+
