@@ -24,13 +24,14 @@ pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
 
     info!("[RAG] Analyzing query intent for: '{}'", user_query);
 
-    // Step 1: Handle News Intent separately to ensure Tavily is triggered
-    if is_news {
-        info!("[RAG] News Intent detected. Bypassing local cache for Live Intelligence.");
+    // Step 1: High-Priority Intent Bypass
+    // If user asks for news or live metrics, trigger the Autonomous Agent directly.
+    if is_news || is_metric {
+        info!("[RAG] Priority Intent (News/Metric) detected. Engaging Live Intelligence.");
         return trigger_autonomous_agent(pool, user_query).await;
     }
 
-    // Step 2: Search Local Knowledge Base for non-news queries
+    // Step 2: Search Local Knowledge Base for technical or custom data
     let search_anchor = user_query
         .split_whitespace()
         .filter(|w| w.len() > 2)
@@ -61,7 +62,7 @@ pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
             context_buffer
         }
 
-        // Final Fallback: If DB is silent or if query is a Metric, try the Agent
+        // Final Fallback: If DB is silent, try the Agent
         _ => {
             info!("[RAG] Local DB silent. Engaging Autonomous Agent...");
             trigger_autonomous_agent(pool, user_query).await
