@@ -154,9 +154,6 @@ async fn main() -> Result<(), BotError> {
         env::var("BOT_TOKEN").map_err(|_| BotError::EnvVarMissing("BOT_TOKEN".into()))?;
     let bot = Bot::new(bot_token);
 
-    // Clear old updates to prevent message flooding on restart
-    let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
-
     // Command Menu Setup
     let public_commands = vec![
         teloxide::types::BotCommand::new("start", "Start the bot and show help"),
@@ -211,6 +208,9 @@ async fn main() -> Result<(), BotError> {
         let addr = ([0, 0, 0, 0], port).into();
         let url = format!("https://{}/webhook", domain).parse().unwrap();
         
+        // ✅ Delete any rogue polling updates BEFORE setting the Webhook
+        let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
+
         tracing::info!("🌐 [NETWORK] Enterprise Webhook Mode Active. Listening on port {} for domain {}", port, domain);
         
         let listener = teloxide::update_listeners::webhooks::axum(bot, teloxide::update_listeners::webhooks::Options::new(addr, url)).await.expect("Failed to setup webhook");
@@ -218,6 +218,9 @@ async fn main() -> Result<(), BotError> {
         
         dispatcher.dispatch_with_listener(listener, error_handler).await;
     } else {
+        // ✅ Delete Webhook explicitly to allow Polling to work
+        let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
+
         tracing::info!("🔄 [NETWORK] Polling Mode Active (Standard Development Fallback).");
         dispatcher.dispatch().await;
     }
