@@ -1,10 +1,13 @@
-#![allow(clippy::manual_range_contains)]
+pub mod resilience;
+pub mod enterprise;
+#[allow(clippy::manual_range_contains)]
 
 pub mod agent;
 mod ai;
 mod commands;
 mod context;
 mod handlers;
+pub mod services;
 mod kaspa_features;
 mod state;
 mod utils;
@@ -73,17 +76,12 @@ async fn main() -> Result<(), BotError> {
     let admin_id: i64 = admin_id_str.parse().unwrap_or(0);
     let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:18110".to_string());
     let network_id = NetworkId::from_str("mainnet")
-        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap());
+        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
-    let db_url = env::var("DATABASE_URL").expect("CRITICAL: DATABASE_URL is missing in .env");
+    let db_url = env::var("DATABASE_URL").expect("CRITICAL: DATABASE_URL is missing in .env"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
     let pool = crate::state::init_db(&db_url).await?;
 
-    // Initialize Redis Distributed RAM
-    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis_client = redis::Client::open(redis_url).expect("CRITICAL: Invalid Redis URL");
-    let redis = redis::aio::ConnectionManager::new(redis_client)
-        .await
-        .expect("CRITICAL: Failed to connect to Redis Cluster");
+    // Redis removed: State is now natively managed via DashMap for ultra-low latency.
     let cancel_token = CancellationToken::new();
 
     // Graceful Shutdown Registry
@@ -121,7 +119,7 @@ async fn main() -> Result<(), BotError> {
     }
 
     // Establish Kaspa wRPC Tunnel
-    let rpc_client = KaspaRpcClient::new(
+    let rpc_client = KaspaRpcClient::new( // FIXME_PHASE4_RETRY: Wrap this in 'crate::resilience::with_retries(|| async { ... }, 5).await'
         WrpcEncoding::SerdeJson,
         Some(&ws_url),
         None,
@@ -132,15 +130,14 @@ async fn main() -> Result<(), BotError> {
 
     // Initialize Cloud AI Engine (Instant Boot)
     info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
-    let ai_engine = Arc::new(tokio::sync::Mutex::new(
+    let ai_engine = Arc::new(
         crate::ai::LocalAiEngine::new()
-            .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."),
-    ));
+            .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
+    );
 
     let ctx = AppContext {
         rpc: Arc::new(rpc_client),
         pool,
-        redis,
         state,
         utxo_state: Arc::new(DashMap::new()),
         monitoring: Arc::new(AtomicBool::new(true)),
@@ -165,7 +162,7 @@ async fn main() -> Result<(), BotError> {
         teloxide::types::BotCommand::new("miner", "Estimate solo-mining hashrate"),
         teloxide::types::BotCommand::new("network", "View node & network stats"),
     ];
-    let _ = bot.set_my_commands(public_commands).await;
+    if let Err(e) = bot.set_my_commands(public_commands).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
     let _ = bot
         .set_my_commands(Command::bot_commands())
         .scope(teloxide::types::BotCommandScope::Chat {
@@ -192,7 +189,7 @@ async fn main() -> Result<(), BotError> {
 
     info!("🚀 Dispatcher is LIVE! Ready for users.");
 
-    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler) // FIXME_PHASE4_SHUTDOWN: Bind 'crate::resilience::shutdown_signal()' to this to prevent DB corruption on exit.
         .dependencies(dptree::deps![ctx])
         .enable_ctrlc_handler()
         .default_handler(|update: Arc<Update>| async move {
@@ -207,16 +204,16 @@ async fn main() -> Result<(), BotError> {
         std::env::var("USE_WEBHOOK").unwrap_or_else(|_| "false".to_string()) == "true";
 
     if use_webhook {
-        let domain = std::env::var("WEBHOOK_DOMAIN").expect("CRITICAL: WEBHOOK_DOMAIN required");
+        let domain = std::env::var("WEBHOOK_DOMAIN").expect("CRITICAL: WEBHOOK_DOMAIN required"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let port: u16 = std::env::var("WEBHOOK_PORT")
             .unwrap_or_else(|_| "8443".to_string())
             .parse()
-            .unwrap();
+            .unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let addr = ([0, 0, 0, 0], port).into();
-        let url = format!("https://{}/webhook", domain).parse().unwrap();
+        let url = format!("https://{}/webhook", domain).parse().unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
         // ✅ Delete any rogue polling updates BEFORE setting the Webhook
-        let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
+        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 
         tracing::info!(
             "🌐 [NETWORK] Enterprise Webhook Mode Active. Listening on port {} for domain {}",
@@ -229,7 +226,7 @@ async fn main() -> Result<(), BotError> {
             teloxide::update_listeners::webhooks::Options::new(addr, url),
         )
         .await
-        .expect("Failed to setup webhook");
+        .expect("Failed to setup webhook"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let error_handler =
             teloxide::error_handlers::LoggingErrorHandler::with_custom_text("Webhook Error");
 
@@ -238,11 +235,18 @@ async fn main() -> Result<(), BotError> {
             .await;
     } else {
         // ✅ Delete Webhook explicitly to allow Polling to work
-        let _ = bot.delete_webhook().drop_pending_updates(true).send().await;
+        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 
         tracing::info!("🔄 [NETWORK] Polling Mode Active (Standard Development Fallback).");
-        dispatcher.dispatch().await;
+        dispatcher.dispatch().await; // FIXME_PHASE4_SHUTDOWN: Bind 'crate::resilience::shutdown_signal()' to this to prevent DB corruption on exit.
     }
 
     Ok(())
 }
+
+
+
+
+
+
+

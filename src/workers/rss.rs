@@ -56,11 +56,11 @@ async fn fetch_and_store_feeds(pool: &PgPool, client: &Client) {
                             .unwrap_or_else(|| title.clone());
                         let published_at: Option<DateTime<Utc>> = entry.published.map(|d| d.into());
 
-                        let _ = sqlx::query(
+                        if let Err(e) = sqlx::query(
                             "INSERT INTO knowledge_base (title, link, content, source, published_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (link) DO NOTHING"
                         )
                         .bind(&title).bind(&link).bind(&content).bind(url).bind(published_at)
-                        .execute(pool).await;
+                        .execute(pool).await { tracing::error!("[DATABASE ERROR] Query execution failed: {}", e); }
                     }
                 }
             }

@@ -2,7 +2,6 @@ use crate::ai::SharedAiEngine;
 use crate::state::{SharedState, UtxoState};
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
 use kaspa_wrpc_client::KaspaRpcClient;
-use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPool;
 use std::num::NonZeroU32;
 use std::sync::atomic::AtomicBool;
@@ -16,7 +15,6 @@ pub type SpamLimiter = Arc<RateLimiter<i64, DefaultKeyedStateStore<i64>, Default
 pub struct AppContext {
     pub rpc: Arc<KaspaRpcClient>,
     pub pool: PgPool,             // 🐘 Moved to PostgreSQL
-    pub redis: ConnectionManager, // ⚡ Added Redis for Distributed RAM
     pub state: SharedState,
     pub utxo_state: UtxoState,
     pub monitoring: Arc<AtomicBool>,
@@ -29,7 +27,8 @@ pub struct AppContext {
 impl AppContext {
     pub fn new_rate_limiter() -> SpamLimiter {
         Arc::new(RateLimiter::keyed(
-            Quota::per_second(NonZeroU32::new(2).unwrap()).allow_burst(NonZeroU32::new(3).unwrap()),
+            Quota::per_second(NonZeroU32::new(2).unwrap()).allow_burst(NonZeroU32::new(3).unwrap()), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         ))
     }
 }
+

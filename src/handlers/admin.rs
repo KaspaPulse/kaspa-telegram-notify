@@ -168,7 +168,7 @@ pub async fn handle_restart(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppCo
             None,
         )
         .await;
-        std::process::exit(0);
+        tracing::info!("[SYSTEM] Restarting binary per admin request...");        std::process::exit(0);
     }
 }
 
@@ -340,8 +340,30 @@ pub async fn handle_autolearn(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &App
             "💾 [AUTOLEARN] Saved {} new articles directly to local database.",
             added_count
         );
-        let _ = bot.send_message(chat_id, format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My internal database has been updated instantly!</i>", added_count, titles_added)).parse_mode(teloxide::types::ParseMode::Html).await;
+        if let Err(e) = bot.send_message(chat_id, format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My internal database has been updated instantly!</i>", added_count, titles_added)).parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
     } else {
-        let _ = bot.send_message(chat_id, "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found. Database is completely up to date.").parse_mode(teloxide::types::ParseMode::Html).await;
+        if let Err(e) = bot.send_message(chat_id, "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found. Database is completely up to date.").parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
     }
 }
+
+
+// [INJECTED BY SECURITY PATCHER] - Access Control Verification
+#[allow(dead_code)]
+pub fn verify_admin_access(user_id: Option<u64>) -> bool {
+    let admin_id: u64 = std::env::var("ADMIN_ID")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse()
+        .unwrap_or(0);
+        
+    if let Some(id) = user_id {
+        if id == admin_id {
+            return true;
+        } else {
+            tracing::warn!("⚠️ UNAUTHORIZED ADMIN ATTEMPT from User ID: {}", id);
+            return false;
+        }
+    }
+    false
+}
+
+

@@ -73,7 +73,7 @@ Welcome to the most advanced Kaspa Solo Mining & Node monitoring bot.
 }
 
 pub async fn handle_donate(bot: Bot, chat_id: ChatId) {
-    let _ = bot.send_message(chat_id, "❤️ <b>Support Development</b>\n\n<b>KAS Address:</b>\n<code>kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g</code>").parse_mode(teloxide::types::ParseMode::Html).await;
+    if let Err(e) = bot.send_message(chat_id, "❤️ <b>Support Development</b>\n\n<b>KAS Address:</b>\n<code>kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g</code>").parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 }
 
 pub async fn handle_add(bot: Bot, chat_id: ChatId, wallet: String, ctx: &AppContext) {
@@ -167,21 +167,16 @@ pub async fn handle_balance(
         .map(|e| e.key().clone())
         .collect();
     for wallet_str in tracked_wallets {
-        if let Ok(a) = Address::try_from(wallet_str.as_str()) {
-            if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![a.clone()]).await {
-                let k = utxos
-                    .iter()
-                    .map(|u| u.utxo_entry.amount as f64)
-                    .sum::<f64>()
-                    / 1e8;
-                total += k;
-                text.push_str(&format!(
-                    "⏱️ <code>{}</code>\n├ <b>Live Balance:</b> {:.8} KAS\n└ <b>UTXOs:</b> {}\n\n",
-                    format_short_wallet(&wallet_str),
-                    k,
-                    utxos.len()
-                ));
-            }
+                if let Ok((balance, utxo_count)) = crate::services::kaspa::KaspaNodeService::get_balance(&ctx.rpc, &wallet_str).await {
+            total += balance;
+            text.push_str(&format!(
+                "⏱️ <code>{}</code>\n├ <b>Live Balance:</b> {:.8} KAS\n└ <b>UTXOs:</b> {}\n\n",
+                format_short_wallet(&wallet_str),
+                balance,
+                utxo_count
+            ));
+        } else {
+            tracing::error!("[NODE ERROR] Failed to fetch data for wallet: {}", wallet_str);
         }
     }
     text.push_str(&format!(
@@ -524,3 +519,4 @@ pub async fn handle_fees(
         }
     }
 }
+

@@ -15,7 +15,7 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) {
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
                     let client = reqwest::Client::new();
                     if let Ok(r) = client.get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd&include_market_cap=true")
-                        .header("User-Agent", "Mozilla/5.0").send().await {
+                        .header("User-Agent", "KaspaPulse/1.0 (Enterprise Node)").send().await {
                         if let Ok(j) = r.json::<serde_json::Value>().await {
                             let price = j["kaspa"]["usd"].as_f64().unwrap_or(0.0);
                             let mcap = j["kaspa"]["usd_market_cap"].as_f64().unwrap_or(0.0);
@@ -38,8 +38,8 @@ pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
                     if ctx.rpc.get_server_info().await.is_err() {
                         error!("[NODE ALERT] RPC Connection Lost! Reconnecting...");
-                        let _ = bot.send_message(ChatId(ctx.admin_id), "🚨 <b>ALERT:</b> Node connection lost! Reconnecting...")
-                            .parse_mode(teloxide::types::ParseMode::Html).await;
+                        if let Err(e) = bot.send_message(ChatId(ctx.admin_id), "🚨 <b>ALERT:</b> Node connection lost! Reconnecting...")
+                            .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
                         let _ = ctx.rpc.connect(None).await;
                     }
                 }
@@ -54,10 +54,12 @@ pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
             tokio::select! {
                 _ = token.cancelled() => { break; }
                 _ = tokio::time::sleep(Duration::from_secs(3600)) => {
-                    let mut conn = ctx.redis.clone(); let _: Result<(), _> = redis::cmd("FLUSHDB").query_async(&mut conn).await;
-                    info!("[MEMORY CLEANER] Purged AI context history.");
+                    ctx.utxo_state.clear(); // Safely clear the native UTXO cache state
+                    info!("[MEMORY CLEANER] Purged native UTXO cache state to free RAM.");
                 }
             }
         }
     });
 }
+
+

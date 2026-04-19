@@ -25,10 +25,11 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                 _ = token.cancelled() => { break; }
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {
                     if !ctx.monitoring.load(Ordering::Relaxed) { continue; }
-                    let check_list: Vec<(String, HashSet<i64>)> = ctx.state.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
+                    let check_list = ctx.state.clone();
                     if check_list.is_empty() { continue; }
 
-                    for (wallet, subs) in check_list {
+                    for entry in check_list.iter() { let wallet = entry.key(); let subs = entry.value();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await; // Protect Kaspa Node from RPC Spam
                         if let Ok(addr) = Address::try_from(wallet.as_str()) {
                             if let Ok(utxos) = ctx.rpc.get_utxos_by_addresses(vec![addr.clone()]).await {
                                 let mut current_outpoints = HashSet::new();
@@ -56,7 +57,7 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                     let (f_tx, w_cl, rpc_cl) = (tx_id.clone(), wallet.clone(), Arc::clone(&ctx.rpc));
                                     let pool_cl = ctx.pool.clone();
                                     let addr_cl = addr.clone();
-                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
                                     join_set.spawn(async move {
                                         let _p = permit;
@@ -64,7 +65,7 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                             crate::state::record_mined_block(&pool_cl, &outp, &w_cl, diff, daa_score).await;
                                         }
 
-                                        let (acc_block_hash, actual_mined_blocks, extracted_nonce, extracted_worker, block_time_ms) = analyze_block_payload(Arc::clone(&rpc_cl), f_tx.clone(), w_cl.clone(), daa_score, is_coinbase).await;
+                                        let (acc_block_hash, actual_mined_blocks, extracted_nonce, extracted_worker, block_time_ms) = analyze_block_payload(Arc::clone(&rpc_cl), f_tx.to_string(), w_cl.to_string(), daa_score, is_coinbase).await;
 
                                         let mut live_bal = 0.0;
                                         if let Ok(live_utxos) = rpc_cl.get_utxos_by_addresses(vec![addr_cl]).await {
@@ -89,7 +90,7 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                         } else { final_msg.push_str(&format!("<b>Accepting Block:</b> {}\n", acc_block_str)); }
                                         final_msg.push_str(&format!("<b>DAA Score:</b> <code>{}</code>\n</blockquote>", daa_score));
 
-                                        (block_time_ms, diff, w_cl, final_msg)
+                                        (block_time_ms, diff, w_cl.to_string(), final_msg.to_string())
                                     });
                                 }
 
@@ -108,11 +109,11 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                     info!("💎 [LIVE BLOCK] | Amount: +{:.4} KAS | Wallet: {} | Time: {} | Status: Delivered",
                                           diff, format_short_wallet(&w_cl), log_time);
 
-                                    for user_id in &subs {
-                                        let _ = bot.send_message(ChatId(*user_id), &final_msg)
+                                    for user_id in subs {
+                                        if let Err(e) = bot.send_message(ChatId(*user_id), &final_msg)
                                             .parse_mode(teloxide::types::ParseMode::Html)
                                             .link_preview_options(teloxide::types::LinkPreviewOptions { url: None, is_disabled: true, show_above_text: false, prefer_small_media: false, prefer_large_media: false })
-                                            .await;
+                                            .await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
                                     }
                                 }
                             }
@@ -235,3 +236,6 @@ pub async fn analyze_block_payload(
         block_time_ms,
     )
 }
+
+
+

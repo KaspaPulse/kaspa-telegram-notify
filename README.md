@@ -1,10 +1,12 @@
-﻿# 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
+# 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
 ![Kaspa](https://img.shields.io/badge/Kaspa-Network-70D4CB.svg?style=flat-square)
-![Database](https://img.shields.io/badge/Database-SQLite-blue.svg?style=flat-square)
+![Database](https://img.shields.io/badge/Database-PostgreSQL-336791.svg?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)
 ![AI-Powered](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-purple.svg?style=flat-square)
+![Architecture](https://img.shields.io/badge/Architecture-Parallel%20Streaming-success.svg?style=flat-square)
+![AI](https://img.shields.io/badge/AI-Hardened%20RAG%20Batching-purple.svg?style=flat-square)
 ![Zero-Warnings](https://img.shields.io/badge/Standard-Zero%20Warnings-success.svg?style=flat-square)
 
 ---
@@ -19,6 +21,8 @@ Built for **Kaspa Solo Miners** and **Full Node Operators**, it delivers:
 * 🔐 Maximum privacy (no public APIs)
 * 🧠 AI-powered intelligence
 * 🔬 Deep GHOSTDAG blockchain forensics
+* 🐘 High-Performance PostgreSQL State Management
+* 🛡️ Anti-Flood & Prompt-Injection Hardened
 
 It connects directly to your node via **wRPC WebSocket**, ensuring raw, unindexed, real-time blockchain data without relying on third-party block explorers.
 

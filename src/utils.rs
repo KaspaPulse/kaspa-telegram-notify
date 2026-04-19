@@ -1,4 +1,4 @@
-﻿use anyhow::Context;
+use anyhow::Context;
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
 use std::num::NonZeroU32;
 use std::sync::OnceLock;
@@ -103,7 +103,7 @@ pub fn format_hash(hash: &str, link_type: &str) -> String {
 pub fn is_spam(chat_id: i64) -> bool {
     static LIMITER: OnceLock<SpamLimiter> = OnceLock::new();
     let limiter =
-        LIMITER.get_or_init(|| RateLimiter::keyed(Quota::per_second(NonZeroU32::new(1).unwrap())));
+        LIMITER.get_or_init(|| RateLimiter::keyed(Quota::per_second(NonZeroU32::new(1).unwrap()))); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
     limiter.check_key(&chat_id).is_err()
 }
