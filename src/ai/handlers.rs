@@ -15,6 +15,7 @@ pub async fn process_conversational_intent(
     info!("🗣️ [USER INTENT]: {}", user_text);
     let lower_text = user_text.to_lowercase();
 
+    // Fast Intent Routing
     if lower_text.contains("رصيد") || lower_text.contains("balance") {
         let t = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S.%3f UTC").to_string();
         crate::handlers::public::handle_balance(bot, chat_id, &ctx, t, None).await;
@@ -31,7 +32,7 @@ pub async fn process_conversational_intent(
 
     match stream_result {
         Ok(stream) => {
-            tokio::pin!(stream); // ✅ Fixed: Pin the stream to memory
+            tokio::pin!(stream); 
             let mut full_response = String::new();
             let mut last_edit = Instant::now();
             let throttle = Duration::from_millis(1500);
@@ -39,12 +40,15 @@ pub async fn process_conversational_intent(
             while let Some(chunk) = stream.next().await {
                 full_response.push_str(&chunk);
                 if last_edit.elapsed() >= throttle {
-                    let _ = bot.edit_message_text(chat_id, initial_msg.id, format!("🤖 <b>Kaspa AI:</b>\n{}...", full_response)).parse_mode(teloxide::types::ParseMode::Html).await;
+                    let text_to_send = format!("🤖 <b>Kaspa AI Intelligence</b>\n━━━━━━━━━━━━━━━━━━\n{}...\n\n⚡ <i>analyzing...</i>", full_response);
+                    let _ = bot.edit_message_text(chat_id, initial_msg.id, text_to_send).parse_mode(teloxide::types::ParseMode::Html).await;
                     last_edit = Instant::now();
                 }
             }
 
-            let _ = bot.edit_message_text(chat_id, initial_msg.id, format!("🤖 <b>Kaspa AI:</b>\n{}", full_response)).parse_mode(teloxide::types::ParseMode::Html).await;
+            let final_text = format!("🤖 <b>Kaspa AI Intelligence</b>\n━━━━━━━━━━━━━━━━━━\n{}", full_response);
+            let _ = bot.edit_message_text(chat_id, initial_msg.id, final_text).parse_mode(teloxide::types::ParseMode::Html).await;
+            
             let _ = sqlx::query("INSERT INTO chat_history (chat_id, role, message) VALUES ($1, 'user', $2)").bind(chat_id.0).bind(&user_text).execute(&ctx.pool).await;
             let _ = sqlx::query("INSERT INTO chat_history (chat_id, role, message) VALUES ($1, 'assistant', $2)").bind(chat_id.0).bind(&full_response).execute(&ctx.pool).await;
         }
@@ -72,8 +76,8 @@ pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> a
 
     match engine.generate_audio(&ctx.pool, bytes, &live_ctx).await {
         Ok(transcript) => {
-            let _ = bot.edit_message_text(chat_id, initial_msg.id, format!("🎙️ <b>Transcript:</b> {}\n⏳ <b>AI Thinking...</b>", transcript)).parse_mode(teloxide::types::ParseMode::Html).await;
-            // Additional streaming logic can be linked here.
+            let _ = bot.edit_message_text(chat_id, initial_msg.id, format!("🎙️ <b>Transcript:</b> {}\n━━━━━━━━━━━━━━━━━━\n⏳ <b>AI Thinking...</b>", transcript)).parse_mode(teloxide::types::ParseMode::Html).await;
+            // Additional streaming logic logic omitted for brevity
         }
         Err(_) => { let _ = bot.edit_message_text(chat_id, initial_msg.id, "❌ Voice Error.").parse_mode(teloxide::types::ParseMode::Html).await; }
     }
