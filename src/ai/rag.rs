@@ -1,107 +1,92 @@
 use sqlx::{PgPool, Postgres};
-use tracing::info;
+use tracing::{error, info};
+use crate::context::AppContext;
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
-/// Keywords to identify user intent for global news/updates.
-const NEWS_INTENT: &[&str] = &[
-    "news",
-    "update",
-    "latest",
-    "recent",
-    "whats new",
-    "خبر",
-    "اخبار",
-    "جديد",
-    "تحديث",
-    "مستجدات",
-];
+/// Enterprise RAG Engine: Semantic Vector Search
+pub async fn get_rag_context(pool: &PgPool, user_query: &str, engine: &crate::ai::LocalAiEngine) -> String {
+    info!("🧠 [RAG] Semantic Search INITIATED for: '{}'", user_query);
 
-/// Keywords for live network metrics and security infrastructure.
-const _METRIC_INTENT: &[&str] = &[
-    "hashrate",
-    "price",
-    "difficulty",
-    "سعر",
-    "صعوبة",
-    "احصائيات",
-    "ssl",
-    "security",
-    "حماية",
-];
+    // 1. Convert user query to vector
+    let query_vector = match engine.get_embedding(user_query).await {
+        Ok(v) => v,
+        Err(e) => {
+            error!("⚠️ [RAG] Vectorization failed: {}. Falling back to Agent.", e);
+            return trigger_autonomous_agent(pool, user_query).await;
+        }
+    };
 
-/// Enterprise RAG Engine: Multi-word anchor search with live fallback.
-pub async fn get_rag_context(pool: &PgPool, user_query: &str) -> String {
-    let lower_query = user_query.to_lowercase();
-    let is_news = NEWS_INTENT.iter().any(|&k| lower_query.contains(k));
+    // 2. Format vector for pgvector '[0.1, 0.2, ...]'
+    let vector_str = format!("{:?}", query_vector);
 
-    info!("[RAG] CRITICAL SEARCH INITIATED: '{}'", user_query);
+    // 3. Search via Cosine Distance (<=>)
+    let articles: Result<Vec<(String, String)>, _> = sqlx::query_as::<Postgres, (String, String)>(
+        "SELECT title, content FROM knowledge_base 
+         WHERE embedding IS NOT NULL 
+         ORDER BY embedding <=> $1::vector 
+         LIMIT 3"
+    )
+    .bind(vector_str)
+    .fetch_all(pool)
+    .await;
 
-    // 1. Force Live Intelligence for News (Bypass DB entirely for fresh data)
-    if is_news {
-        info!("[RAG] News intent detected. Bypassing local DB for Tavily.");
-        return trigger_autonomous_agent(pool, user_query).await;
-    }
-
-    // 2. Enhanced Local Search: Iterating through all significant words (> 2 chars)
-    // This ensures that even short technical terms like 'SSL' are caught.
-    let words: Vec<&str> = lower_query
-        .split_whitespace()
-        .filter(|w| w.len() > 2)
-        .collect();
-    let mut combined_results = Vec::new();
-
-    for word in words {
-        let pattern = format!("%{}%", word);
-        if let Ok(mut articles) = sqlx::query_as::<Postgres, (String, String)>(
-            "SELECT title, content FROM knowledge_base 
-             WHERE content ILIKE $1 OR title ILIKE $1 
-             ORDER BY CASE WHEN title LIKE 'Manual Input%' THEN 0 ELSE 1 END, id DESC 
-             LIMIT 2",
-        )
-        .bind(pattern)
-        .fetch_all(pool)
-        .await
-        {
-            combined_results.append(&mut articles);
+    if let Ok(results) = articles {
+        if !results.is_empty() {
+            info!("✅ [RAG] Semantic Match Found. Injecting context.");
+            let mut context = String::from("\n[INTERNAL SERVER PROTOCOLS & DATA]:\n");
+            for (title, content) in results {
+                let snippet = if content.len() > 800 { &content[..800] } else { &content };
+                context.push_str(&format!("- {}: {}\n", title, snippet));
+            }
+            return context;
         }
     }
 
-    if !combined_results.is_empty() {
-        info!("[RAG] Local Knowledge Found. Injecting into context.");
-        let mut context = String::from("\n[INTERNAL SERVER PROTOCOLS & DATA]:\n");
-
-        // Remove duplicates if multiple words hit the same article
-        combined_results.dedup();
-
-        for (title, content) in combined_results.iter().take(4) {
-            let snippet = if content.len() > 600 {
-                &content[..600]
-            } else {
-                &content
-            };
-            context.push_str(&format!("- {}: {}\n", title, snippet));
-        }
-        return context;
-    }
-
-    // 3. Fallback to Agent if local search yields no relevant results
-    info!("[RAG] Local search silent. Engaging Autonomous Agent.");
+    info!("🌐 [RAG] Local search silent. Engaging Autonomous Agent.");
     trigger_autonomous_agent(pool, user_query).await
 }
 
-/// Helper to trigger the Autonomous Agent and perform database maintenance.
 async fn trigger_autonomous_agent(pool: &PgPool, query: &str) -> String {
     if let Some(agent_answer) = crate::agent::search_and_learn(pool, query).await {
-        // Auto-Pruning: Clean old data while protecting user-added 'Manual Input'
-        let _ = sqlx::query(
-            "DELETE FROM knowledge_base 
-             WHERE published_at < NOW() - INTERVAL '7 days' 
-             AND title NOT LIKE 'Manual Input%'",
-        )
-        .execute(pool)
-        .await;
-
+        let _ = sqlx::query("DELETE FROM knowledge_base WHERE published_at < NOW() - INTERVAL '7 days' AND title NOT LIKE 'Manual Input%'").execute(pool).await;
         format!("\n[LIVE AGENT REPORT]:\n{}\n", agent_answer)
     } else {
         String::new()
     }
+}
+
+/// 🤖 Autonomous Background Vectorizer (Enterprise Microservice)
+pub fn spawn_background_vectorizer(ctx: AppContext, token: CancellationToken) {
+    tokio::spawn(async move {
+        info!("⚙️ [VECTORIZER] Background worker started. Scanning for raw knowledge...");
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = tokio::time::sleep(Duration::from_secs(15)) => {
+                    // Find up to 5 rows missing embeddings
+                    let unindexed: Result<Vec<(i32, String)>, _> = sqlx::query_as(
+                        "SELECT id, content FROM knowledge_base WHERE embedding IS NULL LIMIT 5"
+                    ).fetch_all(&ctx.pool).await;
+
+                    if let Ok(rows) = unindexed {
+                        if !rows.is_empty() {
+                            let engine = ctx.ai_engine.lock().await;
+                            for (id, content) in rows {
+                                if let Ok(vector) = engine.get_embedding(&content).await {
+                                    let vec_str = format!("{:?}", vector);
+                                    let _ = sqlx::query("UPDATE knowledge_base SET embedding = $1::vector WHERE id = $2")
+                                        .bind(vec_str)
+                                        .bind(id)
+                                        .execute(&ctx.pool).await;
+                                    info!("✅ [VECTORIZER] Embedded & Indexed Document ID: {}", id);
+                                }
+                                tokio::time::sleep(Duration::from_millis(500)).await; // Rate limit safety
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 }

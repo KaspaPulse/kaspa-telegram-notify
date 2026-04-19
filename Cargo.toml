@@ -8,6 +8,11 @@ description = "Enterprise Kaspa Solo Mining Bot - Hardened & Synced to v1.1.0"
 [dependencies]
 feed-rs = "1.5"
 
+# --- AI Vector Search & Streaming Additions ---
+pgvector = { version = "0.3", features = ["postgres", "sqlx"] }
+async-stream = "0.3.5"
+futures-util = "0.3.30"
+
 # Core Frameworks
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-util = "0.7"

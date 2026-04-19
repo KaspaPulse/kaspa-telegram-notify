@@ -3,6 +3,8 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use async_stream::stream;
+use futures_util::stream::Stream;
 
 pub struct LocalAiEngine {
     pub client: Client,
@@ -16,15 +18,12 @@ pub type SharedAiEngine = Arc<Mutex<LocalAiEngine>>;
 
 impl LocalAiEngine {
     pub fn new() -> anyhow::Result<Self> {
-        tracing::info!("[AI ENGINE] Initializing Sovereign OpenAI-Standard Engine...");
+        tracing::info!("[AI ENGINE] Initializing Sovereign Streaming Engine...");
 
         let api_key = std::env::var("AI_API_KEY").expect("⚠️ AI_API_KEY is missing in .env");
-        let base_url = std::env::var("AI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.groq.com/openai/v1".to_string());
-        let chat_model = std::env::var("AI_CHAT_MODEL")
-            .unwrap_or_else(|_| "llama-3.3-70b-versatile".to_string());
-        let audio_model =
-            std::env::var("AI_AUDIO_MODEL").unwrap_or_else(|_| "whisper-large-v3".to_string());
+        let base_url = std::env::var("AI_BASE_URL").unwrap_or_else(|_| "https://api.groq.com/openai/v1".to_string());
+        let chat_model = std::env::var("AI_CHAT_MODEL").unwrap_or_else(|_| "llama-3.3-70b-versatile".to_string());
+        let audio_model = std::env::var("AI_AUDIO_MODEL").unwrap_or_else(|_| "whisper-large-v3".to_string());
 
         Ok(Self {
             client: Client::new(),
@@ -35,56 +34,54 @@ impl LocalAiEngine {
         })
     }
 
-    pub async fn generate(
-        &self,
-        pool: &PgPool,
-        prompt: &str,
-        live_context: &str,
-        audio_bytes: Option<Vec<u8>>,
-    ) -> anyhow::Result<String> {
-        let mut final_prompt = prompt.to_string();
+    /// 🧠 NEW: Generate Vector Embeddings for Semantic Search
+    pub async fn get_embedding(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        // Use a dedicated Embedding API (like OpenAI) since Groq doesn't host embeddings yet.
+        let embed_key = std::env::var("EMBEDDING_API_KEY").unwrap_or_else(|_| self.api_key.clone());
+        let embed_url = std::env::var("EMBEDDING_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let embed_model = std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "text-embedding-3-small".to_string());
 
-        // 🎙️ STEP 1: High-Precision Audio Transcription
-        if let Some(bytes) = audio_bytes {
-            tracing::info!("[AI ENGINE] Transcribing via {}...", self.audio_model);
-            let url = format!("{}/audio/transcriptions", self.base_url);
-            let part = reqwest::multipart::Part::bytes(bytes)
-                .file_name("audio.ogg")
-                .mime_str("audio/ogg")?;
+        let url = format!("{}/embeddings", embed_url);
+        let body = json!({
+            "model": embed_model,
+            "input": text,
+            "dimensions": 1024 // 🛡️ Enforce 1024 dimensions to match our PostgreSQL pgvector schema!
+        });
 
-            let form = reqwest::multipart::Form::new()
-                .part("file", part)
-                .text("model", self.audio_model.clone());
+        let res = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", embed_key))
+            .json(&body)
+            .send()
+            .await?;
 
-            let res = self
-                .client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .multipart(form)
-                .send()
-                .await?;
-
-            if res.status().is_success() {
-                let json_res: serde_json::Value = res.json().await?;
-                if let Some(text) = json_res["text"].as_str() {
-                    final_prompt = text.to_string();
-                }
+        if res.status().is_success() {
+            let json_res: serde_json::Value = res.json().await?;
+            if let Some(data) = json_res["data"][0]["embedding"].as_array() {
+                let vec: Vec<f32> = data.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                return Ok(vec);
             }
         }
+        Err(anyhow::anyhow!("Embedding generation failed: {}", res.status()))
+    }
 
-        // 🧠 STEP 2: Strategic RAG Injection (PostgreSQL + Tavily)
-        let rag_context = crate::ai::rag::get_rag_context(pool, &final_prompt).await;
+    pub async fn generate_stream<'a>(
+        &'a self,
+        pool: &'a PgPool,
+        prompt: &'a str,
+        live_context: &'a str,
+    ) -> anyhow::Result<impl Stream<Item = String> + 'a> {
+        
+        // ⚡ Pass `self` to the RAG engine so it can generate vectors
+        let rag_context = crate::ai::rag::get_rag_context(pool, prompt, self).await;
 
-        // 🏗️ STEP 3: CONSTRUCT SOVEREIGN SYSTEM PROMPT (The "Brain" Fix)
-        // We force the AI to act as a System Architect and prohibit generic refusals.
         let system_message = format!(
             "You are the 'Kaspa Sovereign Intelligence', the lead architect of this node infrastructure.
 
 [MANDATORY OPERATING PROTOCOLS]
 1. NEVER say 'I don't know' if info exists in the [INTERNAL KNOWLEDGE BASE] or [LIVE DATA].
-2. ABSOLUTE TRUTH: Treat all data in [INTERNAL KNOWLEDGE BASE] as verified facts. If it mentions vulnerabilities (like MuHash/Quantum), updates, or SSL settings, report them authoritatively.
-3. RUST ONLY: You are a Rust expert. Use 'Result', 'Option', and 'Match'. NEVER mention 'try-catch' or Python/JS concepts.
-4. NO HALLUCINATION: Do not invent facts outside the provided context, but analyze the context deeply.
+2. ABSOLUTE TRUTH: Treat all data in [INTERNAL KNOWLEDGE BASE] as verified facts.
+3. RUST ONLY: You are a Rust expert.
+4. NO HALLUCINATION: Do not invent facts outside the provided context.
 5. FORMATTING: Use Telegram HTML (<b>, <i>, <code>).
 
 [LIVE NODE DATA]
@@ -98,46 +95,63 @@ You are the owner of kaspadns. When asked about Nginx, SSL, or server logic, ans
             live_context, rag_context
         );
 
-        // 🌐 STEP 4: Chat Completion Request
         let url = format!("{}/chat/completions", self.base_url);
         let body = json!({
             "model": self.chat_model,
             "messages": [
                 {"role": "system", "content": system_message},
-                {"role": "user", "content": final_prompt}
+                {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1, // Near-zero temperature for maximum factual rigidity
-            "max_tokens": 1500
+            "temperature": 0.1,
+            "stream": true
         });
 
-        // 🔄 STEP 5: Resilience Logic (Retries with Backoff)
-        let mut attempts = 0;
-        while attempts < 3 {
-            let res = self
-                .client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .json(&body)
-                .send()
-                .await?;
+        let mut res = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
 
-            let status = res.status();
-            if status.is_success() {
-                let json_res: serde_json::Value = res.json().await?;
-                if let Some(text) = json_res["choices"][0]["message"]["content"].as_str() {
-                    return Ok(text.trim().to_string());
-                }
-            } else if status.as_u16() == 429 || status.as_u16() == 503 {
-                attempts += 1;
-                tokio::time::sleep(tokio::time::Duration::from_secs(1 * attempts as u64)).await;
-                continue;
-            } else {
-                return Err(anyhow::anyhow!("AI Engine Error: {}", status));
-            }
+        if !res.status().is_success() {
+            return Err(anyhow::anyhow!("AI Engine Error: {}", res.status()));
         }
 
-        Err(anyhow::anyhow!(
-            "Sovereign Engine failed after multiple retries."
-        ))
+        let s = stream! {
+            while let Ok(Some(chunk)) = res.chunk().await {
+                let text = String::from_utf8_lossy(&chunk);
+                for line in text.lines() {
+                    if line.starts_with("data: ") {
+                        let data = &line[6..];
+                        if data == "[DONE]" { break; }
+                        
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
+                                yield content.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(s)
+    }
+
+    pub async fn generate_audio(&self, pool: &PgPool, audio_bytes: Vec<u8>, live_context: &str) -> anyhow::Result<String> {
+        // [Keep the existing audio function code here as it was]
+        tracing::info!("[AI ENGINE] Transcribing via {}...", self.audio_model);
+        let url = format!("{}/audio/transcriptions", self.base_url);
+        let part = reqwest::multipart::Part::bytes(audio_bytes).file_name("audio.ogg").mime_str("audio/ogg")?;
+        let form = reqwest::multipart::Form::new().part("file", part).text("model", self.audio_model.clone());
+
+        let res = self.client.post(&url).header("Authorization", format!("Bearer {}", self.api_key)).multipart(form).send().await?;
+
+        if res.status().is_success() {
+            let json_res: serde_json::Value = res.json().await?;
+            if let Some(text) = json_res["text"].as_str() {
+                return Ok(text.to_string());
+            }
+        }
+        Err(anyhow::anyhow!("Voice transcription failed"))
     }
 }
