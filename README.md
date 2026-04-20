@@ -131,9 +131,12 @@ Once deployed:
 * **Database:** PostgreSQL `v15+` with `pgvector` extension enabled.
 * **OS:** Linux (Ubuntu 22.04/24.04 recommended) or Windows.
 
-```bash
+```
 # Ubuntu Dependencies
 sudo apt update && sudo apt install -y cmake build-essential pkg-config libssl-dev postgresql postgresql-contrib
+
+---
+
 🔐 Environment Setup
 Create a .env file in the root directory:
 
@@ -160,7 +163,10 @@ ENABLE_RSS_WORKER=true
 ENABLE_MEMORY_CLEANER=true
 ENABLE_LIVE_SYNC=true
 ENABLE_AI_VECTORIZER=false
-🛠️ Deployment (Linux)
+
+---
+
+# 🛠️ Deployment (Linux)
 1. Setup PostgreSQL Database
 Bash
 sudo -u postgres psql
@@ -170,15 +176,22 @@ GRANT ALL PRIVILEGES ON DATABASE kaspa_db TO kaspa_admin;
 \c kaspa_db
 CREATE EXTENSION vector;
 \q
-2. Build the Enterprise Binary
+
+---
+
+# 2. Build the Enterprise Binary
 Bash
 git clone https://github.com/KaspaPulse/kaspa-gemini-intelligence.git
 cd kaspa-gemini-intelligence
 cargo build --release
-3. Run as a Systemd Service
+
+---
+
+# 3. Run as a Systemd Service
 Bash
 sudo nano /etc/systemd/system/kaspa-pulse.service
 Ini, TOML
+
 [Unit]
 Description=Kaspa Pulse Enterprise Bot
 After=network.target postgresql.service
@@ -193,18 +206,27 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 Bash
+
 sudo systemctl daemon-reload
 sudo systemctl enable kaspa-pulse
 sudo systemctl start kaspa-pulse
-💖 Support the Developer
+
+---
+
+# 💖 Support the Developer
 If Kaspa Pulse has helped you track your solo mining rewards or manage your node, consider supporting the development!
 
 Kaspa (KAS) Donation Address:
 
 Plaintext
 kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g
-📜 License
+
+---
+
+# 📜 License
 This project is licensed under the MIT License.
 
-🧠 Final Note
+---
+
+# 🧠 Final Note
 Built with precision, engineered with Rust, and designed for the true Kaspa ecosystem pioneers. Happy Solo Mining! ⛏️
