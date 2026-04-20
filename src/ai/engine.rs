@@ -157,3 +157,4 @@ impl LocalAiEngine {
         Err(anyhow::anyhow!("Voice transcription failed"))
     }
 }
+
