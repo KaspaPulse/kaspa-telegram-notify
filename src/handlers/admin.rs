@@ -168,7 +168,8 @@ pub async fn handle_restart(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppCo
             None,
         )
         .await;
-        tracing::info!("[SYSTEM] Restarting binary per admin request...");        std::process::exit(0);
+        tracing::info!("[SYSTEM] Restarting binary per admin request...");        
+        std::process::exit(0);
     }
 }
 
@@ -346,7 +347,6 @@ pub async fn handle_autolearn(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &App
     }
 }
 
-
 // [INJECTED BY SECURITY PATCHER] - Access Control Verification
 #[allow(dead_code)]
 pub fn verify_admin_access(user_id: Option<u64>) -> bool {
@@ -366,10 +366,6 @@ pub fn verify_admin_access(user_id: Option<u64>) -> bool {
     false
 }
 
-
-
-
-
 // ==============================================================================
 // ENTERPRISE CONFIGURATION PANEL
 // ==============================================================================
@@ -385,6 +381,8 @@ pub async fn handle_settings(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppC
         ("ENABLE_MEMORY_CLEANER", "🧠 Periodic RAM purge."),
         ("ENABLE_LIVE_SYNC", "🔄 Real-time node indexing."),
         ("ENABLE_AI_VECTORIZER", "🤖 AI Knowledge indexing."),
+        ("ENABLE_AI_CHAT", "💬 AI Text Chat (LLM)."),
+        ("ENABLE_AI_VOICE", "🎤 AI Voice Analysis (Whisper)."),
         ("RUST_LOG", "📋 Logging level (info/debug)."),
         ("AI_PROVIDER", "🧠 Model provider (groq/openai)."),
         ("MAX_AI_TOKENS", "💰 AI token spending limit."),
@@ -452,4 +450,3 @@ pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: Strin
         std::process::exit(0);
     });
 }
-

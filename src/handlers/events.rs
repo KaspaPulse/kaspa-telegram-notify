@@ -127,6 +127,14 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
 
     // 🎙️ Routing: Voice Audio
     if msg.voice().is_some() {
+        // 🛡️ AI VOICE GATEWAY
+        let ai_voice_enabled = std::env::var("ENABLE_AI_VOICE").unwrap_or_else(|_| "true".to_string()) == "true";
+        if !ai_voice_enabled {
+            let _ = bot.send_message(msg.chat.id, "🚫 <b>Voice Analysis is currently disabled by the administrator.</b>")
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+            return Ok(());
+        }
         return crate::ai::process_voice_message(bot, msg, ctx).await;
     }
 
@@ -141,6 +149,15 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
             || (lower_text.starts_with('q') && lower_text.len() >= 60)
         {
             return fallback_heuristic_text(bot, msg.chat.id, raw_text, ctx).await;
+        }
+
+        // 🛡️ AI CHAT GATEWAY
+        let ai_chat_enabled = std::env::var("ENABLE_AI_CHAT").unwrap_or_else(|_| "true".to_string()) == "true";
+        if !ai_chat_enabled {
+            let _ = bot.send_message(msg.chat.id, "🚫 <b>AI Text Chat is currently disabled by the administrator.</b>")
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+            return Ok(());
         }
 
         // Pass generic conversational text to the RAG AI Engine
