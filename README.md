@@ -1,4 +1,4 @@
-```
+```markdown
 # 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
@@ -136,9 +136,6 @@ Once deployed:
 # Ubuntu Dependencies
 sudo apt update && sudo apt install -y cmake build-essential pkg-config libssl-dev postgresql postgresql-contrib
 ```
-
----
-
 ## 🔐 Environment Setup
 
 Create a `.env` file in the root directory:
