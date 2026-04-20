@@ -66,3 +66,8 @@ panic = "abort"
 
 [patch.crates-io]
 serde_nested_with = { git = "https://github.com/murar8/serde_nested_with" }
+
+# [PHASE 5 FIX] Force AI models to be enabled by default during compilation
+[features]
+default = ["ai_engine"]
+ai_engine = []

@@ -278,16 +278,27 @@ pub async fn get_knowledge_context(pool: &PgPool, keyword: &str) -> Option<Strin
     .unwrap_or(None)
 }
 
-/// Retrieves a dynamic setting from the database, or initializes it with a default value.
-pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
-    // We use query_scalar without '!' to avoid compile-time DB checks for dynamic settings.
+// --- CACHE LAYER FOR SETTINGS (O(1) Memory Access) ---
+static SETTINGS_CACHE: std::sync::OnceLock<dashmap::DashMap<String, String>> = std::sync::OnceLock::new();
+
+fn get_settings_cache() -> &'static dashmap::DashMap<String, String> {
+    SETTINGS_CACHE.get_or_init(|| dashmap::DashMap::new())
+}
+
+/// Retrieves a dynamic setting from the cache or database, initializing it if needed.
+pub async fn get_setting(pool: &sqlx::PgPool, key: &str, default: &str) -> String {
+    let cache = get_settings_cache();
+    if let Some(val) = cache.get(key) {
+        return val.clone();
+    }
+
     let res: Option<String> = sqlx::query_scalar("SELECT value_data FROM system_settings WHERE key_name = $1")
         .bind(key)
         .fetch_optional(pool)
         .await
         .unwrap_or(None);
-    
-    match res {
+
+    let final_val = match res {
         Some(val) => val,
         None => {
             let _ = sqlx::query("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT DO NOTHING")
@@ -296,14 +307,21 @@ pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
                 .execute(pool).await;
             default.to_string()
         }
-    }
+    };
+
+    cache.insert(key.to_string(), final_val.clone());
+    final_val
 }
 
-/// Safely updates a dynamic setting in the database.
-pub async fn update_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+/// Safely updates a dynamic setting in the database and invalidates/updates the cache.
+pub async fn update_setting(pool: &sqlx::PgPool, key: &str, value: &str) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT (key_name) DO UPDATE SET value_data = EXCLUDED.value_data, updated_at = CURRENT_TIMESTAMP")
         .bind(key)
         .bind(value)
         .execute(pool).await?;
+
+    let cache = get_settings_cache();
+    cache.insert(key.to_string(), value.to_string());
+
     Ok(())
 }

@@ -54,6 +54,12 @@ pub async fn sync_single_wallet(ctx: AppContext, wallet: String) -> anyhow::Resu
         if let Ok(block) = ctx.rpc.get_block(current_hash, true).await {
             scanned_count += 1;
 
+            // [PHASE 6 FIX] Prevent Unbounded Queue OOM by enforcing a maximum scan limit
+            if scanned_count > 100_000 {
+                tracing::warn!("⚠️ [SYNC LIMIT] Reached maximum scan depth (100,000 blocks) for {}. Halting sync to prevent memory exhaustion.", wallet);
+                break;
+            }
+
             if scanned_count % 500 == 0 {
                 info!(
                     "⏳ [PROGRESS] Scanned {} blocks... current DAA: {}",
