@@ -9,7 +9,8 @@ description = "Enterprise Kaspa Solo Mining Bot - Hardened & Synced to v1.1.0"
 feed-rs = "1.5"
 
 # --- AI Vector Search & Streaming Additions ---
-pgvector = { version = "0.3", features = ["postgres", "sqlx"] }
+# 🛡️ Security Patch: Upgraded to v0.4 to prevent SQLx 0.7.4 vulnerabilities
+pgvector = { version = "0.4", features = ["sqlx"] }
 async-stream = "0.3.5"
 futures-util = "0.3.30"
 
