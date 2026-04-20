@@ -389,7 +389,7 @@ pub async fn handle_settings(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppC
         ("AI_PROVIDER", "🧠 Model provider (groq/openai)."),
         ("MAX_AI_TOKENS", "💰 AI token spending limit."),
         ("MIN_CONFIRMATIONS", "🧱 Mining confirmation threshold."),
-        ("KASPA_NODE_URL", "🌐 Targeted Node address.")
+        ("WS_URL", "🌐 Targeted Node address.")
     ];
 
     let mut response = String::from("⚙️ <b>Kaspa Pulse Control Panel</b>\n━━━━━━━━━━━━━━━━━━\n");
@@ -452,3 +452,4 @@ pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: Strin
         std::process::exit(0);
     });
 }
+
