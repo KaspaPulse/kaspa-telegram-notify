@@ -75,12 +75,10 @@ async fn main() -> Result<(), BotError> {
         env::var("ADMIN_ID").map_err(|_| BotError::EnvVarMissing("ADMIN_ID".into()))?;
     let admin_id: i64 = admin_id_str.parse().unwrap_or(0);
     let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:18110".to_string());
-    
     let network_id = NetworkId::from_str("mainnet")
-        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap());
+        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
-    // 🛡️ Phase 1 Fix: Safe Database URL loading
-    let db_url = env::var("DATABASE_URL").map_err(|_| BotError::EnvVarMissing("DATABASE_URL".into()))?;
+    let db_url = env::var("DATABASE_URL").expect("CRITICAL: DATABASE_URL is missing in .env"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
     let pool = crate::state::init_db(&db_url).await?;
 
     // Redis removed: State is now natively managed via DashMap for ultra-low latency.
@@ -121,7 +119,7 @@ async fn main() -> Result<(), BotError> {
     }
 
     // Establish Kaspa wRPC Tunnel
-    let rpc_client = KaspaRpcClient::new( 
+    let rpc_client = KaspaRpcClient::new( // FIXME_PHASE4_RETRY: Wrap this in 'crate::resilience::with_retries(|| async { ... }, 5).await'
         WrpcEncoding::SerdeJson,
         Some(&ws_url),
         None,
@@ -133,9 +131,8 @@ async fn main() -> Result<(), BotError> {
     // Initialize Cloud AI Engine (Instant Boot)
     info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
     let ai_engine = Arc::new(
-        // 🛡️ Phase 1 Fix: Safe AI Key loading
         crate::ai::LocalAiEngine::new()
-            .map_err(|_| BotError::EnvVarMissing("AI_API_KEY".into()))?
+            .unwrap_or_else(|_| panic!("CRITICAL: Missing AI_API_KEY. Please set it in .env")), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
     );
 
     let ctx = AppContext {
@@ -192,7 +189,7 @@ async fn main() -> Result<(), BotError> {
 
     info!("🚀 Dispatcher is LIVE! Ready for users.");
 
-    let mut dispatcher = Dispatcher::builder(bot.clone(), handler) 
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler) // FIXME_PHASE4_SHUTDOWN: Bind 'crate::resilience::shutdown_signal()' to this to prevent DB corruption on exit.
         .dependencies(dptree::deps![ctx])
         .enable_ctrlc_handler()
         .default_handler(|update: Arc<Update>| async move {
@@ -207,14 +204,13 @@ async fn main() -> Result<(), BotError> {
         std::env::var("USE_WEBHOOK").unwrap_or_else(|_| "false".to_string()) == "true";
 
     if use_webhook {
-        // 🛡️ Phase 1 Fix: Webhook environment variables safety
-        let domain = std::env::var("WEBHOOK_DOMAIN").unwrap_or_else(|_| "localhost".to_string()); 
+        let domain = std::env::var("WEBHOOK_DOMAIN").unwrap_or_else(|_| "localhost".to_string()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let port: u16 = std::env::var("WEBHOOK_PORT")
             .unwrap_or_else(|_| "8443".to_string())
             .parse()
-            .unwrap_or(8443); 
+            .unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let addr = ([0, 0, 0, 0], port).into();
-        let url = format!("https://{}/webhook", domain).parse().map_err(|e| BotError::EnvVarMissing(format!("Invalid Webhook URL: {}", e)))?; 
+        let url = format!("https://{}/webhook", domain).parse().unwrap_or_else(|_| "https://localhost/webhook".parse().unwrap()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
         // ✅ Delete any rogue polling updates BEFORE setting the Webhook
         if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
@@ -230,8 +226,7 @@ async fn main() -> Result<(), BotError> {
             teloxide::update_listeners::webhooks::Options::new(addr, url),
         )
         .await
-        .map_err(|e| BotError::EnvVarMissing(format!("Webhook Error: {}", e)))?; 
-        
+        .expect("Failed to setup webhook"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let error_handler =
             teloxide::error_handlers::LoggingErrorHandler::with_custom_text("Webhook Error");
 
@@ -243,9 +238,16 @@ async fn main() -> Result<(), BotError> {
         if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 
         tracing::info!("🔄 [NETWORK] Polling Mode Active (Standard Development Fallback).");
-        
-        dispatcher.dispatch().await; 
+        dispatcher.dispatch().await; // FIXME_PHASE4_SHUTDOWN: Bind 'crate::resilience::shutdown_signal()' to this to prevent DB corruption on exit.
     }
 
     Ok(())
 }
+
+
+
+
+
+
+
+

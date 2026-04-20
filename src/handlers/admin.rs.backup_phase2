@@ -30,13 +30,6 @@ pub async fn handle_stats(
         Err(_) => "Offline 🔴".to_string(),
     };
     let mut text = format!("📊 <b>Enterprise Analytics</b>\n━━━━━━━━━━━━━━━━━━\n👥 <b>Active Users:</b> {}\n💼 <b>Tracked Wallets:</b> {}\n🌐 <b>Node Ping:</b> {}\n\n📋 <b>Detailed User Report:</b>\n", total_users.len(), ctx.state.len(), status);
-    // [PHASE 2 FIX] Pre-fetch block counts to resolve N+1 query bottleneck
-    let mut block_counts = std::collections::HashMap::new();
-    if let Ok(records) = sqlx::query_as::<_, (String, i64)>("SELECT wallet, COUNT(*) FROM mined_blocks GROUP BY wallet").fetch_all(&ctx.pool).await {
-        for (w, count) in records {
-            block_counts.insert(w, count);
-        }
-    }
 
     for e in ctx.state.iter() {
         let wallet = e.key();
@@ -51,7 +44,11 @@ pub async fn handle_stats(
                     / 1e8;
             }
         }
-        let blocks_count = *block_counts.get(wallet).unwrap_or(&0);
+        let blocks: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mined_blocks WHERE wallet = $1")
+            .bind(wallet)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap_or((0,));
 
         let mut user_names = Vec::new();
         for &u_id in users {
@@ -70,7 +67,7 @@ pub async fn handle_stats(
             format_short_wallet(wallet),
             user_names.join(", "),
             bal,
-            blocks_count
+            blocks.0
         ));
     }
     text.push_str(&format!("⏱️ <code>{}</code>", current_utc_time));
@@ -409,7 +406,7 @@ pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: Strin
     // Enterprise Security: Block modification of critical environment secrets
     let restricted = vec!["BOT_TOKEN", "DATABASE_URL", "AI_API_KEY", "ADMIN_ID"];
     if restricted.contains(&key.as_str()) {
-        if let Err(e) = bot.send_message(chat_id, "🚫 <b>Security Alert:</b> Modifying core secrets is restricted. Use the .env file on the server.").parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Interaction failed: {}", e); }
+        let _ = bot.send_message(chat_id, "🚫 <b>Security Alert:</b> Modifying core secrets is restricted. Use the .env file on the server.").parse_mode(teloxide::types::ParseMode::Html).await;
         return;
     }
 
@@ -424,8 +421,8 @@ pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: Strin
     };
 
     if let Ok(_) = crate::state::update_setting(&ctx.pool, &key, &new_val).await {
-        if let Err(e) = bot.send_message(chat_id, format!("✅ <b>{}</b> updated to <code>{}</code>\n<i>Changes applied instantly. No restart required.</i>", key, new_val)).parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Interaction failed: {}", e); }
+        let _ = bot.send_message(chat_id, format!("✅ <b>{}</b> updated to <code>{}</code>\n<i>Changes applied instantly. No restart required.</i>", key, new_val)).parse_mode(teloxide::types::ParseMode::Html).await;
     } else {
-        if let Err(e) = bot.send_message(chat_id, "❌ <b>Database Error:</b> Failed to update the setting.").parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Interaction failed: {}", e); }
+        let _ = bot.send_message(chat_id, "❌ <b>Database Error:</b> Failed to update the setting.").parse_mode(teloxide::types::ParseMode::Html).await;
     }
 }

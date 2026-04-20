@@ -57,9 +57,7 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                     let (f_tx, w_cl, rpc_cl) = (tx_id.clone(), wallet.clone(), Arc::clone(&ctx.rpc));
                                     let pool_cl = ctx.pool.clone();
                                     let addr_cl = addr.clone();
-                                    
-                                    // 🛡️ Phase 1 Fix: Safe Semaphore Acquisition (No unwrap panic)
-                                    let permit = match Arc::clone(&semaphore).acquire_owned().await { Ok(p) => p, Err(_) => continue, };
+                                    let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
                                     join_set.spawn(async move {
                                         let _p = permit;
@@ -112,7 +110,6 @@ pub fn spawn_utxo_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
                                           diff, format_short_wallet(&w_cl), log_time);
 
                                     for user_id in subs {
-                                        // 🛡️ Phase 3 Fix: Catch Telegram API Errors to prevent silent failures
                                         if let Err(e) = bot.send_message(ChatId(*user_id), &final_msg)
                                             .parse_mode(teloxide::types::ParseMode::Html)
                                             .link_preview_options(teloxide::types::LinkPreviewOptions { url: None, is_disabled: true, show_above_text: false, prefer_small_media: false, prefer_large_media: false })
@@ -239,3 +236,6 @@ pub async fn analyze_block_payload(
         block_time_ms,
     )
 }
+
+
+
