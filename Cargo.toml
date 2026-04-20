@@ -6,6 +6,7 @@ license = "MIT"
 description = "Enterprise Kaspa Solo Mining Bot - Hardened & Synced to v1.1.0"
 
 [dependencies]
+url = "2.5"
 feed-rs = "1.5"
 
 # --- AI Vector Search & Streaming Additions ---

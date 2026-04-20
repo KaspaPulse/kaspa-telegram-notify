@@ -29,11 +29,11 @@ pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
     .await?;
 
     // Safe migration for the last_active column
-    let _ = sqlx::query!(
+    if let Err(e) = sqlx::query!(
         "ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP"
     )
     .execute(&pool)
-    .await;
+    .await { tracing::error!("[DATABASE ERROR] Query execution failed: {}", e); }
 
     // Initialize mined_blocks table
     sqlx::query!(
@@ -264,6 +264,7 @@ pub async fn get_knowledge_context(pool: &PgPool, keyword: &str) -> Option<Strin
     .await
     .unwrap_or(None)
 }
+
 
 
 

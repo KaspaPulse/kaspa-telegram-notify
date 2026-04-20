@@ -130,9 +130,9 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
         // 🛡️ AI VOICE GATEWAY
         let ai_voice_enabled = std::env::var("ENABLE_AI_VOICE").unwrap_or_else(|_| "true".to_string()) == "true";
         if !ai_voice_enabled {
-            let _ = bot.send_message(msg.chat.id, "🚫 <b>Voice Analysis is currently disabled by the administrator.</b>")
+            if let Err(e) = bot.send_message(msg.chat.id, "🚫 <b>Voice Analysis is currently disabled by the administrator.</b>")
                 .parse_mode(teloxide::types::ParseMode::Html)
-                .await;
+                .await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
             return Ok(());
         }
         return crate::ai::process_voice_message(bot, msg, ctx).await;
@@ -154,9 +154,9 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
         // 🛡️ AI CHAT GATEWAY
         let ai_chat_enabled = std::env::var("ENABLE_AI_CHAT").unwrap_or_else(|_| "true".to_string()) == "true";
         if !ai_chat_enabled {
-            let _ = bot.send_message(msg.chat.id, "🚫 <b>AI Text Chat is currently disabled by the administrator.</b>")
+            if let Err(e) = bot.send_message(msg.chat.id, "🚫 <b>AI Text Chat is currently disabled by the administrator.</b>")
                 .parse_mode(teloxide::types::ParseMode::Html)
-                .await;
+                .await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
             return Ok(());
         }
 

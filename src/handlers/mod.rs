@@ -17,28 +17,28 @@ pub use events::{handle_block_user, handle_raw_message_v2};
 // ==========================================
 // SECTION 0: SAFETY & SECURITY PROTOCOLS
 // ==========================================
+use url::Url;
+
 pub fn is_local_node() -> bool {
-    // 1. Fetch all possible variable names including WS_URL
-    let urls = format!(
-        "{} {} {} {} {}",
+    let urls_to_check = vec![
         std::env::var("KASPA_RPC_URL").unwrap_or_default(),
         std::env::var("KASPA_NODE_URL").unwrap_or_default(),
         std::env::var("RPC_URL").unwrap_or_default(),
         std::env::var("NODE_URL").unwrap_or_default(),
         std::env::var("WS_URL").unwrap_or_default()
-    )
-    .to_lowercase();
+    ];
 
-    // 2. Empty means FALSE (Not Local)
-    if urls.trim().is_empty() {
-        return false;
+    for url_str in urls_to_check {
+        if url_str.trim().is_empty() { continue; }
+        if let Ok(parsed_url) = Url::parse(&url_str) {
+            if let Some(host) = parsed_url.host_str() {
+                if host == "127.0.0.1" || host == "localhost" || host == "[::1]" {
+                    return true;
+                }
+            }
+        }
     }
-
-    // 3. Only return true if an explicit local IP is found
-    urls.contains("127.0.0.1")
-        || urls.contains("localhost")
-        || urls.contains("::1")
-        || urls.contains("0.0.0.0")
+    false
 }
 
 // ==========================================
@@ -235,5 +235,6 @@ async fn execute_command(
     );
     Ok(())
 }
+
 
 

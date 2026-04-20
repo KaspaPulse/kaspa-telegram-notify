@@ -71,14 +71,14 @@ pub async fn handle_stats(
         ));
     }
     text.push_str(&format!("⏱️ <code>{}</code>", current_utc_time));
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_stats")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_sys(
@@ -120,54 +120,54 @@ pub async fn handle_sys(
     let hours = (uptime_secs % 86400) / 3600;
     let minutes = (uptime_secs % 3600) / 60;
     let text = format!("⚙️ <b>Enterprise Node Diagnostics:</b>\n🖥️ <b>OS:</b> <code>{}</code>\n⏳ <b>Uptime:</b> <code>{}d {}h {}m</code>\n🎛️ <b>CPU:</b> <code>{} Cores</code>\n🧠 <b>RAM:</b> <code>{} / {} MB</code>\n💾 <b>Storage:</b> <code>{} / {} GB</code>\n👀 <b>Monitor:</b> <code>{}</code>\n\n⏱️ <code>{}</code>", os_name, days, hours, minutes, cores, used_mem, total_mem, used_disk, total_disk, monitoring, current_time);
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_sys")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_pause(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
     if user_id == ctx.admin_id {
         ctx.monitoring.store(false, Ordering::Relaxed);
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             None,
             "⏸️ <b>Monitoring Paused.</b>".to_string(),
             None,
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
     }
 }
 
 pub async fn handle_resume(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
     if user_id == ctx.admin_id {
         ctx.monitoring.store(true, Ordering::Relaxed);
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             None,
             "▶️ <b>Monitoring Active.</b>".to_string(),
             None,
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
     }
 }
 
 pub async fn handle_restart(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
     if user_id == ctx.admin_id {
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             None,
             "🔄 <b>Restarting safely...</b>".to_string(),
             None,
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
         tracing::info!("[SYSTEM] Restarting binary per admin request...");        
         std::process::exit(0);
     }
@@ -193,14 +193,14 @@ pub async fn handle_broadcast(
                     .await;
             });
         }
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             None,
             format!("✅ Broadcast sent to {} users.", count),
             None,
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
     }
 }
 
@@ -212,7 +212,7 @@ pub async fn handle_logs(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppConte
                 .filter_map(Result::ok)
                 .collect();
             lines.reverse();
-            let _ = send_or_edit_log(
+            if let Err(e) = send_or_edit_log(
                 &bot,
                 chat_id,
                 None,
@@ -222,7 +222,7 @@ pub async fn handle_logs(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppConte
                 ),
                 None,
             )
-            .await;
+            .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
         }
     }
 }
@@ -405,7 +405,7 @@ pub async fn handle_settings(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppC
         ));
     }
 
-    let _ = bot.send_message(chat_id, response).parse_mode(teloxide::types::ParseMode::Html).await;
+    if let Err(e) = bot.send_message(chat_id, response).parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 }
 
 pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: String, ctx: &AppContext) {
@@ -443,10 +443,11 @@ pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: Strin
     }
 
     let _ = std::fs::write(".env", new_lines.join("\n"));
-    let _ = bot.send_message(chat_id, format!("✅ <b>{}</b> updated to <code>{}</code>\n⏳ Restarting system...", key, new_val)).parse_mode(teloxide::types::ParseMode::Html).await;
+    if let Err(e) = bot.send_message(chat_id, format!("✅ <b>{}</b> updated to <code>{}</code>\n⏳ Restarting system...", key, new_val)).parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         std::process::exit(0);
     });
 }
+

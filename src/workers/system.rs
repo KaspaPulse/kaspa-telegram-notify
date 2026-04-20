@@ -54,12 +54,22 @@ pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
             tokio::select! {
                 _ = token.cancelled() => { break; }
                 _ = tokio::time::sleep(Duration::from_secs(3600)) => {
-                    ctx.utxo_state.clear(); // Safely clear the native UTXO cache state
-                    info!("[MEMORY CLEANER] Purged native UTXO cache state to free RAM.");
+                    // 1. Clear UTXO cache to free RAM
+                    ctx.utxo_state.clear();
+                    
+                    // 2. Evict inactive users from Rate Limiter (Memory Leak Fix)
+                    ctx.rate_limiter.retain_recent();
+                    
+                    // 3. Enforce 30-Day Data Retention Policy (DB Bloat Fix)
+                    let db_res = sqlx::query("DELETE FROM chat_history WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '30 days'").execute(&ctx.pool).await;
+                    if let Err(e) = db_res { tracing::error!("[DATABASE ERROR] Failed to purge old chats: {}", e); }
+                    
+                    tracing::info!("[MEMORY CLEANER] Purged UTXO cache, inactive rate limits, and 30-day chat history.");
                 }
             }
         }
     });
 }
+
 
 

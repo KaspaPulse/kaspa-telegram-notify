@@ -132,7 +132,7 @@ async fn main() -> Result<(), BotError> {
     info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
     let ai_engine = Arc::new(
         crate::ai::LocalAiEngine::new()
-            .expect("CRITICAL: Failed to load Cloud AI Engine. Check API Key."), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
+            .unwrap_or_else(|_| panic!("CRITICAL: Missing AI_API_KEY. Please set it in .env")), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
     );
 
     let ctx = AppContext {
@@ -204,13 +204,13 @@ async fn main() -> Result<(), BotError> {
         std::env::var("USE_WEBHOOK").unwrap_or_else(|_| "false".to_string()) == "true";
 
     if use_webhook {
-        let domain = std::env::var("WEBHOOK_DOMAIN").expect("CRITICAL: WEBHOOK_DOMAIN required"); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
+        let domain = std::env::var("WEBHOOK_DOMAIN").unwrap_or_else(|_| "localhost".to_string()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let port: u16 = std::env::var("WEBHOOK_PORT")
             .unwrap_or_else(|_| "8443".to_string())
             .parse()
             .unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
         let addr = ([0, 0, 0, 0], port).into();
-        let url = format!("https://{}/webhook", domain).parse().unwrap(); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
+        let url = format!("https://{}/webhook", domain).parse().unwrap_or_else(|_| "https://localhost/webhook".parse().unwrap()); // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
 
         // ✅ Delete any rogue polling updates BEFORE setting the Webhook
         if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
@@ -243,6 +243,7 @@ async fn main() -> Result<(), BotError> {
 
     Ok(())
 }
+
 
 
 

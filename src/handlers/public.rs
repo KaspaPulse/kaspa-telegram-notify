@@ -183,14 +183,14 @@ pub async fn handle_balance(
         "━━━━━━━━━━━━━━━━━━\n💎 <b>Total Holdings:</b> <code>{} KAS</code>",
         f_num(total)
     ));
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_balance")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_blocks(
@@ -207,14 +207,14 @@ pub async fn handle_blocks(
         .map(|e| e.key().clone())
         .collect();
     if tracked.is_empty() {
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             edit_msg_id,
             "⚠️ <b>No wallets tracked.</b>".to_string(),
             None,
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
         return;
     }
     let mut text = format!(
@@ -252,14 +252,14 @@ pub async fn handle_blocks(
         "━━━━━━━━━━━━━━━━━━\n🏆 <b>Total Blocks:</b> {}\n💎 <b>Total Value:</b> {:.8} KAS",
         global_blocks, global_rewards
     ));
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_blocks")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_miner(
@@ -313,14 +313,14 @@ pub async fn handle_miner(
             ));
         }
     }
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_miner")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_network(
@@ -384,14 +384,14 @@ pub async fn handle_network(
         ));
     }
     text.push_str(&format!("\n⏱️ <code>{}</code>", current_utc_time));
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_network")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_dag(
@@ -403,14 +403,14 @@ pub async fn handle_dag(
 ) {
     if let Ok(info) = ctx.rpc.get_block_dag_info().await {
         let text = format!("📊 <b>BlockDAG Details:</b>\n🧱 <b>Blocks:</b> <code>{}</code>\n📜 <b>Headers:</b> <code>{}</code>\n\n⏱️ <code>{}</code>", f_num(info.block_count as f64), f_num(info.header_count as f64), current_utc_time);
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             edit_msg_id,
             text,
             Some(refresh_markup("refresh_dag")),
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
     }
 }
 
@@ -433,14 +433,14 @@ pub async fn handle_price(
             current_utc_time
         )
     };
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_price")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_market(
@@ -463,14 +463,14 @@ pub async fn handle_market(
             current_utc_time
         )
     };
-    let _ = send_or_edit_log(
+    if let Err(e) = send_or_edit_log(
         &bot,
         chat_id,
         edit_msg_id,
         text,
         Some(refresh_markup("refresh_market")),
     )
-    .await;
+    .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
 }
 
 pub async fn handle_supply(
@@ -484,14 +484,14 @@ pub async fn handle_supply(
         let circ = supply.circulating_sompi as f64 / 1e8;
         let max = supply.max_sompi as f64 / 1e8;
         let text = format!("🪙 <b>Coin Supply:</b>\n├ <b>Circulating:</b> <code>{} KAS</code>\n├ <b>Max Supply:</b> <code>{} KAS</code>\n└ <b>Minted:</b> <code>{:.2}%</code>\n\n⏱️ <code>{}</code>", f_num(circ), f_num(max), (circ / max) * 100.0, current_utc_time);
-        let _ = send_or_edit_log(
+        if let Err(e) = send_or_edit_log(
             &bot,
             chat_id,
             edit_msg_id,
             text,
             Some(refresh_markup("refresh_supply")),
         )
-        .await;
+        .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
     }
 }
 
@@ -508,15 +508,16 @@ pub async fn handle_fees(
                 j["normalBuckets"][0]["feerate"].as_f64().unwrap_or(0.0),
                 current_utc_time
             );
-            let _ = send_or_edit_log(
+            if let Err(e) = send_or_edit_log(
                 &bot,
                 chat_id,
                 edit_msg_id,
                 text,
                 Some(refresh_markup("refresh_fees")),
             )
-            .await;
+            .await { tracing::error!("[UI ERROR] Failed to send/edit message: {}", e); }
         }
     }
 }
+
 
