@@ -61,4 +61,9 @@ pub enum Command {
     Learn(String),
     #[command(description = "Admin: Auto-fetch latest official Kaspa news.")]
     AutoLearn,
+    #[command(description = "Admin: Open Enterprise Settings Panel.")]
+    Settings,
+    #[command(description = "Admin: Toggle a feature flag.")]
+    Toggle(String),
 }
+

@@ -203,6 +203,8 @@ async fn execute_command(
         Command::Logs => admin::handle_logs(bot, chat_id, user_id, &ctx).await,
         Command::Learn(f) => admin::handle_learn(bot, chat_id, user_id, f, &ctx).await,
         Command::AutoLearn => admin::handle_autolearn(bot, chat_id, user_id, &ctx).await,
+        Command::Settings => admin::handle_settings(bot, chat_id, user_id, &ctx).await,
+        Command::Toggle(f) => admin::handle_toggle(bot, chat_id, user_id, f, &ctx).await,
         Command::Sync => {
             if user_id == ctx.admin_id {
                 if is_local_node() {
@@ -232,3 +234,4 @@ async fn execute_command(
     );
     Ok(())
 }
+
