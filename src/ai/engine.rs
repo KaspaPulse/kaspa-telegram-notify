@@ -101,7 +101,7 @@ impl LocalAiEngine {
             "model": self.chat_model,
             "messages": [
                 {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": safe_user_prompt}
             ],
             "temperature": 0.1,
             "stream": true
@@ -158,5 +158,6 @@ impl LocalAiEngine {
         Err(anyhow::anyhow!("Voice transcription failed"))
     }
 }
+
 
 

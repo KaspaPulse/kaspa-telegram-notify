@@ -3,7 +3,7 @@ use teloxide::prelude::*;
 use teloxide::types::ChatId;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::context::AppContext;
 
@@ -70,6 +70,7 @@ pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
         }
     });
 }
+
 
 
 
