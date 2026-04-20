@@ -15,3 +15,8 @@
 /data/
 **/*.rs.bk
 project_code_export.txt
+# Temporary & Backup files
+*.backup*
+bot.log
+.env
+
