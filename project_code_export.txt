@@ -930,6 +930,7 @@ pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
         )")
         .execute(&pool)
         .await?;
+        
     // Initialize chat_history table for AI memory
     sqlx::query!(
         "CREATE TABLE IF NOT EXISTS chat_history (
@@ -942,6 +943,18 @@ pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    
+    // Initialize system_settings table for dynamic configuration
+    sqlx::query!(
+        "CREATE TABLE IF NOT EXISTS system_settings (
+            key_name VARCHAR(50) PRIMARY KEY,
+            value_data TEXT NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )"
+    )
+    .execute(&pool)
+    .await?;
+
     Ok(pool)
 }
 
@@ -1125,11 +1138,35 @@ pub async fn get_knowledge_context(pool: &PgPool, keyword: &str) -> Option<Strin
     .unwrap_or(None)
 }
 
+/// Retrieves a dynamic setting from the database, or initializes it with a default value.
+pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
+    // We use query_scalar without '!' to avoid compile-time DB checks for dynamic settings.
+    let res: Option<String> = sqlx::query_scalar("SELECT value_data FROM system_settings WHERE key_name = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+    
+    match res {
+        Some(val) => val,
+        None => {
+            let _ = sqlx::query("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+                .bind(key)
+                .bind(default)
+                .execute(pool).await;
+            default.to_string()
+        }
+    }
+}
 
-
-
-
-
+/// Safely updates a dynamic setting in the database.
+pub async fn update_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT (key_name) DO UPDATE SET value_data = EXCLUDED.value_data, updated_at = CURRENT_TIMESTAMP")
+        .bind(key)
+        .bind(value)
+        .execute(pool).await?;
+    Ok(())
+}
 
 
 ==================================================================
@@ -1693,7 +1730,7 @@ pub fn spawn_background_vectorizer(ctx: AppContext, token: CancellationToken) {
                         }
                         
                                         // [INJECTED] Dynamic .env Feature Flag
-                if std::env::var("ENABLE_AI_VECTORIZER").unwrap_or_else(|_| "false".to_string()) != "true" {
+                if crate::state::get_setting(&ctx.pool, "ENABLE_AI_VECTORIZER", "true").await != "true" {
                     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                     continue; // Skip processing and check again later
                 }
@@ -1729,6 +1766,8 @@ pub fn spawn_background_vectorizer(ctx: AppContext, token: CancellationToken) {
         }
     });
 }
+
+
 
 
 
@@ -2112,31 +2151,20 @@ pub fn verify_admin_access(user_id: Option<u64>) -> bool {
 pub async fn handle_settings(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
     if user_id != ctx.admin_id { return; }
 
-    let env_content = std::fs::read_to_string(".env").unwrap_or_default();
     let keys = vec![
-        ("MAINTENANCE_MODE", "🔒 Restricted admin-only mode."),
-        ("ALLOW_PUBLIC_USERS", "🌍 Public access toggle."),
-        ("ENABLE_RSS_WORKER", "📰 News crawler activity."),
-        ("ENABLE_MEMORY_CLEANER", "🧠 Periodic RAM purge."),
-        ("ENABLE_LIVE_SYNC", "🔄 Real-time node indexing."),
-        ("ENABLE_AI_VECTORIZER", "🤖 AI Knowledge indexing."),
-        ("ENABLE_AI_CHAT", "💬 AI Text Chat (LLM)."),
-        ("ENABLE_AI_VOICE", "🎤 AI Voice Analysis (Whisper)."),
-        ("RUST_LOG", "📋 Logging level (info/debug)."),
-        ("AI_PROVIDER", "🧠 Model provider (groq/openai)."),
-        ("MAX_AI_TOKENS", "💰 AI token spending limit."),
-        ("MIN_CONFIRMATIONS", "🧱 Mining confirmation threshold."),
-        ("WS_URL", "🌐 Targeted Node address.")
+        ("ENABLE_RSS_WORKER", "📰 News crawler activity.", "true"),
+        ("ENABLE_MEMORY_CLEANER", "🧠 Periodic RAM purge.", "true"),
+        ("ENABLE_LIVE_SYNC", "🔄 Real-time node indexing.", "true"),
+        ("ENABLE_AI_VECTORIZER", "🤖 AI Knowledge indexing.", "true"),
+        ("ENABLE_AI_CHAT", "💬 AI Text Chat (LLM).", "true"),
+        ("ENABLE_AI_VOICE", "🎤 AI Voice Analysis (Whisper).", "true"),
+        ("MAINTENANCE_MODE", "🔒 Restricted admin-only mode.", "false"),
     ];
 
-    let mut response = String::from("⚙️ <b>Kaspa Pulse Control Panel</b>\n━━━━━━━━━━━━━━━━━━\n");
+    let mut response = String::from("⚙️ <b>Enterprise Control Panel (Database)</b>\n━━━━━━━━━━━━━━━━━━\n");
 
-    for (key, desc) in keys {
-        let value = env_content.lines()
-            .find(|l| l.starts_with(&format!("{}=", key)))
-            .map(|l| l.split('=').nth(1).unwrap_or("N/A"))
-            .unwrap_or("N/A");
-        
+    for (key, desc, default_val) in keys {
+        let value = crate::state::get_setting(&ctx.pool, key, default_val).await;
         let status_icon = if value == "true" { "🟢" } else if value == "false" { "🔴" } else { "⚙️" };
         response.push_str(&format!(
             "{} <b>{}</b>: <code>{}</code>\n<i>{}</i>\nToggle: <code>/toggle {}</code>\n\n",
@@ -2147,17 +2175,36 @@ pub async fn handle_settings(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppC
     if let Err(e) = bot.send_message(chat_id, response).parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e); }
 }
 
-pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, _input: String, ctx: &AppContext) {
+pub async fn handle_toggle(bot: Bot, chat_id: ChatId, user_id: i64, input: String, ctx: &AppContext) {
     if user_id != ctx.admin_id { return; }
 
-    // Enterprise Security: Dynamic .env modification is strictly disabled.
-    if let Err(e) = bot.send_message(
-        chat_id, 
-        "⚠️ <b>Security Alert:</b> In-app environment modification is disabled for security reasons.\nPlease edit the <code>.env</code> file manually on the server to ensure the protection of secret keys."
-    ).parse_mode(teloxide::types::ParseMode::Html).await {
-        tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e);
+    let parts: Vec<&str> = input.split('=').collect();
+    let key = parts[0].trim().to_uppercase();
+
+    // Enterprise Security: Block modification of critical environment secrets
+    let restricted = vec!["BOT_TOKEN", "DATABASE_URL", "AI_API_KEY", "ADMIN_ID"];
+    if restricted.contains(&key.as_str()) {
+        let _ = bot.send_message(chat_id, "🚫 <b>Security Alert:</b> Modifying core secrets is restricted. Use the .env file on the server.").parse_mode(teloxide::types::ParseMode::Html).await;
+        return;
+    }
+
+    let current_val = crate::state::get_setting(&ctx.pool, &key, "false").await;
+    
+    let new_val = if parts.len() > 1 {
+        parts[1].trim().to_string() 
+    } else if current_val == "true" {
+        "false".to_string() 
+    } else {
+        "true".to_string() 
+    };
+
+    if let Ok(_) = crate::state::update_setting(&ctx.pool, &key, &new_val).await {
+        let _ = bot.send_message(chat_id, format!("✅ <b>{}</b> updated to <code>{}</code>\n<i>Changes applied instantly. No restart required.</i>", key, new_val)).parse_mode(teloxide::types::ParseMode::Html).await;
+    } else {
+        let _ = bot.send_message(chat_id, "❌ <b>Database Error:</b> Failed to update the setting.").parse_mode(teloxide::types::ParseMode::Html).await;
     }
 }
+
 
 
 ==================================================================
@@ -2293,7 +2340,7 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
     // 🎙️ Routing: Voice Audio
     if msg.voice().is_some() {
         // 🛡️ AI VOICE GATEWAY
-        let ai_voice_enabled = std::env::var("ENABLE_AI_VOICE").unwrap_or_else(|_| "true".to_string()) == "true";
+        let ai_voice_enabled = crate::state::get_setting(&ctx.pool, "ENABLE_AI_VOICE", "true").await == "true";
         if !ai_voice_enabled {
             if let Err(e) = bot.send_message(msg.chat.id, "🚫 <b>Voice Analysis is currently disabled by the administrator.</b>")
                 .parse_mode(teloxide::types::ParseMode::Html)
@@ -2317,7 +2364,7 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
         }
 
         // 🛡️ AI CHAT GATEWAY
-        let ai_chat_enabled = std::env::var("ENABLE_AI_CHAT").unwrap_or_else(|_| "true".to_string()) == "true";
+        let ai_chat_enabled = crate::state::get_setting(&ctx.pool, "ENABLE_AI_CHAT", "true").await == "true";
         if !ai_chat_enabled {
             if let Err(e) = bot.send_message(msg.chat.id, "🚫 <b>AI Text Chat is currently disabled by the administrator.</b>")
                 .parse_mode(teloxide::types::ParseMode::Html)
@@ -2339,6 +2386,8 @@ pub async fn handle_raw_message_v2(bot: Bot, msg: Message, ctx: AppContext) -> a
 
     Ok(())
 }
+
+
 
 
 

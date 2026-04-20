@@ -27,8 +27,9 @@ pub struct AppContext {
 impl AppContext {
     pub fn new_rate_limiter() -> SpamLimiter {
         Arc::new(RateLimiter::keyed(
-            Quota::per_second(NonZeroU32::new(2).unwrap()).allow_burst(NonZeroU32::new(3).unwrap()), // FIXME_PHASE3: DANGER! Bot will crash here if it fails. Use '?' or 'safe_unwrap!'
+            Quota::per_second(NonZeroU32::new(2).unwrap()).allow_burst(NonZeroU32::new(3).unwrap()),
         ))
     }
 }
+
 
