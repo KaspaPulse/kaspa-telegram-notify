@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TABLE IF NOT EXISTS chat_history (\n            id SERIAL PRIMARY KEY,\n            chat_id BIGINT NOT NULL,\n            role VARCHAR(20) NOT NULL,\n            message TEXT NOT NULL,\n            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f84be9b04c0bc4fbd5b75a6083986fe7e7eb529c451199ee1a324f17b9dfbed9"
+}

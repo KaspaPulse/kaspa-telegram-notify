@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sync_checkpoint (wallet, last_daa_score) VALUES ($1, $2) \n         ON CONFLICT (wallet) DO UPDATE SET last_daa_score = EXCLUDED.last_daa_score",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "81ab4a5dc0aac2012c85f1685a16f20fea6e45551abb135374ec2629f2b224ea"
+}

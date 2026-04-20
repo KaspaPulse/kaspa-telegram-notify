@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO knowledge_base (title, link, content, source) \n         VALUES ($1, $2, $3, $4) ON CONFLICT (link) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "721d93d39b35c8210463ecb9765d333df6831e1f6656f38e847c7969a892e058"
+}

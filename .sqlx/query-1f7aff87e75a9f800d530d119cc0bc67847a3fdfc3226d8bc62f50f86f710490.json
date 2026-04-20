@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TABLE IF NOT EXISTS knowledge_base (\n            id SERIAL PRIMARY KEY, \n            title TEXT NOT NULL, \n            link TEXT UNIQUE NOT NULL, \n            content TEXT NOT NULL, \n            source TEXT NOT NULL, \n            published_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1f7aff87e75a9f800d530d119cc0bc67847a3fdfc3226d8bc62f50f86f710490"
+}

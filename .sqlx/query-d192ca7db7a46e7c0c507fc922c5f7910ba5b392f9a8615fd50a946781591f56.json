@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO mined_blocks (outpoint, wallet, amount, daa_score, sync_source) \n         VALUES ($1, $2, $3, $4, 'RECOVERY') ON CONFLICT (outpoint) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d192ca7db7a46e7c0c507fc922c5f7910ba5b392f9a8615fd50a946781591f56"
+}

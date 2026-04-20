@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_wallets SET last_active = CURRENT_TIMESTAMP WHERE chat_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "87e83c21e198bf472113a181557c6014d99fe32ae142ab444b7ea72e74ac1966"
+}

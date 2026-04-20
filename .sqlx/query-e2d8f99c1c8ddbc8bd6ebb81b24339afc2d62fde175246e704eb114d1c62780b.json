@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TABLE IF NOT EXISTS user_wallets (\n            wallet VARCHAR(255) NOT NULL,\n            chat_id BIGINT NOT NULL,\n            last_active TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,\n            PRIMARY KEY (wallet, chat_id)\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "e2d8f99c1c8ddbc8bd6ebb81b24339afc2d62fde175246e704eb114d1c62780b"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TABLE IF NOT EXISTS system_settings (\n            key_name VARCHAR(50) PRIMARY KEY,\n            value_data TEXT NOT NULL,\n            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "168c075eb17b2de05a47e5d9db69c0e28e783abf4516dd14ba6e6a335bd3fa30"
+}

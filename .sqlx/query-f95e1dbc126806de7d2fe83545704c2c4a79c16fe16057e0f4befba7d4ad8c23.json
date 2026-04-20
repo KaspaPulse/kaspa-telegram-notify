@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "CREATE TABLE IF NOT EXISTS mined_blocks (\n            outpoint VARCHAR(255) PRIMARY KEY,\n            wallet VARCHAR(255) NOT NULL,\n            amount DOUBLE PRECISION NOT NULL,\n            daa_score BIGINT NOT NULL,\n            timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,\n            sync_source VARCHAR(50) DEFAULT 'LIVE'\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f95e1dbc126806de7d2fe83545704c2c4a79c16fe16057e0f4befba7d4ad8c23"
+}

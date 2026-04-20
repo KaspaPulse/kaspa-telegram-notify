@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_wallets WHERE last_active < CURRENT_TIMESTAMP - INTERVAL '90 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c7ec8c7a58b6342874435c7f5cc2ba3b00305eb2f653cfb62f36f430d20b965c"
+}
