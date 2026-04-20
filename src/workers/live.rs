@@ -218,7 +218,7 @@ pub async fn analyze_block_payload(
                                                 &m_tx0.payload[pos + user_script_bytes.len()..];
                                             extracted_worker = extra_data
                                                 .iter()
-                                                .filter(|&&c| c >= 32 && c <= 126)
+                                                .filter(|&&c| (32..=126).contains(&c))
                                                 .map(|&c| c as char)
                                                 .collect();
                                         }

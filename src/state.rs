@@ -332,7 +332,7 @@ static SETTINGS_CACHE: std::sync::OnceLock<dashmap::DashMap<String, String>> =
     std::sync::OnceLock::new();
 
 fn get_settings_cache() -> &'static dashmap::DashMap<String, String> {
-    SETTINGS_CACHE.get_or_init(|| dashmap::DashMap::new())
+    SETTINGS_CACHE.get_or_init(dashmap::DashMap::new)
 }
 
 /// Retrieves a dynamic setting from the cache or database, initializing it if needed.

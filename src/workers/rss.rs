@@ -54,7 +54,7 @@ async fn fetch_and_store_feeds(pool: &PgPool, client: &Client) {
                             .summary
                             .map(|s| s.content)
                             .unwrap_or_else(|| title.clone());
-                        let published_at: Option<DateTime<Utc>> = entry.published.map(|d| d.into());
+                        let published_at: Option<DateTime<Utc>> = entry.published.map(|d| d);
 
                         if let Err(e) = sqlx::query(
                             "INSERT INTO knowledge_base (title, link, content, source, published_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (link) DO NOTHING"

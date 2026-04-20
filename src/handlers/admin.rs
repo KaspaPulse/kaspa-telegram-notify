@@ -460,7 +460,7 @@ pub async fn handle_toggle(
     let key = parts[0].trim().to_uppercase();
 
     // Enterprise Security: Block modification of critical environment secrets
-    let restricted = vec!["BOT_TOKEN", "DATABASE_URL", "AI_API_KEY", "ADMIN_ID"];
+    let restricted = ["BOT_TOKEN", "DATABASE_URL", "AI_API_KEY", "ADMIN_ID"];
     if restricted.contains(&key.as_str()) {
         if let Err(e) = bot.send_message(chat_id, "🚫 <b>Security Alert:</b> Modifying core secrets is restricted. Use the .env file on the server.").parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM API ERROR] Interaction failed: {}", e); }
         return;

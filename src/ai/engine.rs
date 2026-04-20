@@ -140,8 +140,7 @@ impl LocalAiEngine {
                     buffer = buffer[index + 1..].to_string();
                     let line = line.trim();
 
-                    if line.starts_with("data: ") {
-                        let data = &line[6..];
+                    if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" { break; }
 
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
