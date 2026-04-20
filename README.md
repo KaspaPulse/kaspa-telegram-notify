@@ -1,4 +1,4 @@
-```
+```markdown
 # 🦀 Kaspa Pulse: The Ultimate Enterprise Miner's Companion
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg?style=flat-square)
@@ -121,7 +121,9 @@ Once deployed:
 | `/learn <text>`      | Manually inject new Kaspa facts into the AI's Vector DB        |
 | `/autolearn`         | Force the AI to scrape official Kaspa RSS feeds                |
 | `/sync`              | Trigger a manual historical BlockDAG reverse-scan              |
-```
+
+---
+
 ## ⚙️ Prerequisites
 
 ### 🔧 Build Tools & Database
@@ -129,17 +131,19 @@ Once deployed:
 * **Rust:** `v1.70+`
 * **Database:** PostgreSQL `v15+` with `pgvector` extension enabled.
 * **OS:** Linux (Ubuntu 22.04/24.04 recommended) or Windows.
-```
 
-```
+```bash
 # Ubuntu Dependencies
 sudo apt update && sudo apt install -y cmake build-essential pkg-config libssl-dev postgresql postgresql-contrib
 ```
+
+---
+
 ## 🔐 Environment Setup
 
 Create a `.env` file in the root directory:
 
-```
+```env
 # 🤖 TELEGRAM BOT CONFIGURATION
 BOT_TOKEN=your_telegram_bot_token_here
 ADMIN_ID=your_telegram_user_id
@@ -151,7 +155,7 @@ RUST_LOG=info,kaspa_solo=debug
 
 # 🧠 AI CONFIGURATION
 AI_API_KEY=your_groq_or_openai_key
-AI_BASE_URL=[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)
+AI_BASE_URL=https://api.groq.com/openai/v1
 AI_CHAT_MODEL=llama-3.3-70b-versatile
 AI_AUDIO_MODEL=whisper-large-v3
 
@@ -183,7 +187,7 @@ CREATE EXTENSION vector;
 #### 2. Build the Enterprise Binary
 
 ```bash
-git clone [https://github.com/KaspaPulse/kaspa-gemini-intelligence.git](https://github.com/KaspaPulse/kaspa-gemini-intelligence.git)
+git clone https://github.com/KaspaPulse/kaspa-gemini-intelligence.git
 cd kaspa-gemini-intelligence
 cargo build --release
 ```
