@@ -70,6 +70,7 @@ pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
         )")
         .execute(&pool)
         .await?;
+        
     // Initialize chat_history table for AI memory
     sqlx::query!(
         "CREATE TABLE IF NOT EXISTS chat_history (
@@ -82,7 +83,8 @@ pub async fn init_db(db_url: &str) -> Result<PgPool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
-        // Initialize system_settings table for dynamic configuration
+    
+    // Initialize system_settings table for dynamic configuration
     sqlx::query!(
         "CREATE TABLE IF NOT EXISTS system_settings (
             key_name VARCHAR(50) PRIMARY KEY,
@@ -276,14 +278,9 @@ pub async fn get_knowledge_context(pool: &PgPool, keyword: &str) -> Option<Strin
     .unwrap_or(None)
 }
 
-
-
-
-
-
 /// Retrieves a dynamic setting from the database, or initializes it with a default value.
 pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
-    let res = sqlx::query_scalar!("SELECT value_data FROM system_settings WHERE key_name = ", key)
+    let res = sqlx::query_scalar!("SELECT value_data FROM system_settings WHERE key_name = $1", key)
         .fetch_optional(pool)
         .await
         .unwrap_or(None);
@@ -291,7 +288,7 @@ pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
     match res {
         Some(val) => val,
         None => {
-            let _ = sqlx::query!("INSERT INTO system_settings (key_name, value_data) VALUES (, ) ON CONFLICT DO NOTHING", key, default)
+            let _ = sqlx::query!("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT DO NOTHING", key, default)
                 .execute(pool).await;
             default.to_string()
         }
@@ -300,7 +297,7 @@ pub async fn get_setting(pool: &PgPool, key: &str, default: &str) -> String {
 
 /// Safely updates a dynamic setting in the database.
 pub async fn update_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), sqlx::Error> {
-    sqlx::query!("INSERT INTO system_settings (key_name, value_data) VALUES (, ) ON CONFLICT (key_name) DO UPDATE SET value_data = EXCLUDED.value_data, updated_at = CURRENT_TIMESTAMP", key, value)
+    sqlx::query!("INSERT INTO system_settings (key_name, value_data) VALUES ($1, $2) ON CONFLICT (key_name) DO UPDATE SET value_data = EXCLUDED.value_data, updated_at = CURRENT_TIMESTAMP", key, value)
         .execute(pool).await?;
     Ok(())
 }
