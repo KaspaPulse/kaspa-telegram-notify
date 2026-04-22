@@ -126,8 +126,11 @@ pub async fn process_voice_message(bot: Bot, msg: Message, ctx: AppContext) -> a
 
     use teloxide::net::Download;
     let file = bot.get_file(voice.file.id.clone()).await?;
-    let mut bytes = Vec::new();
-    bot.download_file(&file.path, &mut bytes).await?;
+    // 🛡️ SECURITY PATCH: Stream directly to disk to prevent OOM / Memory DoS
+    let mut temp_file = tempfile::NamedTempFile::new()?;
+    let mut file_stream = tokio::fs::File::from(temp_file.reopen()?);
+    bot.download_file(&file.path, &mut file_stream).await?;
+    let bytes = std::fs::read(temp_file.path())?; // Read only when passing to API
 
     let live_ctx = crate::ai::context::inject_live_wallet_context(chat_id.0, &ctx).await;
     let engine = ctx.ai_engine.as_ref();

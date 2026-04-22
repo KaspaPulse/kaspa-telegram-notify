@@ -6,12 +6,13 @@ license = "MIT"
 description = "Enterprise Kaspa Solo Mining Bot - Hardened & Synced to v1.1.0"
 
 [dependencies]
+tempfile = "3.10"
 url = "2.5"
 feed-rs = "1.5"
 
 # --- AI Vector Search & Streaming Additions ---
 # 🛡️ Security Patch: Upgraded to v0.4 to prevent SQLx 0.7.4 vulnerabilities
-pgvector = { version = "0.4", features = ["sqlx"] }
+pgvector = { version = "0.4", default-features = false, features = ["sqlx", "postgres"] }
 async-stream = "0.3.5"
 futures-util = "0.3.30"
 
@@ -56,6 +57,7 @@ tracing-appender = "0.2"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "chrono"] }
 
 axum = "0.8.1"
+envy = "0.4.2"
 
 # Binary Hardening
 [profile.release]
@@ -71,3 +73,4 @@ serde_nested_with = { git = "https://github.com/murar8/serde_nested_with" }
 [features]
 default = ["ai_engine"]
 ai_engine = []
+

@@ -55,8 +55,13 @@ pub async fn sync_single_wallet(ctx: AppContext, wallet: String) -> anyhow::Resu
             scanned_count += 1;
 
             // [PHASE 6 FIX] Prevent Unbounded Queue OOM by enforcing a maximum scan limit
+            if scanned_count % 1000 == 0 {
+                tokio::task::yield_now().await;
+            }
             if scanned_count > 100_000 {
-                tracing::warn!("⚠️ [SYNC LIMIT] Reached maximum scan depth (100,000 blocks) for {}. Halting sync to prevent memory exhaustion.", wallet);
+                tracing::warn!("⚠️ [SYNC LIMIT] Reached maximum scan depth (100,000 blocks) for {}. Saving checkpoint for pagination.", wallet);
+                crate::state::update_sync_checkpoint(&ctx.pool, &wallet, block.header.daa_score)
+                    .await;
                 break;
             }
 

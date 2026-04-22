@@ -11,18 +11,7 @@ multiple-versions = "allow"
 
 [advisories]
 # Ignore verified upstream vulnerabilities that have NO fixed version yet
-ignore = [
-    "RUSTSEC-2023-0071", # Marvin Attack (rsa crate via sqlx-mysql)
-    "RUSTSEC-2025-0052", # async-std discontinued (via kaspa-wrpc-client)
-    "RUSTSEC-2025-0134", # rustls-pemfile warning
-    "RUSTSEC-2023-0044", # RSA timing (Kaspa crypto)
-    "RUSTSEC-2023-0072", # Ed25519 warning (Kaspa crypto)
-    "RUSTSEC-2021-0145", # atty unaligned read warning
-    "RUSTSEC-2024-0375", # atty is unmaintained
-    "RUSTSEC-2024-0370", # proc-macro-error is unmaintained
-    "RUSTSEC-2024-0320", # serde_yaml is unmaintained
-    "RUSTSEC-2026-0012"  # keccak unsoundness in ARMv8 (via kaspa-hashes)
-]
+ignore = []
 # Downgrade unmaintained crates from hard-errors to warnings
 unmaintained = "warn"
 
@@ -33,3 +22,4 @@ allow-git = [
     "https://github.com/RustSec/advisory-db",
     "https://github.com/murar8/serde_nested_with"
 ]
+

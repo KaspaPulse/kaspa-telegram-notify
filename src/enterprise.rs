@@ -13,20 +13,17 @@ where
 
 #[macro_export]
 macro_rules! safe_unwrap {
+    ($val:expr, $msg:expr) => {
+        match $val {
+            Ok(v) => v,
+            Err(e) => return Err(anyhow::anyhow!("{}: {:?}", $msg, e)),
+        }
+    };
     ($val:expr, $default:expr, $msg:expr) => {
         match $val {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("{} - Error: {:?}", $msg, e);
-                $default
-            }
-        }
-    };
-    ($val:expr, $default:expr) => {
-        match $val {
-            Some(v) => v,
-            None => {
-                tracing::error!("Value was None, safely fell back to default.");
                 $default
             }
         }

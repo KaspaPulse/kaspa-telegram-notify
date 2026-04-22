@@ -48,11 +48,11 @@ pub enum Command {
     #[command(description = "Admin: Global Reverse Sync from Pruning Point.")]
     Sync,
     #[command(description = "Admin: Pause UTXO monitoring.")]
-    Pause,
+    Pause(String),
     #[command(description = "Admin: Resume UTXO monitoring.")]
-    Resume,
+    Resume(String),
     #[command(description = "Admin: Safe restart of the bot binary.")]
-    Restart,
+    Restart(String),
     #[command(description = "Admin: Broadcast message to all users.")]
     Broadcast(String),
     #[command(description = "Admin: Tail last 25 lines of bot.log.")]

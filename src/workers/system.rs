@@ -14,7 +14,7 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) {
                 _ = token.cancelled() => { break; }
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
                     let client = reqwest::Client::new();
-                    if let Ok(r) = client.get("https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd&include_market_cap=true")
+                    if let Ok(r) = client.get(std::env::var("COINGECKO_API_URL").unwrap_or_else(|_| "https://api.coingecko.com/api/v3/simple/price?ids=kaspa&vs_currencies=usd&include_market_cap=true".to_string()).as_str())
                         .header("User-Agent", "KaspaPulse/1.0 (Enterprise Node)").send().await {
                         if let Ok(j) = r.json::<serde_json::Value>().await {
                             let price = j["kaspa"]["usd"].as_f64().unwrap_or(0.0);

@@ -136,9 +136,9 @@ pub async fn handle_callback(
                 "refresh_sys" => (Some(Command::Sys), true),
                 "cmd_donate" => (Some(Command::Donate), false),
                 "cmd_logs" => (Some(Command::Logs), false),
-                "cmd_pause" => (Some(Command::Pause), false),
-                "cmd_resume" => (Some(Command::Resume), false),
-                "cmd_restart" => (Some(Command::Restart), false),
+                "cmd_pause" => (Some(Command::Pause("".to_string())), false),
+                "cmd_resume" => (Some(Command::Resume("".to_string())), false),
+                "cmd_restart" => (Some(Command::Restart("".to_string())), false),
                 _ => (None, false),
             };
 
@@ -203,9 +203,9 @@ async fn execute_command(
         Command::Sys => {
             admin::handle_sys(bot, chat_id, user_id, &ctx, edit_msg_id, current_utc_time).await
         }
-        Command::Pause => admin::handle_pause(bot, chat_id, user_id, &ctx).await,
-        Command::Resume => admin::handle_resume(bot, chat_id, user_id, &ctx).await,
-        Command::Restart => admin::handle_restart(bot, chat_id, user_id, &ctx).await,
+        Command::Pause(pin) => admin::handle_pause(bot, chat_id, user_id, pin, &ctx).await,
+        Command::Resume(pin) => admin::handle_resume(bot, chat_id, user_id, pin, &ctx).await,
+        Command::Restart(pin) => admin::handle_restart(bot, chat_id, user_id, pin, &ctx).await,
         Command::Broadcast(m) => admin::handle_broadcast(bot, chat_id, user_id, m, &ctx).await,
         Command::Logs => admin::handle_logs(bot, chat_id, user_id, &ctx).await,
         Command::Learn(f) => admin::handle_learn(bot, chat_id, user_id, f, &ctx).await,

@@ -144,7 +144,18 @@ pub async fn handle_sys(
     }
 }
 
-pub async fn handle_pause(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+pub async fn handle_pause(bot: Bot, chat_id: ChatId, user_id: i64, pin: String, ctx: &AppContext) {
+    if !crate::security_utils::verify_admin_pin(&pin) {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "🚫 <b>Unauthorized:</b> Invalid or missing PIN.\n
+To execute this pause safely, type it with the PIN:\n<code>/pause 778899</code>",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+        return;
+    }
     if user_id == ctx.admin_id {
         ctx.monitoring.store(false, Ordering::Relaxed);
         if let Err(e) = send_or_edit_log(
@@ -161,7 +172,18 @@ pub async fn handle_pause(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppCont
     }
 }
 
-pub async fn handle_resume(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+pub async fn handle_resume(bot: Bot, chat_id: ChatId, user_id: i64, pin: String, ctx: &AppContext) {
+    if !crate::security_utils::verify_admin_pin(&pin) {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "🚫 <b>Unauthorized:</b> Invalid or missing PIN.\n
+To execute this resume safely, type it with the PIN:\n<code>/resume 778899</code>",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+        return;
+    }
     if user_id == ctx.admin_id {
         ctx.monitoring.store(true, Ordering::Relaxed);
         if let Err(e) = send_or_edit_log(
@@ -178,7 +200,24 @@ pub async fn handle_resume(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppCon
     }
 }
 
-pub async fn handle_restart(bot: Bot, chat_id: ChatId, user_id: i64, ctx: &AppContext) {
+pub async fn handle_restart(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    pin: String,
+    ctx: &AppContext,
+) {
+    if !crate::security_utils::verify_admin_pin(&pin) {
+        let _ = bot
+            .send_message(
+                chat_id,
+                "🚫 <b>Unauthorized:</b> Invalid or missing PIN.\n
+To execute this restart safely, type it with the PIN:\n<code>/restart 778899</code>",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+        return;
+    }
     if user_id == ctx.admin_id {
         if let Err(e) = send_or_edit_log(
             &bot,
@@ -215,6 +254,7 @@ pub async fn handle_broadcast(
                     .parse_mode(teloxide::types::ParseMode::Html)
                     .await;
             });
+            tokio::time::sleep(std::time::Duration::from_millis(35)).await; // Telegram Rate Limit (35ms = ~28 msgs/sec)
         }
         if let Err(e) = send_or_edit_log(
             &bot,

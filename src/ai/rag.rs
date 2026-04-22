@@ -77,6 +77,7 @@ pub fn spawn_background_vectorizer(ctx: AppContext, token: CancellationToken) {
                 _ = token.cancelled() => break,
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {
                     // PERFORMANCE PATCH: Fetch 50 records at once instead of 5
+                    let mut backoff_ms = 1500;
                     let unindexed: Result<Vec<(i32, String)>, _> = sqlx::query_as(
                         "SELECT id, content FROM knowledge_base WHERE embedding IS NULL LIMIT 50"
                     ).fetch_all(&ctx.pool).await;
@@ -110,7 +111,7 @@ pub fn spawn_background_vectorizer(ctx: AppContext, token: CancellationToken) {
                                 Err(e) => {
                                     error!("[VECTORIZER ERROR] Embedding failed for document ID {}: {}", id, e);
                 // [INJECTED] API Throttle to prevent 429 Too Many Requests
-                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await; backoff_ms = std::cmp::min(backoff_ms * 2, 60000);
                                 }
                             }
                             // Optimized rate limiting: 100ms is sufficient for most enterprise APIs

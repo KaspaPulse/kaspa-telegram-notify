@@ -1,17 +1,15 @@
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+// Enterprise Configuration Structure (Ready for Vault or Advanced Env Management)
+#[derive(Debug, Deserialize)]
 pub struct AppSettings {
     pub database_url: String,
     pub bot_token: String,
     pub ai_api_key: String,
-    pub admin_id: i64,
-    pub node_url_01: String,
-    pub node_url_02: String,
 }
 
 impl AppSettings {
-    pub fn load() -> Result<Self, envy::Error> {
+    pub fn init() -> Result<Self, envy::Error> {
         envy::from_env::<AppSettings>()
     }
 }

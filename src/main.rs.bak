@@ -8,7 +8,6 @@ pub mod enterprise;
 mod handlers;
 mod kaspa_features;
 pub mod resilience;
-pub mod security_utils;
 pub mod services;
 mod state;
 mod utils;
@@ -78,7 +77,7 @@ async fn main() -> Result<(), BotError> {
         env::var("ADMIN_ID").map_err(|_| BotError::EnvVarMissing("ADMIN_ID".into()))?;
     let admin_id: i64 = admin_id_str
         .parse()
-        .map_err(|_| BotError::EnvVarMissing("ADMIN_ID is invalid or missing".to_string()))?;
+        .expect("CRITICAL ERROR: ADMIN_ID must be configured properly in .env");
     let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:18110".to_string());
 
     let network_id = NetworkId::from_str("mainnet")
@@ -240,11 +239,8 @@ async fn main() -> Result<(), BotError> {
         let listener = teloxide::update_listeners::webhooks::axum(
             bot,
             teloxide::update_listeners::webhooks::Options::new(addr, url).secret_token(
-                std::env::var("WEBHOOK_SECRET").map_err(|_| {
-                    BotError::EnvVarMissing(
-                        "WEBHOOK_SECRET must be explicitly set for production security".to_string(),
-                    )
-                })?,
+                std::env::var("WEBHOOK_SECRET")
+                    .map_err(|_| BotError::EnvVarMissing("WEBHOOK_SECRET must be explicitly set for production security".to_string()))?,
             ),
         )
         .await
