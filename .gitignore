@@ -20,3 +20,8 @@ project_code_export.txt
 bot.log
 .env
 
+
+# --- Auto-generated Enterprise Cleanup Rules ---
+*.bak
+project_code_export_*.txt
+bot.log
