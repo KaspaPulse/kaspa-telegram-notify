@@ -1,0 +1,10 @@
+# Ignore build artifacts
+target/
+**/*.rs.bk
+
+# Ignore Git history
+.git/
+.gitignore
+
+# Ignore environment variables (never send .env to the builder)
+.env

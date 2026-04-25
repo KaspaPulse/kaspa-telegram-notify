@@ -1,0 +1,527 @@
+use crate::domain::models::AppContext;
+use crate::infrastructure::database::postgres_adapter::PostgresRepository;
+use chrono::Utc;
+use kaspa_rpc_core::api::rpc::RpcApi;
+use rev_lines::RevLines;
+use std::io::BufReader;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use sysinfo::System;
+use teloxide::prelude::*;
+
+pub async fn handle_pause(
+    bot: Bot,
+    msg: Message,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    app_context
+        .live_sync_enabled
+        .store(false, Ordering::Relaxed);
+    crate::send_logged!(bot, msg, "⏸️ <b>Live Sync Paused.</b>");
+    Ok(())
+}
+
+pub async fn handle_resume(
+    bot: Bot,
+    msg: Message,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    app_context.live_sync_enabled.store(true, Ordering::Relaxed);
+    crate::send_logged!(bot, msg, "▶️ <b>Live Sync Active.</b>");
+    Ok(())
+}
+
+pub async fn handle_restart(bot: Bot, msg: Message) -> anyhow::Result<()> {
+    crate::send_logged!(bot, msg, "🔄 <b>Restarting safely...</b>");
+    let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
+    std::process::exit(0);
+}
+
+use crate::wallet::wallet_use_cases::SyncWalletUseCase;
+
+pub async fn handle_sync(
+    bot: Bot,
+    msg: Message,
+    sync_uc: Arc<SyncWalletUseCase>,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    let node_url = std::env::var("NODE_URL_01").unwrap_or_default();
+    if !node_url.contains("127.0.0.1") && !node_url.contains("localhost") {
+        crate::send_logged!(bot, msg, "⚠️ <b>Action Denied:</b> This intensive operation requires a direct Local Node connection.");
+        return Ok(());
+    }
+    crate::send_logged!(
+        bot,
+        msg,
+        "🚀 <b>Admin:</b> Global Reverse Sync initialized in background..."
+    );
+
+    let pool = app_context.pool.clone();
+    let sync_clone = sync_uc.clone();
+    tokio::spawn(async move {
+        if let Ok(wallets) =
+            sqlx::query_scalar::<_, String>("SELECT DISTINCT wallet FROM user_wallets")
+                .fetch_all(&pool)
+                .await
+        {
+            for w in &wallets {
+                let _ = sync_clone.execute(w).await;
+            }
+        }
+    });
+    Ok(())
+}
+
+pub async fn handle_stats(
+    bot: Bot,
+    msg: Message,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    let ping = std::time::Instant::now();
+    let status = match app_context.rpc.get_server_info().await {
+        Ok(_) => format!("Online 🟢 ({}ms)", ping.elapsed().as_millis()),
+        Err(_) => "Offline 🔴".to_string(),
+    };
+    let total_users: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT chat_id) FROM user_wallets")
+        .fetch_one(&app_context.pool)
+        .await
+        .unwrap_or(0);
+    let total_wallets: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT wallet) FROM user_wallets")
+        .fetch_one(&app_context.pool)
+        .await
+        .unwrap_or(0);
+    let mut text = format!("📊 <b>Enterprise Analytics</b>\n━━━━━━━━━━━━━━━━━━\n👥 <b>Active Users:</b> {}\n💼 <b>Tracked Wallets:</b> {}\n🌐 <b>Node Ping:</b> {}\n\n📋 <b>Detailed User Report:</b>\n", total_users, total_wallets, status);
+    let wallets_data: Vec<(String, i64)> =
+        sqlx::query_as("SELECT wallet, chat_id FROM user_wallets")
+            .fetch_all(&app_context.pool)
+            .await
+            .unwrap_or_default();
+    let mut groups: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+    for (w, c) in wallets_data {
+        groups.entry(w).or_default().push(c);
+    }
+    for (wallet, users) in groups {
+        let blocks_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM mined_blocks WHERE wallet = $1")
+                .bind(&wallet)
+                .fetch_one(&app_context.pool)
+                .await
+                .unwrap_or(0);
+        let mut bal = 0.0;
+        if let Ok(addr) = kaspa_addresses::Address::try_from(wallet.as_str()) {
+            if let Ok(utxos) = app_context
+                .rpc
+                .get_utxos_by_addresses(vec![addr.clone()])
+                .await
+            {
+                bal = utxos
+                    .iter()
+                    .map(|u| u.utxo_entry.amount as f64)
+                    .sum::<f64>()
+                    / 1e8;
+            }
+        }
+        let u_names = users
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        text.push_str(&format!(
+            "▪ <code>{}</code>\n  ├ Users: [{}]\n  ├ Balance: {:.2} KAS\n  └ Mined Blocks: {}\n\n",
+            crate::utils::format_short_wallet(&wallet),
+            u_names,
+            bal,
+            blocks_count
+        ));
+    }
+    text.push_str(&format!(
+        "⏱️ <code>{}</code>",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    ));
+    crate::send_logged!(bot, msg, text);
+    Ok(())
+}
+
+#[allow(clippy::needless_late_init)]
+pub async fn handle_toggle(
+    bot: Bot,
+    msg: Message,
+    flag: String,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    let flag = flag.trim().to_uppercase();
+    let new_state;
+    match flag.as_str() {
+        "ENABLE_RSS_WORKER" => {
+            let cur = app_context.rss_worker_enabled.load(Ordering::Relaxed);
+            app_context
+                .rss_worker_enabled
+                .store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        "ENABLE_MEMORY_CLEANER" => {
+            let cur = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
+            app_context
+                .memory_cleaner_enabled
+                .store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        "ENABLE_LIVE_SYNC" => {
+            let cur = app_context.live_sync_enabled.load(Ordering::Relaxed);
+            app_context.live_sync_enabled.store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        "ENABLE_AI_VECTORIZER" => {
+            let cur = app_context.ai_vectorizer_enabled.load(Ordering::Relaxed);
+            app_context
+                .ai_vectorizer_enabled
+                .store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        "ENABLE_AI_CHAT" => {
+            let cur = app_context.ai_chat_enabled.load(Ordering::Relaxed);
+            app_context.ai_chat_enabled.store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        "ENABLE_AI_VOICE" => {
+            let cur = app_context.ai_voice_enabled.load(Ordering::Relaxed);
+            app_context.ai_voice_enabled.store(!cur, Ordering::Relaxed);
+            new_state = !cur;
+        }
+        _ => {
+            crate::send_logged!(bot, msg, "⚠️ Invalid flag.");
+            return Ok(());
+        }
+    }
+    let db = Arc::new(
+        crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+            app_context.pool.clone(),
+        ),
+    );
+    let _ = db.update_setting(&flag, &new_state.to_string()).await;
+    crate::send_logged!(
+        bot,
+        msg,
+        format!(
+            "🔄 <b>{}</b> is now <b>{}</b> (Saved to DB)",
+            flag, new_state
+        )
+    );
+    Ok(())
+}
+
+pub async fn handle_sys(bot: Bot, msg: Message, monitoring_status: bool) -> anyhow::Result<()> {
+    let (used_mem, total_mem, cores, uptime_secs, os_name, used_disk, total_disk) =
+        tokio::task::spawn_blocking(move || {
+            let mut s = System::new_all();
+            s.refresh_all();
+            let used_m = s.used_memory() / 1024 / 1024;
+            let total_m = s.total_memory() / 1024 / 1024;
+            let c = s.physical_core_count().unwrap_or(0);
+            let up = sysinfo::System::uptime();
+            let os = sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown OS".to_string());
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            let mut total_d_bytes = 0;
+            let mut avail_d_bytes = 0;
+            for disk in &disks {
+                total_d_bytes += disk.total_space();
+                avail_d_bytes += disk.available_space();
+            }
+            let used_d_gb = (total_d_bytes.saturating_sub(avail_d_bytes)) / 1024 / 1024 / 1024;
+            let total_d_gb = total_d_bytes / 1024 / 1024 / 1024;
+            (used_m, total_m, c, up, os, used_d_gb, total_d_gb)
+        })
+        .await
+        .unwrap_or((0, 0, 0, 0, "Unknown".to_string(), 0, 0));
+    let days = uptime_secs / 86400;
+    let hours = (uptime_secs % 86400) / 3600;
+    let minutes = (uptime_secs % 3600) / 60;
+    let _cfg = crate::config::AppSettings::new();
+    let cfg = crate::config::AppSettings::new();
+    let current_time = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let text = format!("⚙️ <b>Enterprise Node Diagnostics:</b>\n🖥️ <b>OS:</b> <code>{}</code>\n⏳ <b>Uptime:</b> <code>{}d {}h {}m</code>\n🎛️ <b>CPU:</b> <code>{} Cores</code>\n🧠 <b>RAM:</b> <code>{} / {} MB</code>\n💾 <b>Storage:</b> <code>{} / {} GB</code>\n👀 <b>Monitor:</b> <code>{}</code>\n🛡️ <b>Internal Cfg:</b> Maint={}, AI={}\n\n⏱️ <code>{}</code>",
+        os_name, days, hours, minutes, cores, used_mem, total_mem, used_disk, total_disk, monitoring_status, cfg.maintenance_mode, cfg.ai_enabled, current_time);
+    crate::send_logged!(bot, msg, text);
+    Ok(())
+}
+
+pub async fn handle_broadcast(
+    bot: Bot,
+    msg: Message,
+    admin_id: i64,
+    message: String,
+) -> anyhow::Result<()> {
+    let users = vec![admin_id];
+    let count = users.len();
+    for u in users {
+        let bot_clone = bot.clone();
+        let msg_text = format!("📢 <b>Admin Broadcast:</b>\n\n{}", message);
+        tokio::spawn(async move {
+            let _ = bot_clone
+                .send_message(teloxide::types::ChatId(u), msg_text)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+    }
+    crate::send_logged!(bot, msg, format!("✅ Broadcast sent to {} users.", count));
+    Ok(())
+}
+
+pub async fn handle_logs(bot: Bot, msg: Message) -> anyhow::Result<()> {
+    if let Ok(file) = std::fs::File::open("bot.log") {
+        let mut lines: Vec<String> = RevLines::new(BufReader::new(file))
+            .take(25)
+            .filter_map(Result::ok)
+            .collect();
+        lines.reverse();
+        let text = format!(
+            "📜 <b>System Logs (Tail):</b>\n<pre>{}</pre>",
+            lines.join("\n")
+        );
+        crate::send_logged!(bot, msg, text);
+    } else {
+        crate::send_logged!(bot, msg, "⚠️ <b>Error:</b> bot.log file not found.");
+    }
+    Ok(())
+}
+
+pub async fn handle_learn(
+    bot: Bot,
+    msg: Message,
+    new_fact: String,
+    db: Arc<PostgresRepository>,
+) -> anyhow::Result<()> {
+    if new_fact.trim().is_empty() {
+        crate::send_logged!(bot, msg, "⚠️ Usage: /learn [New Kaspa Information]");
+        return Ok(());
+    }
+    let title = format!("Manual Input: {}", Utc::now().format("%Y-%m-%d %H:%M"));
+    let link = format!("manual-{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    match db
+        .add_to_knowledge_base(&title, &link, &new_fact, "Admin Manual Input")
+        .await
+    {
+        Ok(_) => {
+            crate::send_logged!(
+                bot,
+                msg,
+                "🧠 <b>Knowledge Added!</b>\nI have securely stored this in my vector database."
+            );
+        }
+        Err(_) => {
+            crate::send_logged!(
+                bot,
+                msg,
+                "❌ <b>Database Error:</b> Failed to store new knowledge."
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_autolearn(
+    bot: Bot,
+    msg: Message,
+    db: Arc<PostgresRepository>,
+) -> anyhow::Result<()> {
+    let loading_msg = bot
+        .send_message(
+            msg.chat.id,
+            "🔍 <b>Kaspa AI:</b> Force-scanning the Official Kaspa News Feed...",
+        )
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
+    let feed_url =
+        "https://api.rss2json.com/v1/api.json?rss_url=https://medium.com/feed/kaspa-currency";
+    let mut added_count = 0;
+    let mut titles_added = String::new();
+
+    if let Ok(r) = reqwest::get(feed_url).await {
+        if let Ok(j) = r.json::<serde_json::Value>().await {
+            if let Some(items) = j["items"].as_array() {
+                for item in items {
+                    let title = item["title"].as_str().unwrap_or("Unknown").to_string();
+                    let link = item["link"]
+                        .as_str()
+                        .unwrap_or(&format!(
+                            "rss2json-{}",
+                            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+                        ))
+                        .to_string();
+                    let content_html = item["description"].as_str().unwrap_or("").to_string();
+                    let clean_content = content_html.replace("<", "").replace(">", "");
+                    if clean_content.len() < 50 {
+                        continue;
+                    }
+                    if db
+                        .add_to_knowledge_base(
+                            &title,
+                            &link,
+                            &clean_content,
+                            "Admin Autolearn Trigger",
+                        )
+                        .await
+                        .is_ok()
+                    {
+                        added_count += 1;
+                        titles_added.push_str(&format!("▪ {}\n", title));
+                    }
+                }
+            }
+        }
+    }
+    let text = if added_count > 0 {
+        format!("🧠 <b>Official Learning Complete!</b>\n\n📖 <b>Learned {} New Topics:</b>\n{}\n<i>My internal database has been updated instantly!</i>", added_count, titles_added)
+    } else {
+        "✅ <b>AI Status:</b> Scanned Official Medium. No new posts found. Database is completely up to date.".to_string()
+    };
+    bot.edit_message_text(msg.chat.id, loading_msg.id, text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_agent(
+    bot: Bot,
+    msg: Message,
+    query: String,
+    db: Arc<PostgresRepository>,
+) -> anyhow::Result<()> {
+    if query.trim().is_empty() {
+        crate::send_logged!(bot, msg, "⚠️ Usage: /agent [query]");
+        return Ok(());
+    }
+    let loading = bot
+        .send_message(
+            msg.chat.id,
+            "🕵️ <b>Agent Active:</b> Searching the deep web and Kaspa ecosystem...",
+        )
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
+
+    let agent = crate::infrastructure::ai::AiAgent::new(db);
+    if let Some(res) = agent.search_and_learn(&query).await {
+        let _ = bot
+            .edit_message_text(
+                msg.chat.id,
+                loading.id,
+                format!("🕵️ <b>Agent Intel Report:</b>\n\n{}", res),
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+    } else {
+        let _ = bot
+            .edit_message_text(
+                msg.chat.id,
+                loading.id,
+                "❌ <b>Agent failed to gather intel. (Check TAVILY_API_KEY)</b>",
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
+    }
+    Ok(())
+}
+
+// Unused import removed by cleanup script
+
+pub async fn handle_interactive_settings(
+    bot: Bot,
+    chat_id: teloxide::types::ChatId,
+    msg_id: Option<teloxide::types::MessageId>,
+    app_context: Arc<AppContext>,
+) -> anyhow::Result<()> {
+    let rss = app_context.rss_worker_enabled.load(Ordering::Relaxed);
+    let mem = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
+    let sync = app_context.live_sync_enabled.load(Ordering::Relaxed);
+    let ai_vec = app_context.ai_vectorizer_enabled.load(Ordering::Relaxed);
+    let ai_chat = app_context.ai_chat_enabled.load(Ordering::Relaxed);
+    let ai_voice = app_context.ai_voice_enabled.load(Ordering::Relaxed);
+    let maint = app_context.maintenance_mode.load(Ordering::Relaxed);
+
+    // FIX: Initialize DB first before requesting settings
+    let db = Arc::new(
+        crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+            app_context.pool.clone(),
+        ),
+    );
+
+    let active_model = db
+        .get_setting("ACTIVE_AI_MODEL", "Groq")
+        .await
+        .unwrap_or_else(|_| "Groq".to_string());
+
+    let webhook_db = db
+        .get_setting("USE_WEBHOOK", "false")
+        .await
+        .unwrap_or_else(|_| "false".to_string());
+    let webhook_state = webhook_db == "true";
+
+    let text = format!("⚙️ <b>Enterprise Control Panel</b>\n━━━━━━━━━━━━━━━━━━\n\n🤖 <b>Active AI Model:</b> <code>{}</code>\n\n<i>Click the buttons below to toggle features instantly:</i>", active_model);
+
+    let mk_btn = |label: &str, state: bool, flag: &str| {
+        let icon = if state { "🟢" } else { "🔴" };
+        teloxide::types::InlineKeyboardButton::callback(
+            format!("{} {}", icon, label),
+            format!("btn_toggle_{}", flag),
+        )
+    };
+
+    let row1 = vec![
+        mk_btn("AI Chat", ai_chat, "ENABLE_AI_CHAT"),
+        mk_btn("AI Voice", ai_voice, "ENABLE_AI_VOICE"),
+    ];
+    let row2 = vec![
+        mk_btn("Live Sync", sync, "ENABLE_LIVE_SYNC"),
+        mk_btn("Memory GC", mem, "ENABLE_MEMORY_CLEANER"),
+    ];
+    let row3 = vec![
+        mk_btn("RSS Worker", rss, "ENABLE_RSS_WORKER"),
+        mk_btn("AI Vectorizer", ai_vec, "ENABLE_AI_VECTORIZER"),
+    ];
+    let row4 = vec![
+        mk_btn("Maint. Mode", maint, "MAINTENANCE_MODE"),
+        mk_btn("Webhook", webhook_state, "USE_WEBHOOK"),
+    ];
+
+    let mk_model_btn = |model_name: &str, display_name: &str| {
+        let icon = if active_model == model_name {
+            "🔘"
+        } else {
+            "⚪"
+        };
+        teloxide::types::InlineKeyboardButton::callback(
+            format!("{} {}", icon, display_name),
+            format!("btn_model_{}", model_name),
+        )
+    };
+
+    let m_row1 = vec![
+        mk_model_btn("Groq", "Groq (Llama)"),
+        mk_model_btn("DeepSeek", "DeepSeek V2"),
+    ];
+    let m_row2 = vec![
+        mk_model_btn("GPT4", "GPT-4o"),
+        mk_model_btn("Claude", "Claude 3.5"),
+    ];
+    let m_row3 = vec![mk_model_btn("Gemini", "Gemini Pro")];
+
+    let markup = teloxide::types::InlineKeyboardMarkup::new(vec![
+        row1, row2, row3, row4, m_row1, m_row2, m_row3,
+    ]);
+
+    if let Some(id) = msg_id {
+        let _ = bot
+            .edit_message_text(chat_id, id, text)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .reply_markup(markup)
+            .await;
+    } else {
+        let _ = bot
+            .send_message(chat_id, text)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .reply_markup(markup)
+            .await;
+    }
+    Ok(())
+}

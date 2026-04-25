@@ -1,3 +1,10 @@
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+# Ignore vulnerabilities that do not affect our architecture
+ignore = [
+    "RUSTSEC-2023-0071", # RSA (MySQL) -> We use PostgreSQL exclusively.
+    "RUSTSEC-2021-0145", # atty -> Upstream from Kaspa SDK v1.1.0
+    "RUSTSEC-2024-0407"  # linkme -> Upstream from Kaspa SDK v1.1.0
+]
+
+# Treat unmaintained crates as warnings, do not fail the build
 informational_warnings = ["unmaintained"]

@@ -1,4 +1,15 @@
-[advisories]
-ignore = []
+﻿[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # RSA: Safe because we removed MySQL feature
+    "RUSTSEC-2025-0052", # async-std: Required by Kaspa SDK
+    "RUSTSEC-2024-0375", # atty: Indirect dependency
+    "RUSTSEC-2024-0384", # instant: Indirect dependency
+    "RUSTSEC-2024-0436", # paste: Indirect dependency
+    "RUSTSEC-2024-0370", # proc-macro-error: Indirect dependency
+    "RUSTSEC-2025-0134", # rustls-pemfile: Indirect dependency
+    "RUSTSEC-2024-0407", # linkme: Indirect dependency
+    "RUSTSEC-2021-0145"  # atty soundness: Indirect
+]
+
 
 

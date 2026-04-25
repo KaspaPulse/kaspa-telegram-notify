@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT content FROM knowledge_base\n             WHERE title ILIKE $1 OR content ILIKE $1\n             ORDER BY published_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "62ba05f8c0e86e351ecc50e1096fdb6715cc9b30605f28b12ef6382b18b7d159"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM chat_history WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '30 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "449a546a8136656eb0c6da391fcd6d92c0528e8ca0685c70850a12d73c6cbbb4"
+}

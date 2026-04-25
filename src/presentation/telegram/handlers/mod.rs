@@ -1,0 +1,566 @@
+pub mod wallet;
+use crate::infrastructure::ai::ai_engine_adapter::AiEngineAdapter;
+// --- Enterprise Modular Monolith Imports ---
+use crate::ai::ai_use_cases::AiChatUseCase;
+
+use crate::network::stats_use_cases::{
+    GetMarketStatsUseCase, GetMinerStatsUseCase, NetworkStatsUseCase,
+};
+use crate::wallet::wallet_use_cases::{
+    SyncWalletUseCase, WalletManagementUseCase, WalletQueriesUseCase,
+};
+// ------------------------------------------
+pub mod admin;
+pub mod ai_chat;
+pub mod mining;
+pub mod network;
+use crate::presentation::telegram::commands::Command;
+
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use teloxide::prelude::*;
+
+#[derive(Clone)]
+pub struct BotUseCases {
+    pub wallet_mgt: Arc<WalletManagementUseCase>,
+    pub wallet_query: Arc<WalletQueriesUseCase>,
+    pub network_stats: Arc<NetworkStatsUseCase>,
+    pub market_stats: Arc<GetMarketStatsUseCase>,
+    pub miner_stats: Arc<GetMinerStatsUseCase>,
+    pub sync_uc: Arc<SyncWalletUseCase>,
+    pub dag_uc: Arc<crate::network::analyze_dag::AnalyzeDagUseCase>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_command(
+    bot: Bot,
+    msg: Message,
+    cmd: Command,
+    ucs: BotUseCases,
+    app_context: Arc<crate::domain::models::AppContext>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>> {
+    Box::pin(async move {
+        let chat_id = msg.chat.id;
+
+        let cid = chat_id.0;
+        let is_admin = cid == app_context.admin_id;
+        if let Some(text) = msg.text() {
+            if text == "/forget" {
+                let db: std::sync::Arc<
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository,
+                > = std::sync::Arc::new(
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                        app_context.pool.clone(),
+                    ),
+                );
+                let _ = db.remove_all_user_data(cid).await;
+                crate::send_logged!(bot, msg, "🗑️ <b>GDPR: All your data and wallets have been permanently deleted from our servers.</b>");
+                return Ok(());
+            }
+        }
+
+        crate::utils::log_multiline(
+            &format!(
+                "📥 [BOT IN] Chat: {} | User: {}",
+                cid,
+                msg.from
+                    .as_ref()
+                    .and_then(|u| u.username.clone())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            ),
+            msg.text().unwrap_or("Callback/System"),
+            false,
+        );
+
+        if app_context.maintenance_mode.load(Ordering::Relaxed) && !is_admin {
+            let _ = bot
+                .send_message(
+                    chat_id,
+                    "🚧 <b>Maintenance Mode</b>\nThe bot is currently upgrading.",
+                )
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+            return Ok(());
+        }
+
+        match cmd {
+            Command::ForgetChat => {
+                let _ = sqlx::query("DELETE FROM chat_history WHERE chat_id = $1")
+                    .bind(msg.chat.id.0 as i64)
+                    .execute(&app_context.pool)
+                    .await;
+                let _ = crate::send_logged!(bot, msg, "🧠 <b>AI Memory Cleared:</b>\nYour conversation history has been wiped. The AI will start fresh.");
+            }
+            Command::ForgetWallets => {
+                let _ = sqlx::query("DELETE FROM user_wallets WHERE chat_id = $1")
+                    .bind(msg.chat.id.0 as i64)
+                    .execute(&app_context.pool)
+                    .await;
+                let _ = crate::send_logged!(bot, msg, "🗑️ <b>Wallets Cleared:</b>\nAll your tracked wallets have been removed from the monitoring engine.");
+            }
+            Command::ForgetAll => {
+                let _ = sqlx::query("DELETE FROM chat_history WHERE chat_id = $1")
+                    .bind(msg.chat.id.0 as i64)
+                    .execute(&app_context.pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM user_wallets WHERE chat_id = $1")
+                    .bind(msg.chat.id.0 as i64)
+                    .execute(&app_context.pool)
+                    .await;
+                let _ = crate::send_logged!(bot, msg, "🚨 <b>GDPR Protocol Executed:</b>\nAll your data (Wallets & Chats) has been permanently erased from this server.");
+            }
+            Command::DbDiag => {
+                if !is_admin {
+                    let _ = crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let loading = bot
+                    .send_message(msg.chat.id, "🔍 <b>Scanning PostgreSQL Database...</b>")
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await
+                    .unwrap();
+
+                // 1. Fetch Total Database Size
+                let db_size: String = sqlx::query_scalar(
+                    "SELECT pg_size_pretty(pg_database_size(current_database()))",
+                )
+                .fetch_one(&app_context.pool)
+                .await
+                .unwrap_or_else(|_| "Unknown".to_string());
+
+                // 2. Fetch Tables and Row Counts dynamically from Postgres Stats
+                let tables: Vec<(String, i64)> = sqlx::query_as("SELECT relname::text, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC")
+                    .fetch_all(&app_context.pool).await.unwrap_or_default();
+
+                let mut report = format!("🗄️ <b>PostgreSQL Diagnostics</b>\n━━━━━━━━━━━━━━━━━━\n💾 <b>Total Size:</b> <code>{}</code>\n\n📊 <b>Tables & Live Rows:</b>\n", db_size);
+
+                for (name, rows) in tables {
+                    report.push_str(&format!("├ <b>{}</b>: <code>{} rows</code>\n", name, rows));
+                }
+                report.push_str(
+                    "\n<i>Status: Database is healthy, connected, and structurally sound.</i>",
+                );
+
+                let _ = bot
+                    .edit_message_text(msg.chat.id, loading.id, report)
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await;
+            }
+            Command::FlushKnowledge => {
+                if !is_admin {
+                    let _ = crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let _ = sqlx::query("DELETE FROM knowledge_base")
+                    .execute(&app_context.pool)
+                    .await;
+                let _ = crate::send_logged!(bot, msg, "💥 <b>Knowledge Base Flushed:</b>\nAll learned facts, RSS news, and AI vector data have been completely wiped.");
+            }
+            Command::Forget => {
+                // Execute direct bypass query to delete stuck/malicious wallets
+                let _ = sqlx::query("DELETE FROM user_wallets WHERE chat_id = $1")
+                    .bind(msg.chat.id.0)
+                    .execute(&app_context.pool)
+                    .await;
+
+                let _ = crate::send_logged!(
+                    bot,
+                    msg,
+                    "🗑️ <b>GDPR Protocol Executed:</b>\nAll your tracking data, including stuck or malicious wallets, has been permanently purged from the database."
+                );
+            }
+            Command::Models => {
+                let _ = bot
+                    .send_message(
+                        msg.chat.id,
+                        "🤖 Choose the AI model you want to set as the primary model:",
+                    )
+                    .reply_markup(
+                        crate::presentation::telegram::menus::TelegramMenus::models_menu_markup(),
+                    )
+                    .await;
+            }
+            Command::HideMenu => {
+                let _ = bot
+                    .send_message(msg.chat.id, "✅ تم إخفاء القائمة الثابتة من الجوال بنجاح.")
+                    .reply_markup(teloxide::types::KeyboardRemove::new())
+                    .await;
+            }
+            Command::Help => {
+                let help_text = "📚 <b>Kaspa Pulse Enterprise - Help Guide</b>\n━━━━━━━━━━━━━━━━━━\nWelcome to the most advanced Kaspa Solo Mining & Node monitoring bot.\n\n🛠️ <b>Public Commands:</b>\n• /start - Main menu & initialization\n• /add <code>kaspa:...</code> - Start tracking a wallet\n• /remove <code>kaspa:...</code> - Stop tracking a wallet\n• /list - View your tracked wallets\n• /balance - Live node balances & UTXOs\n• /blocks - Mined blocks & lifetime value\n• /miner - Real-time solo hashrate estimate\n• /network - Node health, peers, & sync status\n• /dag - BlockDAG metrics & difficulty\n• /price - Live KAS price & market cap\n• /supply - Circulating supply metrics\n• /fees - Current mempool fee estimate\n• /donate - Support the developer\n\n👑 <b>Admin Commands:</b>\n• /stats, /sys, /logs - System diagnostics\n• /pause, /resume, /restart - Engine control\n• /sync - Manual historical reverse-scan\n• /learn, /autolearn - AI Knowledge DB management\n\n✨ <b>Smart Features:</b>\n🎙️ <b>AI Voice & Chat:</b> Ask questions or send voice notes!\n⚡ <b>Auto-Track:</b> Just paste any <code>kaspa:...</code> address in the chat.\n🔍 <b>Forensics:</b> Extracts Worker IDs and nonces directly from the unindexed BlockDAG.";
+                crate::send_logged!(bot, msg, help_text);
+            }
+            Command::Start => {
+                let markup = if is_admin {
+                    crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup()
+                } else {
+                    crate::presentation::telegram::menus::TelegramMenus::main_menu_markup()
+                };
+                let welcome = "🤖 <b>Kaspa Pulse Enterprise</b>\n━━━━━━━━━━━━━━━━━━\nWelcome to the ultimate Kaspa Solo Mining & Node monitoring engine. I operate with zero-latency, providing direct unindexed BlockDAG forensics.\n\n⚡ <b>Quick Start:</b>\nSimply paste any <code>kaspa:...</code> address in this chat to instantly activate real-time tracking and historical block recovery.\n\n🧠 <b>AI-Powered Intelligence:</b>\nEquipped with an advanced AI. Ask complex Kaspa questions, or send <b>Voice Notes</b> for instant transcription and analysis!\n\n👇 <i>Select an option below or type /help for commands.</i>";
+                let text = welcome.to_string();
+                crate::utils::log_multiline(
+                    &format!("📤 [BOT OUT] Chat: {}", msg.chat.id),
+                    &text,
+                    true,
+                );
+                let _ = bot
+                    .send_message(msg.chat.id, text)
+                    .reply_parameters(teloxide::types::ReplyParameters::new(msg.id))
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .reply_markup(markup)
+                    .await;
+            }
+            Command::Donate => {
+                crate::send_logged!(bot, msg, "❤️ <b>Support Development</b>\n\n<b>KAS Address:</b>\n<code>kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g</code>");
+            }
+
+            Command::Add(wallet) => {
+                wallet::handle_add(bot, msg, cid, wallet, ucs.wallet_mgt).await?
+            }
+            Command::Remove(wallet) => {
+                wallet::handle_remove(bot, msg, cid, wallet, ucs.wallet_mgt).await?
+            }
+            Command::List => wallet::handle_list(bot, msg, cid, ucs.wallet_query).await?,
+            Command::Balance => {
+                wallet::handle_balance(bot, msg, cid, ucs.wallet_query, app_context).await?
+            }
+
+            Command::Blocks => {
+                mining::handle_blocks(bot, msg, cid, ucs.wallet_query, app_context).await?
+            }
+            Command::Miner => {
+                mining::handle_miner(bot, msg, cid, app_context, ucs.miner_stats).await?
+            }
+
+            Command::Network => {
+                network::handle_network_overview(bot, msg, app_context, ucs.network_stats).await?
+            }
+            Command::Dag => network::handle_dag(bot, msg, app_context, ucs.dag_uc.clone()).await?,
+            Command::Fees => network::handle_fees(bot, msg).await?,
+            Command::Supply => network::handle_supply(bot, msg, app_context).await?,
+            Command::Price => {
+                network::handle_market_data(bot.clone(), msg.clone(), ucs.market_stats.clone())
+                    .await?
+            }
+            Command::Market => {
+                network::handle_market_data(bot.clone(), msg.clone(), ucs.market_stats.clone())
+                    .await?
+            }
+
+            Command::Pause => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_pause(bot, msg, app_context).await?;
+            }
+            Command::Resume => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_resume(bot, msg, app_context).await?;
+            }
+            Command::Restart => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_restart(bot, msg).await?;
+            }
+            Command::Sync => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_sync(bot, msg, ucs.sync_uc, app_context).await?
+            }
+            Command::Stats => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_stats(bot, msg, app_context).await?
+            }
+            Command::Toggle(flag) => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_toggle(bot, msg, flag, app_context).await?;
+            }
+
+            Command::Sys => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_sys(
+                    bot,
+                    msg,
+                    app_context.live_sync_enabled.load(Ordering::Relaxed),
+                )
+                .await?;
+            }
+            Command::Logs => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_logs(bot, msg).await?;
+            }
+            Command::Broadcast(msg_text) => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                admin::handle_broadcast(bot, msg, app_context.admin_id, msg_text).await?;
+            }
+            Command::Learn(topic) => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let db_dyn: std::sync::Arc<
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository,
+                > = std::sync::Arc::new(
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                        app_context.pool.clone(),
+                    ),
+                );
+                admin::handle_learn(bot, msg, topic, db_dyn).await?;
+            }
+            Command::Agent(query) => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let db_dyn = std::sync::Arc::new(
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                        app_context.pool.clone(),
+                    ),
+                );
+                admin::handle_agent(bot, msg, query, db_dyn).await?;
+            }
+            Command::AutoLearn => {
+                if !is_admin {
+                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let db_dyn: std::sync::Arc<
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository,
+                > = std::sync::Arc::new(
+                    crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                        app_context.pool.clone(),
+                    ),
+                );
+                admin::handle_autolearn(bot, msg, db_dyn).await?;
+            }
+            Command::Settings => {
+                if !is_admin {
+                    let _ = crate::send_logged!(bot, msg, "⛔ Unauthorized.");
+                    return Ok(());
+                }
+                let _ = admin::handle_interactive_settings(
+                    bot.clone(),
+                    msg.chat.id,
+                    None,
+                    app_context.clone(),
+                )
+                .await;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_callback(
+    bot: Bot,
+    q: teloxide::types::CallbackQuery,
+    ucs: BotUseCases,
+    app_context: Arc<crate::domain::models::AppContext>,
+) -> anyhow::Result<()> {
+    if let Some(data) = q.data.clone() {
+        if data.starts_with("btn_toggle_") {
+            let flag = data.replace("btn_toggle_", "");
+            let mut new_state = false;
+            match flag.as_str() {
+                "ENABLE_RSS_WORKER" => {
+                    let c = app_context.rss_worker_enabled.load(Ordering::Relaxed);
+                    app_context.rss_worker_enabled.store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "ENABLE_MEMORY_CLEANER" => {
+                    let c = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
+                    app_context
+                        .memory_cleaner_enabled
+                        .store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "ENABLE_LIVE_SYNC" => {
+                    let c = app_context.live_sync_enabled.load(Ordering::Relaxed);
+                    app_context.live_sync_enabled.store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "ENABLE_AI_VECTORIZER" => {
+                    let c = app_context.ai_vectorizer_enabled.load(Ordering::Relaxed);
+                    app_context
+                        .ai_vectorizer_enabled
+                        .store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "ENABLE_AI_CHAT" => {
+                    let c = app_context.ai_chat_enabled.load(Ordering::Relaxed);
+                    app_context.ai_chat_enabled.store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "ENABLE_AI_VOICE" => {
+                    let c = app_context.ai_voice_enabled.load(Ordering::Relaxed);
+                    app_context.ai_voice_enabled.store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "MAINTENANCE_MODE" => {
+                    let c = app_context.maintenance_mode.load(Ordering::Relaxed);
+                    app_context.maintenance_mode.store(!c, Ordering::Relaxed);
+                    new_state = !c;
+                }
+                "USE_WEBHOOK" => {
+                    let db_instance =
+                        crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                            app_context.pool.clone(),
+                        );
+                    let cur = db_instance
+                        .get_setting("USE_WEBHOOK", "false")
+                        .await
+                        .unwrap_or_else(|_| "false".to_string());
+                    new_state = cur != "true";
+                }
+                _ => {}
+            }
+            let db = Arc::new(
+                crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                    app_context.pool.clone(),
+                ),
+            );
+            let _ = db.update_setting(&flag, &new_state.to_string()).await;
+            if let Some(msg) = q.regular_message() {
+                let _ = admin::handle_interactive_settings(
+                    bot.clone(),
+                    msg.chat.id,
+                    Some(msg.id),
+                    app_context.clone(),
+                )
+                .await;
+            }
+            let _ = bot.answer_callback_query(q.id).await;
+            return Ok(());
+        }
+
+        if data.starts_with("btn_model_") {
+            let model = data.replace("btn_model_", "");
+            let db = Arc::new(
+                crate::infrastructure::database::postgres_adapter::PostgresRepository::new(
+                    app_context.pool.clone(),
+                ),
+            );
+            let _ = db.update_setting("ACTIVE_AI_MODEL", &model).await;
+            if let Some(msg) = q.regular_message() {
+                let _ = admin::handle_interactive_settings(
+                    bot.clone(),
+                    msg.chat.id,
+                    Some(msg.id),
+                    app_context.clone(),
+                )
+                .await;
+            }
+            let _ = bot.answer_callback_query(q.id).await;
+            return Ok(());
+        }
+    }
+    if let Some(data) = q.data.clone() {
+        let cmd = match data.as_str() {
+            "cmd_balance" | "refresh_balance" => Some(Command::Balance),
+            "cmd_list" | "refresh_list" => Some(Command::List),
+            "cmd_blocks" | "refresh_blocks" => Some(Command::Blocks),
+            "cmd_network" | "refresh_network" => Some(Command::Network),
+            "cmd_price" | "refresh_price" => Some(Command::Price),
+            "cmd_market" | "refresh_market" => Some(Command::Market),
+            "cmd_dag" | "refresh_dag" => Some(Command::Dag),
+            "cmd_supply" | "refresh_supply" => Some(Command::Supply),
+            "cmd_fees" | "refresh_fees" => Some(Command::Fees),
+            "cmd_settings" => Some(Command::Settings),
+            "cmd_db_diag" => Some(Command::DbDiag),
+            "cmd_sys" | "refresh_sys" => Some(Command::Sys),
+            "cmd_logs" => Some(Command::Logs),
+            "cmd_stats" | "refresh_stats" => Some(Command::Stats),
+            "cmd_donate" => Some(Command::Donate),
+            "cmd_forget_wallets" => Some(Command::ForgetWallets),
+            "cmd_forget_chat" => Some(Command::ForgetChat),
+            "cmd_forget_all" => Some(Command::ForgetAll),
+            "cmd_flush_knowledge" => Some(Command::FlushKnowledge),
+            "cmd_miner" | "refresh_miner" => Some(Command::Miner),
+            "cmd_pause" => Some(Command::Pause),
+            "cmd_resume" => Some(Command::Resume),
+            "cmd_restart" => Some(Command::Restart),
+            "cmd_sync" | "refresh_sync" | "sync" | "node_sync" => Some(Command::Sync),
+            _ => None,
+        };
+        if let Some(c) = cmd {
+            if let Some(msg) = q.regular_message() {
+                let toast_msg = match data.as_str() {
+                    "cmd_balance" | "refresh_balance" => "💰 Loading Balance...",
+                    "cmd_list" | "refresh_list" => "📋 Fetching Wallets...",
+                    "cmd_blocks" | "refresh_blocks" => "🧱 Fetching Blocks...",
+                    "cmd_network" | "refresh_network" => "🛠️ Checking Network...",
+                    "cmd_price" | "refresh_price" => "💵 Fetching Price...",
+                    "cmd_market" | "refresh_market" => "📈 Fetching Market Cap...",
+                    "cmd_dag" | "refresh_dag" => "📊 Analyzing BlockDAG...",
+                    "cmd_supply" | "refresh_supply" => "🪙 Checking Supply...",
+                    "cmd_fees" | "refresh_fees" => "⛽ Checking Mempool...",
+                    "cmd_set_model_llama"
+                    | "cmd_set_model_deepseek"
+                    | "cmd_set_model_gpt4"
+                    | "cmd_set_model_claude"
+                    | "cmd_set_model_gemini" => "✅ AI model successfully updated in the database!",
+                    "cmd_db_diag" => "🗄️ Scanning Database...",
+                    "cmd_settings" => "⚙️ Opening Settings...",
+                    "cmd_stats" | "refresh_stats" => "📈 Loading Analytics...",
+                    "cmd_miner" | "refresh_miner" => "⛏️ Calculating Hashrate...",
+                    "cmd_sync" | "refresh_sync" | "sync" | "node_sync" => "🔄 Initiating Sync...",
+                    "cmd_forget_wallets" => "🗑️ Clearing Wallets...",
+                    "cmd_forget_chat" => "🧠 Clearing AI Memory...",
+                    "cmd_forget_all" => "🚨 Wiping Data...",
+                    "cmd_flush_knowledge" => "💥 Flushing DB...",
+                    _ => "⏳ Processing...",
+                };
+                let _ = bot
+                    .answer_callback_query(q.id.clone())
+                    .text(toast_msg)
+                    .await;
+                let _ = handle_command(bot.clone(), msg.clone(), c, ucs, app_context).await;
+                return Ok(());
+            }
+        }
+    }
+    let _ = bot.answer_callback_query(q.id).await;
+    Ok(())
+}
+
+pub async fn handle_raw_message(
+    bot: Bot,
+    msg: Message,
+    ai_chat: Arc<AiChatUseCase>,
+    ai_rag: Arc<crate::ai::ai_use_cases::AiRagUseCase>,
+    ai_provider: Arc<AiEngineAdapter>,
+    app_context: Arc<crate::domain::models::AppContext>,
+) -> anyhow::Result<()> {
+    ai_chat::handle_raw_message(bot, msg, ai_chat, ai_rag, ai_provider, app_context).await
+}
+
+pub async fn handle_block_user(
+    _bot: teloxide::prelude::Bot,
+    _msg: teloxide::types::ChatMemberUpdated,
+) -> anyhow::Result<()> {
+    Ok(())
+}

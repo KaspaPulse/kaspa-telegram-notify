@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  kaspa-pulse-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kaspa_enterprise_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${WEBHOOK_PORT:-8443}:${WEBHOOK_PORT:-8443}" # Exposes the webhook port dynamically
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,265 +1,295 @@
-#[allow(clippy::manual_range_contains)]
-pub mod agent;
+use crate::infrastructure::database::postgres_adapter::PostgresRepository;
+use crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter;
 mod ai;
-mod commands;
-pub mod config;
-mod context;
-pub mod enterprise;
-mod handlers;
-mod kaspa_features;
-pub mod resilience;
-pub mod services;
-mod state;
-mod utils;
-mod workers;
+mod config;
+mod network;
+mod wallet;
 
-use dashmap::DashMap;
+mod application;
+mod domain;
+mod infrastructure;
+mod presentation;
+
+pub mod utils;
+
 use dotenvy::dotenv;
-use kaspa_consensus_core::network::NetworkId;
-use kaspa_wrpc_client::{KaspaRpcClient, WrpcEncoding};
-use std::collections::{HashMap, HashSet};
 use std::env;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
 use teloxide::prelude::*;
-use teloxide::types::Update;
-use teloxide::utils::command::BotCommands;
-use tokio::fs;
-use tokio::sync::RwLock;
-use tokio::time::{sleep, Duration};
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
-use tracing_subscriber::{
-    fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
-};
+use tracing::info;
+use tracing_subscriber::{fmt, layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter};
 
-use crate::commands::Command;
-use crate::context::AppContext;
+// Infrastructure Adapters
+use crate::infrastructure::ai::ai_engine_adapter::AiEngineAdapter;
 
-#[derive(thiserror::Error, Debug)]
-pub enum BotError {
-    #[error("Environment Variable Missing: {0}")]
-    EnvVarMissing(String),
-    #[error("Database Initialization Failed: {0}")]
-    DatabaseInit(#[from] sqlx::Error),
-    #[error("RPC Connection Failed: {0}")]
-    RpcConnection(String),
-}
+use crate::infrastructure::market::coingecko_adapter::CoinGeckoAdapter;
+use crate::infrastructure::news::rss_adapter::RssAdapter;
+// Application Use Cases
+use crate::ai::ai_use_cases::AiChatUseCase;
+use crate::network::analyze_dag::AnalyzeDagUseCase;
+use crate::network::stats_use_cases::GetMinerStatsUseCase;
+use crate::network::stats_use_cases::NetworkStatsUseCase;
+use crate::wallet::wallet_use_cases::SyncWalletUseCase;
+use crate::wallet::wallet_use_cases::WalletManagementUseCase;
+use crate::wallet::wallet_use_cases::WalletQueriesUseCase;
+
+// Presentation Handlers & Commands
+use crate::presentation::telegram::commands::Command;
 
 #[tokio::main]
-async fn main() -> Result<(), BotError> {
+async fn main() -> anyhow::Result<()> {
     dotenv().ok();
-    let _app_settings =
-        crate::config::AppSettings::load().expect("CRITICAL: Failed to load config");
 
-    // Setup logging telemetry
-    let file_appender = tracing_appender::rolling::never(".", "bot.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // 1. Setup Logging
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    registry().with(fmt::layer()).with(filter).init();
+    info!("🚀 Kaspa Pulse Enterprise Engine Starting...");
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking.and(std::io::stdout))
-                .with_ansi(false)
-                .with_target(false)
-                .with_thread_ids(true),
-        )
-        .with(filter)
-        .init();
+    // 2. Initialize Infrastructure Layer
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
+    let rpc_url =
+        env::var("NODE_URL_01").expect("CRITICAL SECURITY: NODE_URL_01 must be set in .env");
 
-    info!("[INIT] Secure Enterprise Rust Engine Started");
+    // Setup Postgres Pool
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(20)
+        .connect(&db_url)
+        .await?;
+    let db_repo = Arc::new(PostgresRepository::new(pool.clone()));
 
-    let admin_id_str =
-        env::var("ADMIN_ID").map_err(|_| BotError::EnvVarMissing("ADMIN_ID".into()))?;
-    let admin_id: i64 = admin_id_str
-        .parse()
-        .expect("CRITICAL ERROR: ADMIN_ID must be configured properly in .env");
-    let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:18110".to_string());
+    // Setup Kaspa RPC Client
+    let network_id =
+        kaspa_consensus_core::network::NetworkId::from_str("mainnet").unwrap_or_else(|_| {
+            kaspa_consensus_core::network::NetworkId::from_str("testnet-12").unwrap()
+        });
 
-    let network_id = NetworkId::from_str("mainnet")
-        .unwrap_or_else(|_| NetworkId::from_str("testnet-12").unwrap());
-
-    // 🛡️ Phase 1 Fix: Safe Database URL loading
-    let db_url =
-        env::var("DATABASE_URL").map_err(|_| BotError::EnvVarMissing("DATABASE_URL".into()))?;
-    let pool = crate::state::init_db(&db_url).await?;
-
-    // Redis removed: State is now natively managed via DashMap for ultra-low latency.
-    let cancel_token = CancellationToken::new();
-
-    // Graceful Shutdown Registry
-    let pool_shutdown = pool.clone();
-    let ct_ctrlc = cancel_token.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        warn!("[SYSTEM] CRITICAL: SIGINT received. Executing Graceful Database Shutdown...");
-        pool_shutdown.close().await;
-        info!("[SYSTEM] Database connections closed safely. Cleaning up workers...");
-        ct_ctrlc.cancel();
-        sleep(Duration::from_secs(2)).await;
-        info!("[SYSTEM] Shutdown complete.");
-        std::process::exit(0);
-    });
-
-    let state = Arc::new(DashMap::new());
-    let rate_limiter = crate::context::AppContext::new_rate_limiter();
-
-    // Migrate old wallets.json if it exists
-    if let Ok(data) = fs::read_to_string("wallets.json").await {
-        if let Ok(parsed) = serde_json::from_str::<HashMap<String, HashSet<i64>>>(&data) {
-            for (k, v) in parsed {
-                for chat_id in v {
-                    crate::state::add_wallet_to_db(&pool, &k, chat_id).await;
-                }
-            }
-            let _ = fs::rename("wallets.json", "wallets.json.migrated").await;
-        }
-    }
-
-    // Load active state into RAM
-    if let Err(e) = crate::state::load_state_from_db(&pool, &state).await {
-        error!("[DB ERROR] Data load failed: {}", e);
-    }
-
-    // Establish Kaspa wRPC Tunnel
-    let rpc_client = KaspaRpcClient::new(
-        WrpcEncoding::SerdeJson,
-        Some(&ws_url),
+    let rpc_client = kaspa_wrpc_client::KaspaRpcClient::new(
+        kaspa_wrpc_client::WrpcEncoding::SerdeJson,
+        Some(&rpc_url),
         None,
         Some(network_id),
         None,
     )
-    .map_err(|e| BotError::RpcConnection(format!("Tunnel failed: {}", e)))?;
+    .map_err(|e| anyhow::anyhow!("RPC Connection Failed: {}", e))?;
 
-    // Initialize Cloud AI Engine (Instant Boot)
-    info!("[INIT] Starting Cloud AI Engine... (Instant Boot)");
-    let ai_engine = Arc::new(
-        // 🛡️ Phase 1 Fix: Safe AI Key loading
-        crate::ai::LocalAiEngine::new()
-            .map_err(|_| BotError::EnvVarMissing("AI_API_KEY".into()))?,
+    let rpc_client_arc = Arc::new(rpc_client);
+    let node_provider = Arc::new(KaspaRpcAdapter::new(rpc_client_arc.clone()));
+
+    // 🛡️ ENTERPRISE PRE-FLIGHT CHECK (Activating wrappers & bounds)
+    tracing::info!("[SYSTEM] Running node pre-flight diagnostic...");
+    let _ = node_provider.get_server_info().await;
+    let _ = node_provider.get_sync_status().await;
+    let _ = node_provider.get_block_dag_info().await;
+    let _ = node_provider.get_coin_supply().await;
+    let _ = node_provider.get_utxos_by_addresses(vec![]).await;
+    let _ = node_provider.connect(false).await;
+
+    // Setup AI Engine
+    let ai_provider: Arc<crate::infrastructure::ai::ai_engine_adapter::AiEngineAdapter> =
+        Arc::new(AiEngineAdapter::new(
+            env::var("AI_CHAT_API_KEY").unwrap_or_default(),
+            env::var("AI_CHAT_BASE_URL")
+                .expect("CRITICAL SECURITY: AI_CHAT_BASE_URL must be set in .env"),
+            env::var("AI_AUDIO_API_KEY").unwrap_or_default(),
+            env::var("AI_AUDIO_BASE_URL")
+                .expect("CRITICAL SECURITY: AI_AUDIO_BASE_URL must be set in .env"),
+            env::var("AI_CHAT_MODEL")
+                .expect("CRITICAL SECURITY: AI_CHAT_MODEL must be set in .env"),
+            env::var("AI_AUDIO_MODEL")
+                .expect("CRITICAL SECURITY: AI_AUDIO_MODEL must be set in .env"),
+        ));
+
+    // Setup Market & News Providers
+    let news_provider: Arc<dyn crate::infrastructure::news::rss_adapter::NewsProvider> =
+        Arc::new(RssAdapter::new());
+    let market_provider: Arc<dyn crate::infrastructure::market::coingecko_adapter::MarketProvider> =
+        Arc::new(CoinGeckoAdapter::new());
+
+    // 3. Initialize Application Use Cases (Clean Architecture)
+    let wallet_management_uc = Arc::new(WalletManagementUseCase::new(db_repo.clone()));
+    let wallet_queries_uc = Arc::new(WalletQueriesUseCase::new(
+        db_repo.clone(),
+        node_provider.clone(),
+    ));
+    let ai_chat_uc = Arc::new(AiChatUseCase::new(ai_provider.clone(), db_repo.clone()));
+    let network_stats_uc = Arc::new(NetworkStatsUseCase::new(node_provider.clone()));
+    let dag_uc = Arc::new(AnalyzeDagUseCase::new(node_provider.clone()));
+    let sync_uc = Arc::new(SyncWalletUseCase::new(
+        db_repo.clone(),
+        node_provider.clone(),
+    ));
+    let get_miner_stats_uc = Arc::new(GetMinerStatsUseCase::new(
+        db_repo.clone(),
+        node_provider.clone(),
+    ));
+    let crawl_news_uc = Arc::new(crate::application::background_jobs::CrawlNewsUseCase::new(
+        db_repo.clone(),
+        news_provider.clone(),
+    ));
+    let market_stats_uc = Arc::new(crate::network::stats_use_cases::GetMarketStatsUseCase::new(
+        node_provider.clone(),
+        market_provider.clone(),
+    ));
+    let ai_rag_uc = Arc::new(crate::ai::ai_use_cases::AiRagUseCase::new(
+        db_repo.clone(),
+        ai_provider.clone(),
+    ));
+
+    // 4. Setup Telegram Layer
+    let bot_token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set in .env");
+    let bot = Bot::new(bot_token);
+    use teloxide::utils::command::BotCommands;
+    let _ = bot
+        .set_my_commands(crate::presentation::telegram::commands::Command::bot_commands())
+        .await;
+    tracing::info!("✅ [SYSTEM] Telegram Commands Synced!");
+    let admin_id: i64 = env::var("ADMIN_ID")
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or(0);
+
+    // 5. Context & Graceful Shutdown Registry
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let app_context = std::sync::Arc::new(crate::domain::models::AppContext::new(
+        rpc_client_arc.clone(),
+        pool.clone(),
+        admin_id,
+    ));
+
+    let pool_shutdown = pool.clone();
+    let ct_ctrlc = cancel_token.clone();
+
+    // 🛡️ Enterprise Graceful Shutdown (No Fork Bombs)
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::warn!("🛑 [SYSTEM] SIGINT received. Executing Graceful Shutdown...");
+        pool_shutdown.close().await;
+        tracing::info!("✅ [SYSTEM] Database connections closed safely.");
+        ct_ctrlc.cancel();
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        std::process::exit(0); // Clean exit, absolutely NO spawning of new processes.
+    });
+
+    // 6. Start Background Workers
+    crate::presentation::telegram::workers::utxo_monitor::start_utxo_monitor(
+        bot.clone(),
+        node_provider.clone(),
+        db_repo.clone(),
     );
 
-    let ctx = AppContext {
-        rpc: Arc::new(rpc_client),
-        pool,
-        state,
-        utxo_state: Arc::new(DashMap::new()),
-        monitoring: Arc::new(AtomicBool::new(true)),
-        price_cache: Arc::new(RwLock::new((0.0, 0.0))),
-        admin_id,
-        rate_limiter,
-        ai_engine,
-    };
+    crate::infrastructure::external_services::system::spawn_node_monitor(
+        (*app_context).clone(),
+        bot.clone(),
+        cancel_token.clone(),
+    );
+    crate::infrastructure::external_services::system::spawn_price_monitor(
+        (*app_context).clone(),
+        cancel_token.clone(),
+    );
 
-    let bot_token =
-        env::var("BOT_TOKEN").map_err(|_| BotError::EnvVarMissing("BOT_TOKEN".into()))?;
-    let bot = Bot::new(bot_token);
+    // 🚀 PHASE 1 WIRES: RSS Crawler & Memory Cleaner
+    tracing::info!("[SYSTEM] Wiring Phase 1: Activating RSS Crawler & Memory Cleaner...");
+    crate::infrastructure::external_services::rss::spawn_rss_crawler(
+        pool.clone(),
+        cancel_token.clone(),
+    );
+    crate::infrastructure::external_services::system::spawn_memory_cleaner(
+        (*app_context).clone(),
+        cancel_token.clone(),
+    );
 
-    // Command Menu Setup
-    let public_commands = vec![
-        teloxide::types::BotCommand::new("start", "Start the bot and show help"),
-        teloxide::types::BotCommand::new("help", "Show the ultimate guide and features"),
-        teloxide::types::BotCommand::new("add", "Track a wallet"),
-        teloxide::types::BotCommand::new("remove", "Stop tracking a wallet"),
-        teloxide::types::BotCommand::new("balance", "Check live balance & UTXOs"),
-        teloxide::types::BotCommand::new("blocks", "Count unspent mined blocks"),
-        teloxide::types::BotCommand::new("miner", "Estimate solo-mining hashrate"),
-        teloxide::types::BotCommand::new("network", "View node & network stats"),
-    ];
-    if let Err(e) = bot.set_my_commands(public_commands).await {
-        tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e);
-    }
-    let _ = bot
-        .set_my_commands(Command::bot_commands())
-        .scope(teloxide::types::BotCommandScope::Chat {
-            chat_id: teloxide::types::Recipient::Id(teloxide::types::ChatId(admin_id)),
-        })
-        .await;
+    let system_tasks_uc = Arc::new(
+        crate::application::background_jobs::SystemTasksUseCase::new(
+            db_repo.clone(),
+            ai_provider.clone(),
+        ),
+    );
+    // 🚀 Start Enterprise Periodic Tasks (RSS & Memory GC)
+    crate::presentation::telegram::workers::periodic_tasks::start_system_monitors(
+        system_tasks_uc.clone(),
+    );
+    crate::presentation::telegram::workers::periodic_tasks::start_rss_crawler(
+        crawl_news_uc.clone(),
+    );
+    let sys_ai = system_tasks_uc.clone();
+    let ai_token = cancel_token.clone();
 
-    // 🚀 Start detached background workers
-    crate::workers::start_all(ctx.clone(), bot.clone(), cancel_token.clone());
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = ai_token.cancelled() => { break; }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    sys_ai.execute_ai_vectorizer().await;
+                }
+            }
+        }
+    });
 
-    // 🕸️ Start RSS Crawler for Dynamic AI Knowledge Base (RAG)
-    crate::workers::rss::spawn_rss_crawler(ctx.pool.clone(), cancel_token.clone());
+    // 7. Build Dispatcher (Fixed Dependency Injection)
+    use crate::presentation::telegram::handlers;
 
-    // Advanced Routing Engine (dptree)
     let handler = dptree::entry()
         .branch(
             Update::filter_message()
-                .filter_command::<crate::commands::Command>()
+                .filter_command::<Command>()
                 .endpoint(handlers::handle_command),
         )
         .branch(Update::filter_callback_query().endpoint(handlers::handle_callback))
         .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
-        .branch(Update::filter_message().endpoint(handlers::handle_raw_message_v2));
+        .branch(Update::filter_message().endpoint(handlers::handle_raw_message));
 
-    info!("🚀 Dispatcher is LIVE! Ready for users.");
+    // 🛡️ Fixed: Removed all duplicate dependencies
+    let bot_use_cases = crate::presentation::telegram::handlers::BotUseCases {
+        wallet_mgt: wallet_management_uc.clone(),
+        wallet_query: wallet_queries_uc.clone(),
+        network_stats: network_stats_uc.clone(),
+        market_stats: market_stats_uc.clone(),
+        miner_stats: get_miner_stats_uc.clone(),
+        sync_uc: sync_uc.clone(),
+        dag_uc: dag_uc.clone(),
+    };
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .dependencies(dptree::deps![ctx])
+        .dependencies(dptree::deps![
+            db_repo,
+            node_provider,
+            ai_chat_uc,
+            app_context,
+            dag_uc,
+            bot_use_cases,
+            ai_rag_uc,
+            ai_provider
+        ])
         .enable_ctrlc_handler()
-        .default_handler(|update: Arc<Update>| async move {
-            tracing::debug!(
-                "[SYSTEM] Dropped completely unhandled update type: {:?}",
-                update.id
-            );
-        })
         .build();
 
-    let use_webhook =
-        std::env::var("USE_WEBHOOK").unwrap_or_else(|_| "false".to_string()) == "true";
-
-    if use_webhook {
-        // 🛡️ Phase 1 Fix: Webhook environment variables safety
-        let domain = std::env::var("WEBHOOK_DOMAIN").unwrap_or_else(|_| "localhost".to_string());
-        let port: u16 = std::env::var("WEBHOOK_PORT")
+    // 8. Run Mode
+    if env::var("USE_WEBHOOK").unwrap_or_else(|_| "false".to_string()) == "true" {
+        info!("🌐 Running in WEBHOOK mode");
+        let domain = env::var("WEBHOOK_DOMAIN").expect("WEBHOOK_DOMAIN required");
+        let port: u16 = env::var("WEBHOOK_PORT")
             .unwrap_or_else(|_| "8443".to_string())
-            .parse()
-            .unwrap_or(8443);
+            .parse()?;
         let addr = ([0, 0, 0, 0], port).into();
-        let url = format!("https://{}/webhook", domain)
-            .parse()
-            .map_err(|e| BotError::EnvVarMissing(format!("Invalid Webhook URL: {}", e)))?;
-
-        // ✅ Delete any rogue polling updates BEFORE setting the Webhook
-        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await {
-            tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e);
-        }
-
-        tracing::info!(
-            "🌐 [NETWORK] Enterprise Webhook Mode Active. Listening on port {} for domain {}",
-            port,
-            domain
-        );
+        let url = format!("https://{}/webhook", domain).parse()?;
 
         let listener = teloxide::update_listeners::webhooks::axum(
             bot,
-            teloxide::update_listeners::webhooks::Options::new(addr, url).secret_token(
-                std::env::var("WEBHOOK_SECRET")
-                    .map_err(|_| BotError::EnvVarMissing("WEBHOOK_SECRET must be explicitly set for production security".to_string()))?,
-            ),
+            teloxide::update_listeners::webhooks::Options::new(addr, url),
         )
-        .await
-        .map_err(|e| BotError::EnvVarMissing(format!("Webhook Error: {}", e)))?;
-
-        let error_handler =
-            teloxide::error_handlers::LoggingErrorHandler::with_custom_text("Webhook Error");
+        .await?;
 
         dispatcher
-            .dispatch_with_listener(listener, error_handler)
+            .dispatch_with_listener(
+                listener,
+                LoggingErrorHandler::with_custom_text("Webhook Error"),
+            )
             .await;
     } else {
-        // ✅ Delete Webhook explicitly to allow Polling to work
-        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).send().await {
-            tracing::error!("[TELEGRAM API ERROR] Failed to execute: {}", e);
-        }
-
-        tracing::info!("🔄 [NETWORK] Polling Mode Active (Standard Development Fallback).");
-
+        info!("🔄 Running in POLLING mode");
+        bot.delete_webhook().await?;
         dispatcher.dispatch().await;
     }
 
