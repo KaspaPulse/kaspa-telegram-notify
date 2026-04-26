@@ -1,16 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT wallet, chat_id FROM user_wallets",
+  "query": "SELECT wallet, chat_id as \"chat_id!\" FROM user_wallets",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "wallet",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 1,
-        "name": "chat_id",
+        "name": "chat_id!",
         "type_info": "Int8"
       }
     ],
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "a614e96de1cc90680778bafcef2158f1f2428ece606ed0cc8da134cb25db1f39"
+  "hash": "abe266376dd1fedc1e2c7cc7590aa7d14e2c5aad201ec108e387953fbfa03e56"
 }
