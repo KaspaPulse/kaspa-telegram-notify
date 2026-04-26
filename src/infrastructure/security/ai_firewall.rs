@@ -1,4 +1,4 @@
-use regex::Regex;
+﻿use regex::Regex;
 use std::sync::OnceLock;
 use tracing::warn;
 
@@ -18,7 +18,7 @@ impl AiFirewall {
         // 2. Heuristic Pattern Matching (Defeats simple obfuscation)
         static INJECTION_REGEX: OnceLock<Regex> = OnceLock::new();
         let regex = INJECTION_REGEX.get_or_init(|| {
-            Regex::new(r"(?i)(ignore.{0,20}previous|system.{0,20}prompt|bypass|jailbreak|forget.{0,20}all|disregard|developer.{0,20}mode|roleplay|instruction.{0,20}override|do.{0,20}anything.{0,20}now)").unwrap()
+            Regex::new(r"(?i)(ignore.{0,20}previous|system.{0,20}prompt|bypass|jailbreak|forget.{0,20}all|disregard|developer.{0,20}mode|roleplay|instruction.{0,20}override|do.{0,20}anything|new.{0,20}instructions|تجاهل.{0,20}التعليمات|انس.{0,20}التعليمات|انت.{0,20}الان|انسى.{0,20}كل)").unwrap()
         });
 
         if regex.is_match(&lower) {

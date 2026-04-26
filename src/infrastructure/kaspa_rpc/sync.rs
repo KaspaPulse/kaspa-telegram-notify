@@ -1,4 +1,4 @@
-use kaspa_rpc_core::api::rpc::RpcApi;
+﻿use kaspa_rpc_core::api::rpc::RpcApi;
 use std::collections::{HashSet, VecDeque};
 use tracing::{info, warn};
 
@@ -51,7 +51,8 @@ pub async fn sync_single_wallet(
     let mut queue = VecDeque::from(dag_info.tip_hashes.clone());
     let mut visited = HashSet::new();
     // [ENTERPRISE FIX] Limit heavy byte scanning to 4 concurrent CPU threads
-    let cpu_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+    static CPU_SEMAPHORE: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    let cpu_semaphore = CPU_SEMAPHORE.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4))).clone();
     let mut discovered_rewards = HashSet::new();
     let mut scanned_count = 0;
     let mut recovered_count = 0;

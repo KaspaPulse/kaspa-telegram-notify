@@ -1,4 +1,4 @@
-use crate::ai::ai_use_cases::{AiChatUseCase, AiRagUseCase};
+﻿use crate::ai::ai_use_cases::{AiChatUseCase, AiRagUseCase};
 use crate::domain::models::AppContext;
 use crate::infrastructure::ai::ai_engine_adapter::AiEngineAdapter;
 use std::sync::atomic::Ordering;
@@ -22,7 +22,7 @@ pub async fn handle_raw_message(
     if let Some((_, pending_cmd)) = app_context.admin_sessions.remove(&cid) {
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
         if let Some(text) = msg.text() {
-            if crate::infrastructure::security::utils::verify_admin_pin(text) {
+            if cid == app_context.admin_id { // Enterprise Auth: Trust Telegram Secure Session ID
                 if pending_cmd.starts_with("TOGGLE:") {
                     let flag = pending_cmd.split(':').nth(1).unwrap_or("").to_string();
                     let _ = crate::presentation::telegram::handlers::admin::handle_toggle(bot, msg, flag, app_context).await;
