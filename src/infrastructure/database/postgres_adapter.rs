@@ -1,4 +1,4 @@
-use crate::domain::entities::{MinedBlock, TrackedWallet};
+﻿use crate::domain::entities::{MinedBlock, TrackedWallet};
 use crate::domain::errors::AppError;
 use sqlx::postgres::PgPool;
 
@@ -50,7 +50,7 @@ impl PostgresRepository {
             .map(|r| TrackedWallet {
                 address: r.wallet,
                 // [FIX] Defensive unwrapping to handle potential Nullable columns in Linux
-                chat_id: r.chat_id.unwrap_or_default(),
+                chat_id: r.chat_id,
             })
             .collect();
         Ok(wallets)

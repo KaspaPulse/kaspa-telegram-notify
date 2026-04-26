@@ -1,4 +1,4 @@
-use crate::domain::models::AppContext;
+﻿use crate::domain::models::AppContext;
 use crate::network::stats_use_cases::GetMinerStatsUseCase;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -67,7 +67,7 @@ pub async fn handle_miner(
                 }
             }
         }
-        crate::send_logged!(bot, msg, text);let markup = crate::utils::refresh_markup("refresh_miner");
+        let markup = crate::utils::refresh_markup("refresh_miner");
         let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, None, text, Some(markup)).await;
     }
     Ok(())
