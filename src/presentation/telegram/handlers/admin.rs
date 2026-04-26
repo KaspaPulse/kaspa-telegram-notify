@@ -127,9 +127,8 @@ pub async fn handle_stats(
             .collect::<Vec<_>>()
             .join(", ");
         text.push_str(&format!(
-            "▪ <code>{}</code>\n  ├ Users: [{}]\n  ├ Balance: {:.2} KAS\n  └ Mined Blocks: {}\n\n",
-            crate::utils::format_short_wallet(&wallet),
-            u_names,
+            "▪ <code>{}</code>\n  ├ User: @{} [{}]\n  ├ Balance: {:.2} KAS\n  └ Mined Blocks: {}\n\n",
+            crate::utils::format_short_wallet(&wallet), msg.from().and_then(|u| u.username.clone()).unwrap_or_else(|| "Unknown".to_string()), u_names,
             bal,
             blocks_count
         ));
@@ -138,7 +137,7 @@ pub async fn handle_stats(
         "⏱️ <code>{}</code>",
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     ));
-    crate::send_logged!(bot, msg, text);
+     let markup = crate::utils::refresh_markup("refresh_stats"); let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     Ok(())
 }
 
@@ -241,7 +240,7 @@ pub async fn handle_sys(bot: Bot, msg: Message, monitoring_status: bool) -> anyh
     let current_time = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let text = format!("⚙️ <b>Enterprise Node Diagnostics:</b>\n🖥️ <b>OS:</b> <code>{}</code>\n⏳ <b>Uptime:</b> <code>{}d {}h {}m</code>\n🎛️ <b>CPU:</b> <code>{} Cores</code>\n🧠 <b>RAM:</b> <code>{} / {} MB</code>\n💾 <b>Storage:</b> <code>{} / {} GB</code>\n👀 <b>Monitor:</b> <code>{}</code>\n🛡️ <b>Internal Cfg:</b> Maint={}, AI={}\n\n⏱️ <code>{}</code>",
         os_name, days, hours, minutes, cores, used_mem, total_mem, used_disk, total_disk, monitoring_status, cfg.maintenance_mode, cfg.ai_enabled, current_time);
-    crate::send_logged!(bot, msg, text);
+     let markup = crate::utils::refresh_markup("refresh_sys"); let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     Ok(())
 }
 

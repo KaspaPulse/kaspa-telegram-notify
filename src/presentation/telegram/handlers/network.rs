@@ -142,7 +142,7 @@ pub async fn handle_fees(bot: Bot, msg: Message) -> anyhow::Result<()> {
                 .as_f64()
                 .unwrap_or(normal * 0.5);
             let text = format!("⛽ <b>Network Fee Market (Mempool)</b>\n━━━━━━━━━━━━━━━━━━\n🚀 <b>Priority:</b> <code>{:.2} sompi/gram</code>\n⚡ <b>Normal:</b> <code>{:.2} sompi/gram</code>\n🐢 <b>Low:</b> <code>{:.2} sompi/gram</code>\n\n<i>* Standard transaction size is ~3000 mass.</i>", priority, normal, low);
-            crate::send_logged!(bot, msg, text);
+             let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")); let markup = crate::utils::refresh_markup("refresh_fees"); let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
             return Ok(());
         }
     }
@@ -159,7 +159,7 @@ pub async fn handle_supply(
         let circ = supply.circulating_sompi as f64 / 1e8;
         let max = supply.max_sompi as f64 / 1e8;
         let text = format!("🪙 <b>Coin Supply:</b>\n├ <b>Circulating:</b> <code>{} KAS</code>\n├ <b>Max Supply:</b> <code>{} KAS</code>\n└ <b>Minted:</b> <code>{:.2}%</code>", circ, max, (circ / max) * 100.0);
-        crate::send_logged!(bot, msg, text);
+         let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")); let markup = crate::utils::refresh_markup("refresh_supply"); let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     } else {
         crate::send_logged!(bot, msg, "⚠️ Node offline. Cannot fetch supply.");
     }
