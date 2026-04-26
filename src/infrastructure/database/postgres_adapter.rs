@@ -38,7 +38,7 @@ impl PostgresRepository {
     }
 
     pub async fn get_all_tracked_wallets(&self) -> Result<Vec<TrackedWallet>, AppError> {
-        let rows = sqlx::query!("SELECT wallet, chat_id FROM user_wallets")
+        let rows = sqlx::query!(r#"SELECT wallet, chat_id as "chat_id!" FROM user_wallets"#)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
