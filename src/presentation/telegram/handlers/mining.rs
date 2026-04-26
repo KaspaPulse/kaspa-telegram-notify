@@ -24,7 +24,7 @@ pub async fn handle_blocks(
             let text = format!("🧱 <b>Mined Blocks Forensics</b>\n━━━━━━━━━━━━━━━━━━\n⏱️ <b>Last 1 Hour:</b> <code>{}</code>\n⏳ <b>Last 24 Hours:</b> <code>{}</code>\n🏆 <b>Lifetime Blocks:</b> <code>{}</code>\n📈 <b>Mining Status:</b> {}{}", b1h, b24h, total_lifetime, if b1h > 0 { "Active 🟢" } else { "Idle 🟡" }, daily_breakdown);
             let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         let markup = crate::utils::refresh_markup("refresh_blocks");
-            let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
+            let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
         }
         Err(e) => {
             crate::send_logged!(bot, msg, format!("❌ Error: {}", e));
@@ -70,7 +70,7 @@ pub async fn handle_miner(
         }
         let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         let markup = crate::utils::refresh_markup("refresh_miner");
-        let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
+        let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     }
     Ok(())
 }

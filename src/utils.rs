@@ -1,4 +1,4 @@
-use anyhow::Context;
+﻿use anyhow::Context;
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
 use std::num::NonZeroU32;
 use std::sync::OnceLock;
@@ -138,5 +138,24 @@ pub fn log_multiline(header: &str, body: &str, is_html: bool) {
         if !line.trim().is_empty() {
             tracing::info!("   | {}", line);
         }
+    }
+}
+
+pub async fn send_reply_or_edit_log(
+    bot: &teloxide::Bot,
+    chat_id: teloxide::types::ChatId,
+    reply_to: teloxide::types::MessageId,
+    edit_msg_id: Option<teloxide::types::MessageId>,
+    text: String,
+    markup: Option<teloxide::types::InlineKeyboardMarkup>
+) {
+    if let Some(id) = edit_msg_id {
+        let mut req = bot.edit_message_text(chat_id, id, text).parse_mode(teloxide::types::ParseMode::Html);
+        if let Some(m) = markup { req = req.reply_markup(m); }
+        let _ = req.await;
+    } else {
+        let mut req = bot.send_message(chat_id, text).reply_to_message_id(reply_to).parse_mode(teloxide::types::ParseMode::Html);
+        if let Some(m) = markup { req = req.reply_markup(m); }
+        let _ = req.await;
     }
 }

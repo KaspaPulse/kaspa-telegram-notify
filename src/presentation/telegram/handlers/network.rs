@@ -59,7 +59,7 @@ pub async fn handle_network_overview(
     }
     let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         let markup = crate::utils::refresh_markup("refresh_network");
-    let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
+    let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     Ok(())
 }
 
@@ -118,7 +118,7 @@ pub async fn handle_dag(
         text.push_str(&format!("\n🩺 <b>DAG Health:</b> {}", health));
         let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         let markup = crate::utils::refresh_markup("refresh_dag");
-        let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
+        let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
     } else {
         crate::send_logged!(bot, msg, "⚠️ Node offline.");
     }
@@ -176,7 +176,7 @@ pub async fn handle_market_data(
                 res.price, res.mcap, KaspaFormatter::format_hashrate(res.hashrate), res.peers, online_indicator, &res.pruning_point.chars().take(8).collect::<String>());
             let text = format!("{}\n\n⏱️ <code>{}</code>", text, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
         let markup = crate::utils::refresh_markup("refresh_market");
-            let _ = crate::utils::send_or_edit_log(&bot, msg.chat.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
+            let _ = crate::utils::send_reply_or_edit_log(&bot, msg.chat.id, msg.id, msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id), text, Some(markup)).await;
         }
         Err(_) => {
             crate::send_logged!(bot, msg, "⚠️ <b>Market Data API unreachable.</b>");
