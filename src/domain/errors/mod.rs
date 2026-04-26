@@ -1,4 +1,4 @@
-use thiserror::Error;
+﻿use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -18,6 +18,7 @@ pub enum AppError {
     Internal(String),
 
     #[error("Entity not found: {0}")]
+    #[allow(dead_code)]
     NotFound(String),
 }
 
