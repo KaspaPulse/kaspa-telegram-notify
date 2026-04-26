@@ -42,7 +42,7 @@ pub async fn handle_raw_message(
         return Ok(());
     }
 
-    if let Some(_text) = msg.text() {
+    if let Some(text) = msg.text() {
         if text.starts_with('/') {
             return Ok(());
         }
@@ -94,7 +94,7 @@ pub async fn handle_raw_message(
 
         let persona = "[SYSTEM ENFORCEMENT]: You are Kaspa Pulse Enterprise. Reply ONLY in English or Standard Arabic. Use flawless grammar and clean HTML formatting. Be highly professional.";
 
-    if let Some(_text) = msg.text() {
+    if let Some(text) = msg.text() {
         if !crate::infrastructure::security::ai_firewall::AiFirewall::validate_prompt(text) {
             crate::send_logged!(bot, msg, "🛡️ <b>Enterprise AI Firewall:</b> Malicious prompt injection detected and neutralized.");
             return Ok(());
