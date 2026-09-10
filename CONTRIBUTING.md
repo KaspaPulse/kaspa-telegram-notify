@@ -4,7 +4,7 @@ Thank you for improving Kaspa Pulse. Keep changes focused, reviewable, and compa
 
 ## Development baseline
 
-- Rust 1.97.1 (see `rust-toolchain.toml`)
+- Rust 1.98.1 pinned development/CI toolchain (see `rust-toolchain.toml`); MSRV 1.97.1 (see `Cargo.toml`)
 - Rust Edition 2024
 - PostgreSQL 18 for CI validation
 - Docker/Compose only when changing container or deployment behavior
