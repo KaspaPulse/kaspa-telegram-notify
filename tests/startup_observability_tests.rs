@@ -33,3 +33,21 @@ fn telegram_command_sync_does_not_claim_false_success() {
     assert!(source.contains("if telegram_command_sync_errors == 0"));
     assert!(source.contains("Telegram command synchronization completed with errors"));
 }
+
+#[test]
+fn rustls_crypto_provider_is_installed_before_tls_startup() {
+    let source = main_source();
+    let install = source
+        .find("install_rustls_crypto_provider()?;")
+        .expect("Rustls provider installation must be explicit");
+    let preflight = source
+        .find("Running node pre-flight diagnostic with safe timeouts")
+        .expect("node preflight marker must exist");
+
+    assert!(source.contains("rustls::crypto::ring::default_provider()"));
+    assert!(source.contains(".install_default()"));
+    assert!(
+        install < preflight,
+        "Rustls provider must be installed before TLS/network preflight"
+    );
+}
