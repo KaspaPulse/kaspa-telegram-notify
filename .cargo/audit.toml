@@ -1,14 +1,10 @@
 [advisories]
 ignore = [
-    "RUSTSEC-2023-0071", # RSA: PostgreSQL-only bot; MySQL feature path removed. See SECURITY_ADVISORIES.md.
     "RUSTSEC-2025-0052", # async-std: Upstream Kaspa SDK transitive dependency. See SECURITY_ADVISORIES.md.
     "RUSTSEC-2024-0375", # atty: Upstream transitive dependency. See SECURITY_ADVISORIES.md.
     "RUSTSEC-2024-0384", # instant: Upstream transitive dependency. See SECURITY_ADVISORIES.md.
     "RUSTSEC-2024-0436", # paste: Upstream transitive/build dependency. See SECURITY_ADVISORIES.md.
     "RUSTSEC-2024-0370", # proc-macro-error: Upstream transitive/build dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2025-0134", # rustls-pemfile: Upstream TLS-related transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2024-0407", # linkme: Upstream transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2021-0145"  # atty soundness: Upstream transitive dependency. See SECURITY_ADVISORIES.md.
 ]
 
 informational_warnings = ["unmaintained"]

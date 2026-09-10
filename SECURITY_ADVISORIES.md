@@ -26,7 +26,7 @@ cargo test --locked --all-targets --all-features
 
 The security workflow also runs the SHA-pinned official OSV Scanner reusable workflow against `Cargo.lock` and applies only the reviewed, time-bounded entries in `osv-scanner.toml`.
 
-Last automated review: **2026-08-08**
+Last automated review: **2026-09-10**
 
 ---
 
@@ -78,11 +78,11 @@ Action: monitor upstream Kaspa/dependency updates and remove the exception when 
 
 ### RUSTSEC-2023-0071 — RSA advisory
 
-Status: accepted only while the affected optional database path is not selected by the application.
+Status: resolved from the current `cargo audit` / `cargo deny` graph on 2026-09-10.
 
-Kaspa Pulse is PostgreSQL-only and does not select a MySQL application backend. SQLx default features are disabled and the application explicitly enables PostgreSQL.
+Kaspa Pulse remains PostgreSQL-only, and the current locked graph no longer matches this advisory in either Cargo security gate. The historical rationale is retained here so a future MySQL/RSA-backed path is recognized as a re-review trigger.
 
-Action: re-evaluate if MySQL/RSA-backed authentication is ever introduced.
+Action: no Cargo exception remains; re-evaluate if MySQL/RSA-backed authentication is introduced.
 
 ### RUSTSEC-2025-0052 — `async-std` unmaintained
 
@@ -94,11 +94,11 @@ Action: track `rusty-kaspa` updates and remove the exception once upstream no lo
 
 ### RUSTSEC-2024-0375 and RUSTSEC-2021-0145 — `atty`
 
-Status: upstream/transitive exceptions.
+Status: `RUSTSEC-2024-0375` remains a managed upstream/transitive exception; `RUSTSEC-2021-0145` no longer requires a Cargo audit/deny ignore as of 2026-09-10.
 
-Kaspa Pulse does not directly depend on `atty`. `RUSTSEC-2021-0145` is an informational unsoundness advisory specific to Windows and has no patched `atty` release; production container validation is Linux-based.
+Kaspa Pulse does not directly depend on `atty`. The current locked graph still contains `atty`, but Cargo security gates no longer match `RUSTSEC-2021-0145` on the validated Linux path. The OSV exception remains separately time-bounded until OSV proves it is no longer required.
 
-Action: remove these exceptions when the upstream dependency chain is updated.
+Action: keep the remaining `RUSTSEC-2024-0375` exception under review and remove the OSV-specific `RUSTSEC-2021-0145` exception only after an OSV scan passes without it.
 
 ### RUSTSEC-2024-0436 — `paste`
 
@@ -114,17 +114,17 @@ Action: remove after the upstream dependency path is replaced.
 
 ### RUSTSEC-2025-0134 — `rustls-pemfile`
 
-Status: TLS-related transitive exception and therefore treated as security-sensitive.
+Status: resolved from the current locked graph on 2026-09-10; no Cargo audit/deny exception remains.
 
-Action: monitor closely and remove as soon as the resolved upstream TLS stack permits it.
+Action: retain this record as history and re-open only if a future TLS dependency change reintroduces the advisory.
 
 ### RUSTSEC-2024-0407 — `linkme`
 
-Status: upstream/transitive exception.
+Status: resolved from the current locked graph on 2026-09-10; no Cargo audit/deny exception remains.
 
-Verified on 2026-08-08: `workflow-rs` 0.19.0 is an upstream maintenance/modernization release that explicitly addresses RustSec advisories, but `rusty-kaspa` `v2.0.1` and its current `master` still declare the `workflow-*` 0.18.x line. Forcing `workflow-*` 0.19 into Kaspa Pulse would cross a pre-1.0 minor compatibility boundary without Kaspa upstream validation, so no local override is applied.
+Historical note: a previous graph required `workflow-*` 0.18.x through `rusty-kaspa`, and forcing 0.19 locally was intentionally avoided because it crossed a pre-1.0 compatibility boundary without upstream validation.
 
-Action: remove this exception when a stable `rusty-kaspa` release adopts a compatible patched workflow dependency path. The weekly `rusty-kaspa` updater will detect the next stable tag and run the full validation gates before opening an update PR.
+Action: retain this record for regression context; re-open only if the advisory reappears in a future upstream graph.
 
 ---
 
