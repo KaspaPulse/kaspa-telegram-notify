@@ -23,6 +23,7 @@ pub struct DeliveryQueueStats {
     pub processing: i64,
     pub sent: i64,
     pub failed: i64,
+    pub failed_recent: i64,
     pub suppressed: i64,
     pub oldest_active_age_seconds: u64,
 }
@@ -404,13 +405,21 @@ pub async fn pending_count(pool: &PgPool) -> Result<i64, AppError> {
     .map_err(|e| AppError::DatabaseError(e.to_string()))
 }
 
-pub async fn queue_stats(pool: &PgPool) -> Result<DeliveryQueueStats, AppError> {
+pub async fn queue_stats(
+    pool: &PgPool,
+    recent_failure_window_seconds: u64,
+) -> Result<DeliveryQueueStats, AppError> {
+    let recent_failure_window_seconds = recent_failure_window_seconds.min(i64::MAX as u64) as i64;
     let row = sqlx::query(
         "SELECT
             COUNT(*) FILTER (WHERE status = 'pending')::BIGINT AS pending,
             COUNT(*) FILTER (WHERE status = 'processing')::BIGINT AS processing,
             COUNT(*) FILTER (WHERE status = 'sent')::BIGINT AS sent,
             COUNT(*) FILTER (WHERE status = 'failed')::BIGINT AS failed,
+            COUNT(*) FILTER (
+                WHERE status = 'failed'
+                  AND updated_at >= NOW() - ($1::BIGINT * INTERVAL '1 second')
+            )::BIGINT AS failed_recent,
             COUNT(*) FILTER (WHERE status = 'suppressed')::BIGINT AS suppressed,
             COUNT(*) FILTER (
                 WHERE status IS NULL
@@ -430,6 +439,7 @@ pub async fn queue_stats(pool: &PgPool) -> Result<DeliveryQueueStats, AppError> 
             )::BIGINT AS oldest_active_age_seconds
          FROM telegram_delivery_queue",
     )
+    .bind(recent_failure_window_seconds)
     .fetch_one(pool)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -465,6 +475,9 @@ pub async fn queue_stats(pool: &PgPool) -> Result<DeliveryQueueStats, AppError> 
             .map_err(|e| AppError::DatabaseError(e.to_string()))?,
         failed: row
             .try_get::<i64, _>("failed")
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?,
+        failed_recent: row
+            .try_get::<i64, _>("failed_recent")
             .map_err(|e| AppError::DatabaseError(e.to_string()))?,
         suppressed: row
             .try_get::<i64, _>("suppressed")

@@ -5,6 +5,7 @@ use crate::infrastructure::node::subscription::{MonitorTrigger, MonitoringMode};
 static QUEUE_PENDING: AtomicI64 = AtomicI64::new(0);
 static QUEUE_PROCESSING: AtomicI64 = AtomicI64::new(0);
 static QUEUE_FAILED: AtomicI64 = AtomicI64::new(0);
+static QUEUE_FAILED_RECENT: AtomicI64 = AtomicI64::new(0);
 static OLDEST_QUEUE_AGE_SECONDS: AtomicU64 = AtomicU64::new(0);
 
 static DELIVERY_LATENCY_MS_LAST: AtomicU64 = AtomicU64::new(0);
@@ -34,7 +35,10 @@ static SUBSCRIPTION_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub struct QueueSnapshot {
     pub pending: i64,
     pub processing: i64,
+    /// Total terminal failures retained for historical monitoring.
     pub failed: i64,
+    /// Terminal failures updated inside the readiness failure window.
+    pub failed_recent: i64,
     pub oldest_age_seconds: u64,
 }
 
@@ -67,6 +71,7 @@ pub struct ReadinessPolicy {
     pub require_active_subscription: bool,
     pub max_scan_age_seconds: u64,
     pub max_failed_queue_items: i64,
+    pub failed_queue_window_seconds: u64,
 }
 
 impl ReadinessPolicy {
@@ -80,6 +85,7 @@ impl ReadinessPolicy {
             ),
             max_scan_age_seconds: env_u64("READINESS_MAX_SCAN_AGE_SECS", 120),
             max_failed_queue_items: env_i64("READINESS_MAX_FAILED_QUEUE_ITEMS", 0),
+            failed_queue_window_seconds: env_u64("READINESS_FAILED_QUEUE_WINDOW_SECS", 3_600),
         }
     }
 }
@@ -101,10 +107,17 @@ impl ReadinessState {
     }
 }
 
-pub fn set_queue_snapshot(pending: i64, processing: i64, failed: i64, oldest_age_seconds: u64) {
+pub fn set_queue_snapshot(
+    pending: i64,
+    processing: i64,
+    failed: i64,
+    failed_recent: i64,
+    oldest_age_seconds: u64,
+) {
     QUEUE_PENDING.store(pending.max(0), Ordering::Relaxed);
     QUEUE_PROCESSING.store(processing.max(0), Ordering::Relaxed);
     QUEUE_FAILED.store(failed.max(0), Ordering::Relaxed);
+    QUEUE_FAILED_RECENT.store(failed_recent.max(0), Ordering::Relaxed);
     OLDEST_QUEUE_AGE_SECONDS.store(oldest_age_seconds, Ordering::Relaxed);
 }
 
@@ -177,6 +190,7 @@ pub fn snapshot() -> OperationalSnapshot {
             pending: QUEUE_PENDING.load(Ordering::Relaxed),
             processing: QUEUE_PROCESSING.load(Ordering::Relaxed),
             failed: QUEUE_FAILED.load(Ordering::Relaxed),
+            failed_recent: QUEUE_FAILED_RECENT.load(Ordering::Relaxed),
             oldest_age_seconds: OLDEST_QUEUE_AGE_SECONDS.load(Ordering::Relaxed),
         },
         delivery_latency_ms_last: DELIVERY_LATENCY_MS_LAST.load(Ordering::Relaxed),
@@ -224,7 +238,7 @@ impl OperationalSnapshot {
             return ReadinessState::Degraded;
         }
 
-        if self.queue.failed > policy.max_failed_queue_items
+        if self.queue.failed_recent > policy.max_failed_queue_items
             || (policy.require_active_subscription && !self.subscription_active)
         {
             return ReadinessState::Degraded;
@@ -245,6 +259,9 @@ impl OperationalSnapshot {
                 "# HELP kaspa_pulse_queue_failed Permanently failed Telegram delivery rows.\n",
                 "# TYPE kaspa_pulse_queue_failed gauge\n",
                 "kaspa_pulse_queue_failed {}\n",
+                "# HELP kaspa_pulse_queue_failed_recent Terminal Telegram delivery failures inside the readiness window.\n",
+                "# TYPE kaspa_pulse_queue_failed_recent gauge\n",
+                "kaspa_pulse_queue_failed_recent {}\n",
                 "kaspa_pulse_queue_oldest_age_seconds {}\n",
                 "kaspa_pulse_delivery_latency_ms_last {}\n",
                 "kaspa_pulse_delivery_latency_ms_average {}\n",
@@ -268,6 +285,7 @@ impl OperationalSnapshot {
             self.queue.pending,
             self.queue.processing,
             self.queue.failed,
+            self.queue.failed_recent,
             self.queue.oldest_age_seconds,
             self.delivery_latency_ms_last,
             self.average_delivery_latency_ms(),
@@ -349,7 +367,8 @@ mod tests {
             queue: QueueSnapshot {
                 pending: 2,
                 processing: 1,
-                failed: 0,
+                failed: 3,
+                failed_recent: 0,
                 oldest_age_seconds: 7,
             },
             delivery_latency_ms_last: 30,
@@ -379,6 +398,7 @@ mod tests {
             require_active_subscription: true,
             max_scan_age_seconds: 30,
             max_failed_queue_items: 0,
+            failed_queue_window_seconds: 3_600,
         }
     }
 
@@ -387,6 +407,24 @@ mod tests {
         assert_eq!(
             sample_snapshot().readiness(1_010, policy()),
             ReadinessState::Ready
+        );
+    }
+
+    #[test]
+    fn historical_failed_queue_rows_do_not_degrade_readiness() {
+        let snapshot = sample_snapshot();
+        assert_eq!(snapshot.queue.failed, 3);
+        assert_eq!(snapshot.queue.failed_recent, 0);
+        assert_eq!(snapshot.readiness(1_010, policy()), ReadinessState::Ready);
+    }
+
+    #[test]
+    fn recent_failed_queue_rows_degrade_readiness() {
+        let mut snapshot = sample_snapshot();
+        snapshot.queue.failed_recent = 1;
+        assert_eq!(
+            snapshot.readiness(1_010, policy()),
+            ReadinessState::Degraded
         );
     }
 
@@ -455,6 +493,8 @@ mod tests {
     fn prometheus_output_contains_operational_metrics() {
         let rendered = sample_snapshot().render_prometheus();
         assert!(rendered.contains("kaspa_pulse_queue_pending 2"));
+        assert!(rendered.contains("kaspa_pulse_queue_failed 3"));
+        assert!(rendered.contains("kaspa_pulse_queue_failed_recent 0"));
         assert!(rendered.contains("kaspa_pulse_delivery_latency_ms_average 25"));
         assert!(rendered.contains("kaspa_pulse_node_reconnects_total 3"));
         assert!(rendered.contains("kaspa_pulse_subscription_runtime_restarts_total 0"));
