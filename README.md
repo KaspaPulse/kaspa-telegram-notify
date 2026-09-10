@@ -3,7 +3,7 @@
 # 🦀 Kaspa Pulse
 ### Community Mining Alerts for Kaspa Solo Miners
 
-[![Rust](https://img.shields.io/badge/Rust-1.97.1-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 [![Edition](https://img.shields.io/badge/Rust%20Edition-2024-orange.svg?style=for-the-badge&logo=rust)](https://doc.rust-lang.org/edition-guide/rust-2024/)
 [![Kaspa](https://img.shields.io/badge/Kaspa-Network-70D4CB.svg?style=for-the-badge)](https://kaspa.org/)
 [![Database](https://img.shields.io/badge/Database-PostgreSQL-336791.svg?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
@@ -49,7 +49,7 @@ Telegram delivery worker
 
 ## Current platform baseline
 
-- Rust **1.97.1**, pinned in `rust-toolchain.toml`.
+- Rust **1.98.1** is the pinned development/CI toolchain in `rust-toolchain.toml`; crate MSRV remains **1.97.1** in `Cargo.toml`.
 - Rust **Edition 2024**.
 - PostgreSQL **18** validation baseline with PostgreSQL-only SQLx 0.9 feature selection.
 - Teloxide 0.17 and Axum 0.8.
@@ -98,7 +98,7 @@ The crate has `publish = false` to prevent accidental publication to crates.io.
 
 ## Requirements
 
-- Rust 1.97.1.
+- Rust 1.98.1 for the pinned development/CI toolchain (MSRV: 1.97.1).
 - PostgreSQL 18 recommended.
 - A reachable Kaspa wRPC endpoint.
 - A Telegram bot token.
@@ -180,7 +180,7 @@ docker compose up -d --build
 
 The production image:
 
-- uses a Rust 1.97.1 / Debian 13 Trixie builder;
+- uses a Rust 1.98.1 / Debian 13 Trixie builder;
 - uses a Debian 13 Trixie slim runtime;
 - runs as non-root UID/GID `10001`;
 - keeps the panic-recovery marker under `/var/lib/kaspa-pulse`;
@@ -223,7 +223,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 ```
 
-Production release, Docker build, and container smoke tests run on `main`/`dev` pushes and explicit manual runs. This keeps pull-request feedback focused while avoiding redundant hosted-runner work, even though this repository is public and standard GitHub-hosted Actions are not constrained by the private-repository minutes allowance.
+Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main`/`dev` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
 
 Dependency/security automation includes:
 
