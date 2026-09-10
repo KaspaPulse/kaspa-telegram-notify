@@ -179,8 +179,21 @@ async fn wait_for_shutdown_signal() -> &'static str {
     }
 }
 
+fn install_rustls_crypto_provider() -> anyhow::Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    anyhow::ensure!(
+        rustls::crypto::CryptoProvider::get_default().is_some(),
+        "Rustls CryptoProvider could not be installed during application startup"
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    install_rustls_crypto_provider()?;
     dotenv().ok();
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -678,4 +691,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("[SYSTEM] Database connections closed safely.");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod rustls_startup_tests {
+    #[test]
+    fn explicit_provider_prevents_ambiguous_rustls_builder_panic() {
+        super::install_rustls_crypto_provider().expect("Rustls provider must install");
+        let _ = rustls::ClientConfig::builder();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
 }
