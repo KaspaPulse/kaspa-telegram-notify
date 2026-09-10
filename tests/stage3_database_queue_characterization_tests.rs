@@ -2,7 +2,7 @@ use kaspa_pulse::domain::entities::TrackedWallet;
 use kaspa_pulse::domain::errors::AppError;
 use kaspa_pulse::infrastructure::database::postgres_adapter::PostgresRepository;
 use kaspa_pulse::infrastructure::telegram_delivery_queue::{
-    enqueue_message, fetch_pending_batch, mark_failed, mark_sent, pending_count,
+    enqueue_message, fetch_pending_batch, mark_failed, mark_sent, pending_count, queue_stats,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
@@ -433,6 +433,33 @@ async fn repeated_delivery_failures_back_off_then_become_terminal() {
             .expect("pending count should succeed"),
         0
     );
+}
+
+#[tokio::test]
+async fn queue_stats_separate_historical_and_recent_terminal_failures() {
+    let _guard = database_test_lock().lock().await;
+    let pool = test_pool().await;
+    reset_characterization_tables(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO telegram_delivery_queue
+            (chat_id, message_html, status, attempts, created_at, updated_at, next_attempt_at)
+         VALUES
+            ($1, '<b>historical failure</b>', 'failed', 5, NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', NOW()),
+            ($2, '<b>recent failure</b>', 'failed', 5, NOW(), NOW(), NOW())",
+    )
+    .bind(next_chat_id())
+    .bind(next_chat_id())
+    .execute(&pool)
+    .await
+    .expect("failed-row fixtures should insert");
+
+    let stats = queue_stats(&pool, 3_600)
+        .await
+        .expect("queue stats should succeed");
+
+    assert_eq!(stats.failed, 2);
+    assert_eq!(stats.failed_recent, 1);
 }
 
 #[tokio::test]

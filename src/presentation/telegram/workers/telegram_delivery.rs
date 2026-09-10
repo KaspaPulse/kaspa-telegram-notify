@@ -23,6 +23,9 @@ pub fn start_telegram_delivery_worker(bot: Bot, pool: PgPool, token: Cancellatio
             let mut metrics_timer =
                 tokio::time::interval(Duration::from_secs(metrics_interval_seconds));
             metrics_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            let failed_queue_window_seconds =
+                crate::infrastructure::observability::ReadinessPolicy::from_env()
+                    .failed_queue_window_seconds;
 
             loop {
                 tokio::select! {
@@ -32,7 +35,7 @@ pub fn start_telegram_delivery_worker(bot: Bot, pool: PgPool, token: Cancellatio
                     }
                     _ = metrics_timer.tick() => {
                         if crate::infrastructure::telegram_delivery_queue::delivery_queue_enabled() {
-                            refresh_queue_metrics(&pool).await;
+                            refresh_queue_metrics(&pool, failed_queue_window_seconds).await;
                         }
                     }
                     _ = delivery_timer.tick() => {
@@ -48,21 +51,28 @@ pub fn start_telegram_delivery_worker(bot: Bot, pool: PgPool, token: Cancellatio
     );
 }
 
-async fn refresh_queue_metrics(pool: &PgPool) {
-    match crate::infrastructure::telegram_delivery_queue::queue_stats(pool).await {
+async fn refresh_queue_metrics(pool: &PgPool, failed_queue_window_seconds: u64) {
+    match crate::infrastructure::telegram_delivery_queue::queue_stats(
+        pool,
+        failed_queue_window_seconds,
+    )
+    .await
+    {
         Ok(stats) => {
             crate::infrastructure::observability::set_queue_snapshot(
                 stats.pending,
                 stats.processing,
                 stats.failed,
+                stats.failed_recent,
                 stats.oldest_active_age_seconds,
             );
             tracing::debug!(
-                "[DELIVERY QUEUE] pending={} processing={} sent={} failed={} suppressed={} oldest_active_age={}s",
+                "[DELIVERY QUEUE] pending={} processing={} sent={} failed={} failed_recent={} suppressed={} oldest_active_age={}s",
                 stats.pending,
                 stats.processing,
                 stats.sent,
                 stats.failed,
+                stats.failed_recent,
                 stats.suppressed,
                 stats.oldest_active_age_seconds
             );
