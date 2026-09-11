@@ -40,18 +40,10 @@ impl GetMarketStatsUseCase {
     }
 
     pub async fn execute(&self) -> Result<MarketStatsResult, AppError> {
-        let (price, mcap) = self
-            .market
-            .get_kaspa_market_data()
-            .await
-            .unwrap_or((0.0, 0.0));
-        let hashrate = self.node.get_network_hashrate().await.unwrap_or(0.0);
-        let (is_online, peers) = self.node.get_node_health().await.unwrap_or((false, 0));
-        let pruning_point = self
-            .node
-            .get_pruning_point()
-            .await
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let (price, mcap) = self.market.get_kaspa_market_data().await?;
+        let hashrate = self.node.get_network_hashrate().await?;
+        let (is_online, peers) = self.node.get_node_health().await?;
+        let pruning_point = self.node.get_pruning_point().await?;
 
         Ok(MarketStatsResult {
             price,
@@ -90,27 +82,10 @@ impl GetMinerStatsUseCase {
         let net_hashrate = self.node.get_network_hashrate().await?;
         let virtual_daa = self.node.get_virtual_daa_score().await?;
 
-        let db_1h = self
-            .db
-            .get_blocks_count_1h(wallet_address)
-            .await
-            .unwrap_or(0);
-        let db_24h = self
-            .db
-            .get_blocks_count_24h(wallet_address)
-            .await
-            .unwrap_or(0);
-        let db_7d = self
-            .db
-            .get_blocks_count_7d(wallet_address)
-            .await
-            .unwrap_or(0);
-
-        let utxos = self
-            .node
-            .get_utxos(wallet_address)
-            .await
-            .unwrap_or_default();
+        let db_1h = self.db.get_blocks_count_1h(wallet_address).await?;
+        let db_24h = self.db.get_blocks_count_24h(wallet_address).await?;
+        let db_7d = self.db.get_blocks_count_7d(wallet_address).await?;
+        let utxos = self.node.get_utxos(wallet_address).await?;
         let mut live_1h = 0;
         let mut live_24h = 0;
         let mut live_7d = 0;

@@ -6,6 +6,30 @@ use kaspa_rpc_core::api::rpc::RpcApi;
 use std::sync::Arc;
 use teloxide::prelude::*;
 
+fn format_optional_bps(value: Option<f64>) -> String {
+    value
+        .filter(|value| value.is_finite())
+        .map(|value| format!("{value:.2}"))
+        .unwrap_or_else(|| "Unavailable".to_string())
+}
+
+fn expected_bps_for_network(network_name: &str) -> Option<f64> {
+    let network_name = network_name.to_ascii_lowercase();
+    if network_name.contains("mainnet") {
+        Some(10.0)
+    } else if network_name.contains("testnet") {
+        Some(1.0)
+    } else {
+        None
+    }
+}
+
+fn format_expected_bps(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.1}"))
+        .unwrap_or_else(|| "Unavailable".to_string())
+}
+
 pub async fn handle_network_overview(
     bot: Bot,
     msg: Message,
@@ -68,9 +92,9 @@ pub async fn handle_network_overview(
     let expected_bps = expected_bps_for_network(&network_name);
 
     text.push_str(&format!(
-        "\n⚡ <b>Live BPS:</b> <code>{:.2}</code>\n🎯 <b>Expected BPS:</b> <code>{:.1}</code>",
-        live_bps.unwrap_or(0.0),
-        expected_bps
+        "\n⚡ <b>Live BPS:</b> <code>{}</code>\n🎯 <b>Expected BPS:</b> <code>{}</code>",
+        format_optional_bps(live_bps),
+        format_expected_bps(expected_bps)
     ));
 
     let text = format!(
@@ -154,10 +178,10 @@ pub async fn handle_dag(
         let expected_bps = expected_bps_for_network(&network_name);
 
         text.push_str(&format!(
-            "\n🩺 <b>DAG Health:</b> {}\n⚡ <b>Live BPS:</b> <code>{:.2}</code>\n🎯 <b>Expected BPS:</b> <code>{:.1}</code>",
+            "\n🩺 <b>DAG Health:</b> {}\n⚡ <b>Live BPS:</b> <code>{}</code>\n🎯 <b>Expected BPS:</b> <code>{}</code>",
             health,
-            live_bps.unwrap_or(0.0),
-            expected_bps
+            format_optional_bps(live_bps),
+            format_expected_bps(expected_bps)
         ));
 
         let text = format!(
@@ -306,7 +330,7 @@ pub async fn handle_market_data(
         .map(|i| i.network_id.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let live_bps = estimate_live_bps(app_context.clone()).await.unwrap_or(0.0);
+    let live_bps = estimate_live_bps(app_context.clone()).await;
     let expected_bps = expected_bps_for_network(&network_name);
 
     match market_stats.execute().await {
@@ -327,8 +351,8 @@ pub async fn handle_market_data(
                  👥 <b>Node Peers:</b> <code>{}</code>\n\
                  🩺 <b>Status:</b> {}\n\
                  ✂️ <b>Pruning Point:</b> <code>{}...</code>\n\
-                 ⚡ <b>Live BPS:</b> <code>{:.2}</code>\n\
-                 🎯 <b>Expected BPS:</b> <code>{:.1}</code>\n\n\
+                 ⚡ <b>Live BPS:</b> <code>{}</code>\n\
+                 🎯 <b>Expected BPS:</b> <code>{}</code>\n\n\
                  ⏱️ <code>{}</code>",
                 res.price,
                 format_number(res.mcap),
@@ -337,8 +361,8 @@ pub async fn handle_market_data(
                 res.peers,
                 online_indicator,
                 res.pruning_point.chars().take(8).collect::<String>(),
-                live_bps,
-                expected_bps,
+                format_optional_bps(live_bps),
+                format_expected_bps(expected_bps),
                 chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
             );
 
@@ -354,8 +378,16 @@ pub async fn handle_market_data(
             )
             .await;
         }
-        Err(_) => {
-            crate::send_logged!(bot, msg, "⚠️ <b>Market data API unreachable.</b>");
+        Err(error) => {
+            tracing::warn!(
+                error = %crate::utils::sanitize_for_log(&error.to_string()),
+                "[MARKET DATA] Required market or node data is unavailable."
+            );
+            crate::send_logged!(
+                bot,
+                msg,
+                "⚠️ <b>Market or node data is temporarily unavailable.</b>"
+            );
         }
     }
 
@@ -375,14 +407,6 @@ async fn estimate_live_bps(app_context: Arc<AppContext>) -> Option<f64> {
     }
 
     Some((second_score - first_score) as f64 / 2.0)
-}
-
-fn expected_bps_for_network(network_name: &str) -> f64 {
-    if network_name.to_lowercase().contains("mainnet") {
-        10.0
-    } else {
-        1.0
-    }
 }
 
 fn format_kaspa_timestamp(timestamp: u64) -> String {

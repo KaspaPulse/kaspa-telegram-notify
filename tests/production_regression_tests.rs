@@ -833,3 +833,72 @@ fn telegram_http_requests_use_central_policy_or_shared_price_cache() {
     assert!(network.contains("error_for_status()"));
     assert!(network.contains("sanitize_for_log(&error)"));
 }
+
+#[test]
+fn initial_price_refresh_must_share_runtime_failure_state() {
+    let system = read_source("src/infrastructure/external_services/system.rs");
+
+    assert!(!system.contains("let _ = update_price_cache(&client, &ctx).await"));
+    assert!(system.contains("let initial_result = update_price_cache(&client, &ctx).await"));
+    assert!(system.contains("apply_price_refresh_result(\n            initial_result,"));
+    assert!(system.matches("apply_price_refresh_result(").count() >= 3);
+}
+
+#[test]
+fn mining_statistics_must_fail_closed_on_required_db_and_rpc_reads() {
+    let mining = read_source("src/presentation/telegram/handlers/mining.rs");
+    let stats = read_source("src/network/stats_use_cases.rs");
+    let wallet = read_source("src/wallet/wallet_use_cases.rs");
+
+    assert!(!mining.contains("sqlx::query_scalar(\"SELECT wallet FROM user_wallets"));
+    assert!(
+        !mining.contains(
+            "get_wallet_blocks_details(cid)\n        .await\n        .unwrap_or_default()"
+        )
+    );
+    assert!(mining.contains("Mining statistics are temporarily unavailable."));
+    assert!(mining.contains("sanitize_for_log(&error.to_string())"));
+
+    assert!(!stats.contains(
+        "get_blocks_count_1h(wallet_address)\n            .await\n            .unwrap_or(0)"
+    ));
+    assert!(!stats.contains(
+        "get_utxos(wallet_address)\n            .await\n            .unwrap_or_default()"
+    ));
+
+    assert!(wallet.contains("require_wallet_stats("));
+    assert!(!wallet.contains("stats_1h_fallback"));
+    assert!(!wallet.contains("lifetime_stats_fallback"));
+    assert!(!wallet.contains("daily_blocks_fallback"));
+    assert!(!wallet.contains("get_blocks_sum_sompi_1h(&wallet).await.unwrap_or(0)"));
+}
+
+#[test]
+fn wallet_balance_ui_must_not_aggregate_rpc_failures_as_zero() {
+    let source = read_source("src/wallet/wallet_use_cases.rs");
+
+    assert!(!source.contains(
+        "balance_sompi: 0,\n                        utxos: 0,\n                        is_online: false"
+    ));
+    assert!(source.contains("wallet_balance_read_failed"));
+    assert!(source.contains(r#"{"operation":"get_balance","fallback":"none"}"#));
+    assert!(source.contains("return Err(error);"));
+}
+
+#[test]
+fn network_market_ui_must_not_render_failed_reads_as_zero() {
+    let stats = read_source("src/network/stats_use_cases.rs");
+    let node = read_source("src/infrastructure/node/kaspa_adapter.rs");
+    let network = read_source("src/presentation/telegram/handlers/network.rs");
+
+    assert!(!stats.contains(
+        "get_kaspa_market_data()\n            .await\n            .unwrap_or((0.0, 0.0))"
+    ));
+    assert!(!stats.contains("get_network_hashrate().await.unwrap_or(0.0)"));
+    assert!(!stats.contains("get_node_health().await.unwrap_or((false, 0))"));
+    assert!(!node.contains("get_connected_peer_info()\n            .await\n            .map(|p| p.peer_info.len())\n            .unwrap_or(0)"));
+    assert!(!network.contains("live_bps.unwrap_or(0.0)"));
+    assert!(network.contains("format_optional_bps(live_bps)"));
+    assert!(network.contains("Market or node data is temporarily unavailable."));
+    assert!(network.contains("sanitize_for_log(&error.to_string())"));
+}

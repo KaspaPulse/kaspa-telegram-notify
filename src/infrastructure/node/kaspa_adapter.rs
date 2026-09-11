@@ -75,14 +75,18 @@ impl KaspaRpcAdapter {
             is_online = self.client.get_server_info().await.is_ok();
         }
 
+        if !is_online {
+            return Ok((false, 0));
+        }
+
         let peer_count = self
             .client
             .get_connected_peer_info()
             .await
             .map(|p| p.peer_info.len())
-            .unwrap_or(0);
+            .map_err(|error| AppError::NodeConnection(error.to_string()))?;
 
-        Ok((is_online, peer_count))
+        Ok((true, peer_count))
     }
 
     pub async fn get_block(
