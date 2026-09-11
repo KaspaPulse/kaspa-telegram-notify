@@ -79,27 +79,66 @@ impl WalletQueriesUseCase {
         let mut details = Vec::new();
 
         for wallet in wallets {
-            match self.node.get_balance(&wallet).await {
-                Ok((balance_sompi, utxos)) => {
-                    details.push(WalletBalanceDetail {
-                        address: wallet,
-                        balance_sompi,
-                        utxos,
-                        is_online: true,
-                    });
+            let (balance_sompi, utxos) = match self.node.get_balance(&wallet).await {
+                Ok(balance) => balance,
+                Err(error) => {
+                    let error_message = error.to_string();
+                    let wallet_masked = crate::utils::format_short_wallet(&wallet);
+                    let mut rpc_event =
+                        BotEventRecord::new(BotEventType::RpcError, EventSeverity::Error);
+                    rpc_event.wallet_masked = Some(&wallet_masked);
+                    rpc_event.status = Some("wallet_balance_read_failed");
+                    rpc_event.error_message = Some(&error_message);
+                    rpc_event.metadata_json = r#"{"operation":"get_balance","fallback":"none"}"#;
+                    let _ = self.db.record_bot_event_record(rpc_event).await;
+                    tracing::error!(
+                        wallet = %wallet_masked,
+                        error = %crate::utils::sanitize_for_log(&error_message),
+                        "[RPC ERROR] Required wallet balance read failed."
+                    );
+                    return Err(error);
                 }
-                Err(_) => {
-                    details.push(WalletBalanceDetail {
-                        address: wallet,
-                        balance_sompi: 0,
-                        utxos: 0,
-                        is_online: false,
-                    });
-                }
-            }
+            };
+
+            details.push(WalletBalanceDetail {
+                address: wallet,
+                balance_sompi,
+                utxos,
+                is_online: true,
+            });
         }
 
         Ok(details)
+    }
+
+    async fn require_wallet_stats<T>(
+        &self,
+        wallet: &str,
+        operation: &'static str,
+        status: &'static str,
+        metadata_json: &'static str,
+        result: Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                let error_message = error.to_string();
+                let wallet_masked = crate::utils::format_short_wallet(wallet);
+                let mut db_event = BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
+                db_event.wallet_masked = Some(&wallet_masked);
+                db_event.status = Some(status);
+                db_event.error_message = Some(&error_message);
+                db_event.metadata_json = metadata_json;
+                let _ = self.db.record_bot_event_record(db_event).await;
+                tracing::error!(
+                    operation,
+                    wallet = %wallet_masked,
+                    error = %crate::utils::sanitize_for_log(&error_message),
+                    "[DATABASE ERROR] Required mining statistic read failed."
+                );
+                Err(error)
+            }
+        }
     }
 
     pub async fn get_wallet_blocks_details(
@@ -112,109 +151,106 @@ impl WalletQueriesUseCase {
         for wallet in wallets {
             let stats_wallet_masked = crate::utils::format_short_wallet(&wallet);
 
-            let blocks_1h = match self.db.get_blocks_count_1h(&wallet).await {
-                Ok(value) => value,
-                Err(e) => {
-                    let error_message = e.to_string();
-                    let mut db_event =
-                        BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
-                    db_event.wallet_masked = Some(&stats_wallet_masked);
-                    db_event.status = Some("stats_1h_fallback");
-                    db_event.error_message = Some(&error_message);
-                    db_event.metadata_json = r#"{"operation":"get_blocks_count_1h","fallback":0}"#;
+            let blocks_1h = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_count_1h",
+                    "stats_1h_read_failed",
+                    r#"{"operation":"get_blocks_count_1h","fallback":"none"}"#,
+                    self.db.get_blocks_count_1h(&wallet).await,
+                )
+                .await?;
+            let blocks_24h = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_count_24h",
+                    "stats_24h_read_failed",
+                    r#"{"operation":"get_blocks_count_24h","fallback":"none"}"#,
+                    self.db.get_blocks_count_24h(&wallet).await,
+                )
+                .await?;
+            let blocks_7d = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_count_7d",
+                    "stats_7d_read_failed",
+                    r#"{"operation":"get_blocks_count_7d","fallback":"none"}"#,
+                    self.db.get_blocks_count_7d(&wallet).await,
+                )
+                .await?;
+            let blocks_1h_sompi = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_sum_sompi_1h",
+                    "stats_1h_sompi_read_failed",
+                    r#"{"operation":"get_blocks_sum_sompi_1h","fallback":"none"}"#,
+                    self.db.get_blocks_sum_sompi_1h(&wallet).await,
+                )
+                .await?;
+            let blocks_24h_sompi = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_sum_sompi_24h",
+                    "stats_24h_sompi_read_failed",
+                    r#"{"operation":"get_blocks_sum_sompi_24h","fallback":"none"}"#,
+                    self.db.get_blocks_sum_sompi_24h(&wallet).await,
+                )
+                .await?;
+            let blocks_7d_sompi = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_blocks_sum_sompi_7d",
+                    "stats_7d_sompi_read_failed",
+                    r#"{"operation":"get_blocks_sum_sompi_7d","fallback":"none"}"#,
+                    self.db.get_blocks_sum_sompi_7d(&wallet).await,
+                )
+                .await?;
+            let (lifetime_blocks, lifetime_sompi) = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_lifetime_stats",
+                    "lifetime_stats_read_failed",
+                    r#"{"operation":"get_lifetime_stats","fallback":"none"}"#,
+                    self.db.get_lifetime_stats(&wallet).await,
+                )
+                .await?;
+            let daily_blocks_raw = self
+                .require_wallet_stats(
+                    &wallet,
+                    "get_all_daily_blocks",
+                    "daily_blocks_read_failed",
+                    r#"{"operation":"get_all_daily_blocks","fallback":"none"}"#,
+                    self.db.get_all_daily_blocks(&wallet).await,
+                )
+                .await?;
 
-                    let _ = self.db.record_bot_event_record(db_event).await;
-
-                    0
+            let kas_price_usd = match self.db.get_latest_kas_price_usd().await {
+                Ok(price) => price,
+                Err(error) => {
+                    tracing::warn!(
+                        wallet = %stats_wallet_masked,
+                        error = %crate::utils::sanitize_for_log(&error.to_string()),
+                        "[DATABASE WARNING] Optional current KAS price enrichment unavailable."
+                    );
+                    None
                 }
             };
 
-            let blocks_24h = match self.db.get_blocks_count_24h(&wallet).await {
-                Ok(value) => value,
-                Err(e) => {
-                    let error_message = e.to_string();
-                    let mut db_event =
-                        BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
-                    db_event.wallet_masked = Some(&stats_wallet_masked);
-                    db_event.status = Some("stats_24h_fallback");
-                    db_event.error_message = Some(&error_message);
-                    db_event.metadata_json = r#"{"operation":"get_blocks_count_24h","fallback":0}"#;
-
-                    let _ = self.db.record_bot_event_record(db_event).await;
-
-                    0
-                }
-            };
-
-            let blocks_7d = match self.db.get_blocks_count_7d(&wallet).await {
-                Ok(value) => value,
-                Err(e) => {
-                    let error_message = e.to_string();
-                    let mut db_event =
-                        BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
-                    db_event.wallet_masked = Some(&stats_wallet_masked);
-                    db_event.status = Some("stats_7d_fallback");
-                    db_event.error_message = Some(&error_message);
-                    db_event.metadata_json = r#"{"operation":"get_blocks_count_7d","fallback":0}"#;
-
-                    let _ = self.db.record_bot_event_record(db_event).await;
-
-                    0
-                }
-            };
-            let blocks_1h_sompi = self.db.get_blocks_sum_sompi_1h(&wallet).await.unwrap_or(0);
-            let blocks_24h_sompi = self.db.get_blocks_sum_sompi_24h(&wallet).await.unwrap_or(0);
-            let blocks_7d_sompi = self.db.get_blocks_sum_sompi_7d(&wallet).await.unwrap_or(0);
-            let kas_price_usd = self.db.get_latest_kas_price_usd().await.unwrap_or(None);
-
-            let (lifetime_blocks, lifetime_sompi) = match self.db.get_lifetime_stats(&wallet).await
-            {
-                Ok((count, sum_sompi)) => (count, sum_sompi),
-                Err(e) => {
-                    let error_message = e.to_string();
-                    let lifetime_wallet_masked = crate::utils::format_short_wallet(&wallet);
-
-                    let mut db_event =
-                        BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
-                    db_event.wallet_masked = Some(&lifetime_wallet_masked);
-                    db_event.status = Some("lifetime_stats_fallback");
-                    db_event.error_message = Some(&error_message);
-                    db_event.metadata_json = r#"{"operation":"get_lifetime_stats","fallback":0}"#;
-
-                    let _ = self.db.record_bot_event_record(db_event).await;
-
-                    (0, 0)
-                }
-            };
-            let daily_blocks_raw = match self.db.get_all_daily_blocks(&wallet).await {
-                Ok(value) => value,
-                Err(e) => {
-                    let error_message = e.to_string();
-                    let daily_wallet_masked = crate::utils::format_short_wallet(&wallet);
-
-                    let mut db_event =
-                        BotEventRecord::new(BotEventType::DbError, EventSeverity::Error);
-                    db_event.wallet_masked = Some(&daily_wallet_masked);
-                    db_event.status = Some("daily_blocks_fallback");
-                    db_event.error_message = Some(&error_message);
-                    db_event.metadata_json =
-                        r#"{"operation":"get_all_daily_blocks","fallback":"empty_list"}"#;
-
-                    let _ = self.db.record_bot_event_record(db_event).await;
-
-                    Vec::new()
-                }
-            };
             let day_keys: Vec<String> = daily_blocks_raw
                 .iter()
                 .map(|(day, _, _)| day.clone())
                 .collect();
-
-            let daily_price_map = self
-                .db
-                .get_kas_price_usd_map_for_days(&day_keys)
-                .await
-                .unwrap_or_default();
+            let daily_price_map = match self.db.get_kas_price_usd_map_for_days(&day_keys).await {
+                Ok(prices) => prices,
+                Err(error) => {
+                    tracing::warn!(
+                        wallet = %stats_wallet_masked,
+                        error = %crate::utils::sanitize_for_log(&error.to_string()),
+                        "[DATABASE WARNING] Optional historical KAS price enrichment unavailable."
+                    );
+                    std::collections::HashMap::new()
+                }
+            };
 
             let daily_blocks = daily_blocks_raw
                 .into_iter()

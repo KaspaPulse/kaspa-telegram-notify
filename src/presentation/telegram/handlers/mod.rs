@@ -453,7 +453,7 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
                 mining::handle_blocks(bot, msg, cid, ucs.wallet_query, app_context).await?
             }
             Command::Miner => {
-                mining::handle_miner(bot, msg, cid, app_context, ucs.miner_stats).await?
+                mining::handle_miner(bot, msg, cid, ucs.wallet_query, ucs.miner_stats).await?
             }
 
             Command::Network => {
@@ -1381,7 +1381,7 @@ pub async fn handle_callback(
                 msg.id(),
                 msg.chat().id.0,
                 index,
-                app_context.clone(),
+                ucs.wallet_query.clone(),
                 ucs.miner_stats.clone(),
             )
             .await?;

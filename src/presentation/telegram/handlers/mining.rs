@@ -1,3 +1,4 @@
+use crate::domain::errors::AppError;
 use crate::domain::models::AppContext;
 use crate::network::stats_use_cases::GetMinerStatsUseCase;
 use crate::wallet::wallet_use_cases::WalletQueriesUseCase;
@@ -5,6 +6,17 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 
 const SOMPI_PER_KAS: i128 = 100_000_000;
+
+const MINING_DATA_UNAVAILABLE_MESSAGE: &str =
+    "❌ <b>Mining statistics are temporarily unavailable.</b>\nPlease try again.";
+
+fn log_mining_data_error(operation: &'static str, error: &AppError) {
+    tracing::error!(
+        operation,
+        error = %crate::utils::sanitize_for_log(&error.to_string()),
+        "[MINING DATA ERROR] Required mining data operation failed."
+    );
+}
 
 fn format_with_thousands(value: f64) -> String {
     let sign = if value < 0.0 { "-" } else { "" };
@@ -84,8 +96,9 @@ pub async fn handle_blocks(
 ) -> anyhow::Result<()> {
     let details = match wallet_query.get_wallet_blocks_details(cid).await {
         Ok(details) => details,
-        Err(e) => {
-            crate::send_logged!(bot, msg, format!("❌ Error: {}", e));
+        Err(error) => {
+            log_mining_data_error("blocks_command", &error);
+            crate::send_logged!(bot, msg, MINING_DATA_UNAVAILABLE_MESSAGE);
             return Ok(());
         }
     };
@@ -163,15 +176,17 @@ pub async fn handle_miner(
     bot: Bot,
     msg: Message,
     cid: i64,
-    app_context: Arc<AppContext>,
+    wallet_query: Arc<WalletQueriesUseCase>,
     miner_stats: Arc<GetMinerStatsUseCase>,
 ) -> anyhow::Result<()> {
-    let tracked: Vec<String> =
-        sqlx::query_scalar("SELECT wallet FROM user_wallets WHERE chat_id = $1")
-            .bind(cid)
-            .fetch_all(&app_context.pool)
-            .await
-            .unwrap_or_default();
+    let tracked = match wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            log_mining_data_error("miner_command_wallet_list", &error);
+            crate::send_logged!(bot, msg, MINING_DATA_UNAVAILABLE_MESSAGE);
+            return Ok(());
+        }
+    };
 
     if tracked.is_empty() {
         crate::send_logged!(
@@ -184,10 +199,11 @@ pub async fn handle_miner(
 
     let mut global_hashrate = "Unknown".to_string();
 
-    if let Some(first_wallet) = tracked.first()
-        && let Ok(stats) = miner_stats.execute(first_wallet).await
-    {
-        global_hashrate = stats.global_network_hashrate;
+    if let Some(first_wallet) = tracked.first() {
+        match miner_stats.execute(first_wallet).await {
+            Ok(stats) => global_hashrate = stats.global_network_hashrate,
+            Err(error) => log_mining_data_error("miner_command_global_hashrate", &error),
+        }
     }
 
     let text = format!(
@@ -231,10 +247,21 @@ pub async fn handle_wallet_blocks_detail(
     history_page: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
-    let details = wallet_query
-        .get_wallet_blocks_details(cid)
-        .await
-        .unwrap_or_default();
+    let details = match wallet_query.get_wallet_blocks_details(cid).await {
+        Ok(details) => details,
+        Err(error) => {
+            log_mining_data_error("wallet_blocks_detail", &error);
+            edit_text(
+                &bot,
+                chat_id,
+                message_id,
+                MINING_DATA_UNAVAILABLE_MESSAGE.to_string(),
+                crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+            )
+            .await;
+            return Err(error.into());
+        }
+    };
 
     let Some(detail) = details.get(index) else {
         edit_text(
@@ -382,15 +409,24 @@ pub async fn handle_wallet_miner_detail(
     message_id: teloxide::types::MessageId,
     cid: i64,
     index: usize,
-    app_context: Arc<AppContext>,
+    wallet_query: Arc<WalletQueriesUseCase>,
     miner_stats: Arc<GetMinerStatsUseCase>,
 ) -> anyhow::Result<()> {
-    let tracked: Vec<String> =
-        sqlx::query_scalar("SELECT wallet FROM user_wallets WHERE chat_id = $1")
-            .bind(cid)
-            .fetch_all(&app_context.pool)
-            .await
-            .unwrap_or_default();
+    let tracked = match wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            log_mining_data_error("wallet_miner_detail_wallet_list", &error);
+            edit_text(
+                &bot,
+                chat_id,
+                message_id,
+                MINING_DATA_UNAVAILABLE_MESSAGE.to_string(),
+                crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+            )
+            .await;
+            return Err(error.into());
+        }
+    };
 
     let Some(wallet) = tracked.get(index) else {
         edit_text(
@@ -430,7 +466,10 @@ pub async fn handle_wallet_miner_detail(
             stats.unspent_hashrate_7d,
             chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
         ),
-        Err(e) => format!("❌ <b>Error fetching miner stats:</b> {}", e),
+        Err(error) => {
+            log_mining_data_error("wallet_miner_detail_stats", &error);
+            MINING_DATA_UNAVAILABLE_MESSAGE.to_string()
+        }
     };
 
     edit_text(

@@ -9,6 +9,43 @@ use tokio_util::sync::CancellationToken;
 
 use crate::domain::models::AppContext;
 
+fn apply_price_refresh_result(
+    result: Result<(), String>,
+    consecutive_failures: &mut u32,
+    circuit_open_until: &mut Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+    cooldown_secs: u64,
+) {
+    match result {
+        Ok(()) => {
+            if *consecutive_failures > 0 {
+                tracing::info!(
+                    "[PRICE MONITOR] External price API recovered after {} failures.",
+                    *consecutive_failures
+                );
+            }
+            *consecutive_failures = 0;
+            *circuit_open_until = None;
+        }
+        Err(error) => {
+            *consecutive_failures = consecutive_failures.saturating_add(1);
+            tracing::error!(
+                "[PRICE MONITOR] Failed to refresh price cache. failures={} error={}",
+                *consecutive_failures,
+                error
+            );
+
+            if *consecutive_failures >= 3 {
+                *circuit_open_until = Some(now + chrono::Duration::seconds(cooldown_secs as i64));
+                tracing::error!(
+                    "[PRICE MONITOR] Circuit opened for {} seconds. Bot will keep using cached price.",
+                    cooldown_secs
+                );
+            }
+        }
+    }
+}
+
 pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) -> Result<(), AppError> {
     let client = crate::infrastructure::resilience::runtime::build_http_client()?;
 
@@ -71,7 +108,18 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) -> Result<
             Err(last_error)
         }
 
-        let _ = update_price_cache(&client, &ctx).await;
+        let cooldown_secs = crate::infrastructure::resilience::runtime::env_u64(
+            "PRICE_API_CIRCUIT_COOLDOWN_SECS",
+            300,
+        );
+        let initial_result = update_price_cache(&client, &ctx).await;
+        apply_price_refresh_result(
+            initial_result,
+            &mut consecutive_failures,
+            &mut circuit_open_until,
+            chrono::Utc::now(),
+            cooldown_secs,
+        );
 
         loop {
             tokio::select! {
@@ -90,34 +138,14 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) -> Result<
                         circuit_open_until = None;
                     }
 
-                    match update_price_cache(&client, &ctx).await {
-                        Ok(_) => {
-                            if consecutive_failures > 0 {
-                                tracing::info!("[PRICE MONITOR] External price API recovered after {} failures.", consecutive_failures);
-                            }
-                            consecutive_failures = 0;
-                        }
-                        Err(error) => {
-                            consecutive_failures += 1;
-                            tracing::error!(
-                                "[PRICE MONITOR] Failed to refresh price cache. failures={} error={}",
-                                consecutive_failures,
-                                error
-                            );
-
-                            if consecutive_failures >= 3 {
-                                let cooldown_secs =
-                                    crate::infrastructure::resilience::runtime::env_u64("PRICE_API_CIRCUIT_COOLDOWN_SECS", 300);
-                                circuit_open_until = Some(
-                                    chrono::Utc::now() + chrono::Duration::seconds(cooldown_secs as i64)
-                                );
-                                tracing::error!(
-                                    "[PRICE MONITOR] Circuit opened for {} seconds. Bot will keep using cached price.",
-                                    cooldown_secs
-                                );
-                            }
-                        }
-                    }
+                    let refresh_result = update_price_cache(&client, &ctx).await;
+                    apply_price_refresh_result(
+                        refresh_result,
+                        &mut consecutive_failures,
+                        &mut circuit_open_until,
+                        chrono::Utc::now(),
+                        cooldown_secs,
+                    );
                 }
             }
         }
@@ -258,4 +286,61 @@ pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
             }
         },
     );
+}
+
+#[cfg(test)]
+mod price_monitor_state_tests {
+    use super::apply_price_refresh_result;
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
+
+    #[test]
+    fn startup_failure_counts_toward_circuit_breaker_and_recovery_resets_state() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 11, 20, 0, 0).unwrap();
+        let mut failures = 0;
+        let mut circuit_open_until = None;
+
+        apply_price_refresh_result(
+            Err("startup refresh failed".to_string()),
+            &mut failures,
+            &mut circuit_open_until,
+            now,
+            300,
+        );
+        assert_eq!(failures, 1);
+        assert!(circuit_open_until.is_none());
+
+        apply_price_refresh_result(
+            Err("second refresh failed".to_string()),
+            &mut failures,
+            &mut circuit_open_until,
+            now + ChronoDuration::minutes(1),
+            300,
+        );
+        assert_eq!(failures, 2);
+        assert!(circuit_open_until.is_none());
+
+        let third_failure_at = now + ChronoDuration::minutes(2);
+        apply_price_refresh_result(
+            Err("third refresh failed".to_string()),
+            &mut failures,
+            &mut circuit_open_until,
+            third_failure_at,
+            300,
+        );
+        assert_eq!(failures, 3);
+        assert_eq!(
+            circuit_open_until,
+            Some(third_failure_at + ChronoDuration::seconds(300))
+        );
+
+        apply_price_refresh_result(
+            Ok(()),
+            &mut failures,
+            &mut circuit_open_until,
+            now + ChronoDuration::minutes(8),
+            300,
+        );
+        assert_eq!(failures, 0);
+        assert!(circuit_open_until.is_none());
+    }
 }
