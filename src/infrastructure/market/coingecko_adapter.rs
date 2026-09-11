@@ -18,20 +18,14 @@ pub struct CoinGeckoAdapter {
     circuit_breaker: crate::infrastructure::resilience::circuit_breaker::CircuitBreaker,
 }
 
-impl Default for CoinGeckoAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CoinGeckoAdapter {
-    pub fn new() -> Self {
-        Self {
-            client: build_http_client(),
+    pub fn new() -> Result<Self, AppError> {
+        Ok(Self {
+            client: crate::infrastructure::resilience::runtime::build_http_client()?,
             cache: Arc::new(RwLock::new(None)),
             circuit_breaker:
                 crate::infrastructure::resilience::circuit_breaker::CircuitBreaker::new(3, 300), // 3 failures = block for 5 minutes
-        }
+        })
     }
 }
 
@@ -76,16 +70,10 @@ impl MarketProvider for CoinGeckoAdapter {
             }
         }
 
-        let res = self
-            .client
-            .get(&url)
-            .header("User-Agent", "KaspaPulse/1.2")
-            .send()
-            .await
-            .map_err(|e| {
-                self.circuit_breaker.record_failure();
-                AppError::ApiError(format!("CoinGecko request failed: {e}"))
-            })?;
+        let res = self.client.get(&url).send().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            AppError::ApiError(format!("CoinGecko request failed: {e}"))
+        })?;
 
         let status = res.status();
         if !status.is_success() {
@@ -141,7 +129,6 @@ impl MarketProvider for CoinGeckoAdapter {
                 ("from", from.as_str()),
                 ("to", to.as_str()),
             ])
-            .header("User-Agent", "KaspaPulse/1.2")
             .send()
             .await
             .map_err(|e| {
@@ -251,19 +238,6 @@ pub trait MarketProvider: Send + Sync {
         from_unix: i64,
         to_unix: i64,
     ) -> Result<Vec<(String, f64)>, AppError>;
-}
-
-fn build_http_client() -> Client {
-    Client::builder()
-        .timeout(Duration::from_secs(
-            crate::infrastructure::resilience::runtime::env_u64("HTTP_TIMEOUT_SECS", 10),
-        ))
-        .connect_timeout(Duration::from_secs(
-            crate::infrastructure::resilience::runtime::env_u64("HTTP_CONNECT_TIMEOUT_SECS", 5),
-        ))
-        .user_agent("KaspaPulse/1.2")
-        .build()
-        .expect("failed to build HTTP client")
 }
 
 #[cfg(test)]
