@@ -169,7 +169,7 @@ pub async fn handle_balance(
     msg: Message,
     cid: i64,
     wallet_query: Arc<WalletQueriesUseCase>,
-    _app_context: Arc<crate::domain::models::AppContext>,
+    app_context: Arc<crate::domain::models::AppContext>,
 ) -> anyhow::Result<()> {
     let wallet_details = match wallet_query.get_wallet_balances(cid).await {
         Ok(details) => details,
@@ -189,12 +189,7 @@ pub async fn handle_balance(
         return Ok(());
     }
 
-    let mut kas_price = 0.0;
-    if let Ok(response) = reqwest::get("https://api.kaspa.org/info/price").await
-        && let Ok(json) = response.json::<serde_json::Value>().await
-    {
-        kas_price = json["price"].as_f64().unwrap_or(0.0);
-    }
+    let kas_price = app_context.price_cache.read().await.0;
 
     let total_sompi: u64 = wallet_details.iter().map(|w| w.balance_sompi).sum();
     let total_utxos: usize = wallet_details.iter().map(|w| w.utxos).sum();
@@ -299,6 +294,7 @@ pub async fn handle_wallet_balance_detail(
     cid: i64,
     index: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
+    app_context: Arc<crate::domain::models::AppContext>,
 ) -> anyhow::Result<()> {
     let details = match wallet_query.get_wallet_balances(cid).await {
         Ok(details) => details,
@@ -328,12 +324,7 @@ pub async fn handle_wallet_balance_detail(
         return Ok(());
     };
 
-    let mut kas_price = 0.0;
-    if let Ok(response) = reqwest::get("https://api.kaspa.org/info/price").await
-        && let Ok(json) = response.json::<serde_json::Value>().await
-    {
-        kas_price = json["price"].as_f64().unwrap_or(0.0);
-    }
+    let kas_price = app_context.price_cache.read().await.0;
 
     let balance_kas = detail.balance_sompi as f64 / 1e8;
     let fiat_value = balance_kas * kas_price;
