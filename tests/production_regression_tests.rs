@@ -750,3 +750,21 @@ fn build_provenance_must_be_embedded_and_propagated() {
     assert!(rust_ci.contains("--build-arg SOURCE_REVISION=\"$GITHUB_SHA\""));
     assert!(release.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
 }
+
+#[test]
+fn production_http_clients_must_be_fallible_and_versioned() {
+    let runtime = read_source("src/infrastructure/resilience/runtime.rs");
+    let system = read_source("src/infrastructure/external_services/system.rs");
+    let coingecko = read_source("src/infrastructure/market/coingecko_adapter.rs");
+    let main = read_source("src/main.rs");
+
+    assert!(runtime.contains("pub fn build_http_client() -> Result<reqwest::Client, AppError>"));
+    assert!(runtime.contains(r#"format!("KaspaPulse/{}", env!("CARGO_PKG_VERSION"))"#));
+    assert!(!system.contains(r#"expect("failed to build HTTP client")"#));
+    assert!(!coingecko.contains(r#"expect("failed to build HTTP client")"#));
+    assert!(!system.contains("KaspaPulse/1.2"));
+    assert!(!coingecko.contains("KaspaPulse/1.2"));
+    assert!(coingecko.contains("pub fn new() -> Result<Self, AppError>"));
+    assert!(main.contains("Arc::new(CoinGeckoAdapter::new()?)"));
+    assert!(main.contains("spawn_price_monitor(") && main.contains(")?;"));
+}

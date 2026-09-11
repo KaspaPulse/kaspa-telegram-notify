@@ -352,7 +352,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let market_provider: Arc<dyn crate::infrastructure::market::coingecko_adapter::MarketProvider> =
-        Arc::new(CoinGeckoAdapter::new());
+        Arc::new(CoinGeckoAdapter::new()?);
 
     let wallet_management_uc = Arc::new(WalletManagementUseCase::new(db_repo.clone()));
 
@@ -537,7 +537,7 @@ async fn main() -> anyhow::Result<()> {
     crate::infrastructure::external_services::system::spawn_price_monitor(
         (*app_context).clone(),
         cancel_token.clone(),
-    );
+    )?;
 
     crate::infrastructure::external_services::system::spawn_memory_cleaner(
         (*app_context).clone(),

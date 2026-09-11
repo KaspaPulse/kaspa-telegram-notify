@@ -1,3 +1,4 @@
+use crate::domain::errors::AppError;
 use crate::domain::models::{BotEventType, EventSeverity};
 use kaspa_rpc_core::api::rpc::RpcApi;
 use std::sync::atomic::Ordering;
@@ -8,9 +9,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::domain::models::AppContext;
 
-pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) {
+pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) -> Result<(), AppError> {
+    let client = crate::infrastructure::resilience::runtime::build_http_client()?;
+
     crate::infrastructure::resilience::runtime::spawn_resilient("price_monitor", async move {
-        let client = build_http_client();
         let mut consecutive_failures: u32 = 0;
         let mut circuit_open_until: Option<chrono::DateTime<chrono::Utc>> = None;
 
@@ -120,6 +122,8 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) {
             }
         }
     });
+
+    Ok(())
 }
 pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
     crate::infrastructure::resilience::runtime::spawn_resilient(
@@ -254,19 +258,4 @@ pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
             }
         },
     );
-}
-fn build_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(env_u64("HTTP_TIMEOUT_SECS", 10)))
-        .connect_timeout(Duration::from_secs(env_u64("HTTP_CONNECT_TIMEOUT_SECS", 5)))
-        .user_agent("KaspaPulse/1.2")
-        .build()
-        .expect("failed to build HTTP client")
-}
-
-fn env_u64(key: &str, default_value: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(default_value)
 }

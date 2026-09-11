@@ -22,6 +22,23 @@ pub fn http_timeout_duration() -> Duration {
     Duration::from_secs(env_u64("HTTP_TIMEOUT_SECS", 10))
 }
 
+pub fn application_user_agent() -> String {
+    format!("KaspaPulse/{}", env!("CARGO_PKG_VERSION"))
+}
+
+pub fn build_http_client() -> Result<reqwest::Client, AppError> {
+    build_http_client_with_user_agent(&application_user_agent())
+}
+
+fn build_http_client_with_user_agent(user_agent: &str) -> Result<reqwest::Client, AppError> {
+    reqwest::Client::builder()
+        .timeout(http_timeout_duration())
+        .connect_timeout(Duration::from_secs(env_u64("HTTP_CONNECT_TIMEOUT_SECS", 5)))
+        .user_agent(user_agent)
+        .build()
+        .map_err(|error| AppError::ApiError(format!("HTTP client initialization failed: {error}")))
+}
+
 pub async fn with_rpc_timeout<T, F>(operation: &'static str, future: F) -> Result<T, AppError>
 where
     F: Future<Output = Result<T, AppError>>,
@@ -123,4 +140,23 @@ where
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn application_user_agent_tracks_package_version() {
+        assert_eq!(
+            application_user_agent(),
+            format!("KaspaPulse/{}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn invalid_user_agent_returns_error_without_panicking() {
+        let result = build_http_client_with_user_agent("invalid\nuser-agent");
+        assert!(matches!(result, Err(AppError::ApiError(_))));
+    }
 }
