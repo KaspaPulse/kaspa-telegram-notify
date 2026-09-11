@@ -113,10 +113,12 @@ jobs:
         run: cargo test --locked --all-targets --all-features
 
       - name: Build production release
+        env:
+          KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}
         run: cargo build --locked --release --all-features
 
       - name: Build production container
-        run: docker build --pull --tag kaspa-pulse:ci .
+        run: docker build --pull --build-arg SOURCE_REVISION="$GITHUB_SHA" --tag kaspa-pulse:ci .
 
       - name: Smoke-test production container
         run: |

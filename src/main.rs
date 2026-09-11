@@ -3,6 +3,7 @@ use crate::infrastructure::database::postgres_adapter::PostgresRepository;
 use crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter;
 
 mod application;
+mod build_info;
 mod config;
 mod domain;
 mod infrastructure;
@@ -227,7 +228,11 @@ async fn main() -> anyhow::Result<()> {
         );
     }));
 
-    info!("Kaspa Pulse starting.");
+    info!(
+        version = build_info::VERSION,
+        source_revision = build_info::source_revision(),
+        "Kaspa Pulse starting."
+    );
 
     let startup = crate::config::StartupConfig::from_env()?;
 

@@ -84,6 +84,7 @@ pub fn render_metrics() -> String {
         LAST_UTXO_SCAN_TS.load(Ordering::Relaxed),
     );
 
+    rendered.push_str(&crate::build_info::render_prometheus());
     rendered.push_str(&crate::infrastructure::observability::snapshot().render_prometheus());
     rendered
 }

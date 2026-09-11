@@ -17,11 +17,15 @@ RUN mkdir src \
     && rm -rf src
 
 COPY . .
+ARG SOURCE_REVISION=unknown
+ENV KASPA_PULSE_SOURCE_REVISION=$SOURCE_REVISION
 ENV SQLX_OFFLINE=true
 RUN touch src/main.rs \
     && cargo build --locked --release --all-features
 
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
+
+ARG SOURCE_REVISION=unknown
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates \
@@ -31,7 +35,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 LABEL org.opencontainers.image.source="https://github.com/KaspaPulse/kaspa-telegram-notify" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="$SOURCE_REVISION"
 
 WORKDIR /app
 COPY --from=builder --chown=kaspa:kaspa /app/target/release/kaspa-pulse /usr/local/bin/kaspa-pulse

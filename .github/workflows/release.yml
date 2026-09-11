@@ -137,6 +137,8 @@ jobs:
       - name: Build locked release binary
         if: steps.gate.outputs.create == 'true'
         shell: bash
+        env:
+          KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           cargo build --locked --release --all-features --target "$TARGET"
