@@ -138,7 +138,7 @@ Approved Git source:
 https://github.com/kaspanet/rusty-kaspa
 ```
 
-The current Kaspa SDK dependencies are pinned to the approved `v2.0.1` tag. As verified on 2026-08-08, `v2.0.1` is the newest stable `rusty-kaspa` tag available from the upstream tag list.
+The current Kaspa SDK dependencies are pinned to exact version `2.0.1` and immutable revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`, which is the commit resolved from reviewed tag `v2.0.1`. As re-verified on 2026-09-11, `v2.0.1` is the newest stable `rusty-kaspa` tag; the automated updater refuses silent tag drift and requires manual review if an existing tag resolves to a different commit.
 
 ---
 

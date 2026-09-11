@@ -54,7 +54,7 @@ Telegram delivery worker
 - PostgreSQL **18** validation baseline with PostgreSQL-only SQLx 0.9 feature selection.
 - Teloxide 0.17 and Axum 0.8.
 - Reqwest 0.13 with Rustls.
-- `rusty-kaspa` dependencies pinned to the approved `v2.0.1` Git tag.
+- `rusty-kaspa` dependencies pinned to exact version `2.0.1` and immutable upstream revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`.
 - Debian 13 (Trixie) production container.
 - Non-root container runtime using UID/GID `10001`.
 
@@ -239,7 +239,7 @@ Additional controls:
 - GitHub Actions are pinned to immutable commit SHAs.
 - Normal CI checkout does not persist repository credentials.
 - Git dependencies are allow-listed in `deny.toml`.
-- `rusty-kaspa` is pinned to an explicit release tag rather than a floating branch.
+- `rusty-kaspa` is pinned to both an exact release version and the immutable commit resolved from its reviewed release tag; tag drift is rejected by the updater.
 - Dependabot checks Cargo, GitHub Actions, Docker, Rust toolchain, and Compose dependencies on staggered weekly schedules.
 - The scheduled `rusty-kaspa` updater validates changes before publishing an update branch/PR.
 - Accepted upstream/transitive RustSec exceptions are documented in `SECURITY_ADVISORIES.md`; they are not silently hidden.

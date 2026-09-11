@@ -108,34 +108,100 @@ function Get-LatestKaspaReleaseTag {
     return $latest.Tag
 }
 
-function Get-CurrentKaspaTags {
-    $cargo = Get-Content "Cargo.toml" -Raw -Encoding UTF8
-    $matches = [regex]::Matches(
-        $cargo,
-        'git\s*=\s*"https://github\.com/kaspanet/rusty-kaspa"\s*,\s*tag\s*=\s*"([^"]+)"'
-    )
+function Get-KaspaTagRevision {
+    param([Parameter(Mandatory = $true)][string]$Tag)
 
-    $tags = @()
-    foreach ($match in $matches) {
-        $tags += $match.Groups[1].Value
+    # Resolve both lightweight and annotated tags. For annotated tags, pin the peeled commit,
+    # not the mutable/tag-object identity itself.
+    $lines = @(git ls-remote --tags $KaspaGitUrl "refs/tags/$Tag" "refs/tags/$Tag^{}")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to resolve rusty-kaspa tag '$Tag'."
     }
 
-    return $tags | Sort-Object -Unique
+    $directRev = $null
+    $peeledRev = $null
+    foreach ($line in $lines) {
+        if ($line -notmatch '^([0-9a-fA-F]{40})\s+(refs/tags/.+)$') {
+            throw "Unexpected ls-remote result while resolving rusty-kaspa tag '$Tag'."
+        }
+        $revision = $Matches[1].ToLowerInvariant()
+        $reference = $Matches[2]
+        if ($reference -eq "refs/tags/$Tag") {
+            $directRev = $revision
+        } elseif ($reference -eq "refs/tags/$Tag^{}") {
+            $peeledRev = $revision
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($directRev)) {
+        throw "No direct rusty-kaspa tag ref was found for '$Tag'."
+    }
+
+    return $(if ($peeledRev) { $peeledRev } else { $directRev })
 }
 
-function Update-KaspaTags {
-    param([Parameter(Mandatory = $true)][string]$TargetTag)
+function Get-CurrentKaspaPins {
+    $cargo = Get-Content "Cargo.toml" -Raw -Encoding UTF8
+    $dependencyNames = @(
+        'kaspa-wrpc-client',
+        'kaspa-rpc-core',
+        'kaspa-addresses',
+        'kaspa-consensus-core',
+        'kaspa-hashes'
+    )
+    $sourcePattern = 'git\s*=\s*"https://github\.com/kaspanet/rusty-kaspa"'
+    $allKaspaEntries = [regex]::Matches($cargo, $sourcePattern)
+    if ($allKaspaEntries.Count -ne $dependencyNames.Count) {
+        throw "Expected exactly $($dependencyNames.Count) direct rusty-kaspa dependencies; found $($allKaspaEntries.Count)."
+    }
 
-    $path = "Cargo.toml"
-    $content = Get-Content $path -Raw -Encoding UTF8
-    $new = [regex]::Replace(
-        $content,
-        '(git\s*=\s*"https://github\.com/kaspanet/rusty-kaspa"\s*,\s*tag\s*=\s*")[^"]+(")',
-        ('$1' + $TargetTag + '$2')
+    $pins = @()
+    foreach ($name in $dependencyNames) {
+        $pattern = '(?m)^' + [regex]::Escape($name) +
+            '\s*=\s*\{\s*version\s*=\s*"=([^"]+)"\s*,\s*' +
+            'git\s*=\s*"https://github\.com/kaspanet/rusty-kaspa"\s*,\s*' +
+            'rev\s*=\s*"([0-9a-fA-F]{40})"\s*\}\s*$'
+        $match = [regex]::Match($cargo, $pattern)
+        if (-not $match.Success) {
+            throw "rusty-kaspa dependency '$name' is not pinned with exact version + immutable rev."
+        }
+        $pins += [pscustomobject]@{
+            Name = $name
+            Version = $match.Groups[1].Value
+            Rev = $match.Groups[2].Value.ToLowerInvariant()
+        }
+    }
+
+    return $pins
+}
+
+function Update-KaspaPins {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetTag,
+        [Parameter(Mandatory = $true)][string]$TargetRev
     )
 
-    if ($new -eq $content) {
-        throw "No rusty-kaspa git tag entries were changed in Cargo.toml."
+    if ($TargetTag -notmatch '^v(.+)$') {
+        throw "Target rusty-kaspa tag '$TargetTag' does not have the required v-prefixed version."
+    }
+    $targetVersion = $Matches[1]
+    if ($TargetRev -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Target rusty-kaspa revision must be a full 40-character commit SHA."
+    }
+    $path = "Cargo.toml"
+    $content = Get-Content $path -Raw -Encoding UTF8
+    $new = $content
+    foreach ($name in @('kaspa-wrpc-client', 'kaspa-rpc-core', 'kaspa-addresses', 'kaspa-consensus-core', 'kaspa-hashes')) {
+        $pattern = '(?m)^(' + [regex]::Escape($name) +
+            '\s*=\s*\{\s*version\s*=\s*")=[^"]+("\s*,\s*' +
+            'git\s*=\s*"https://github\.com/kaspanet/rusty-kaspa"\s*,\s*' +
+            'rev\s*=\s*")[0-9a-fA-F]{40}("\s*\}\s*)$'
+        $replacement = '${1}=' + $targetVersion + '${2}' + $TargetRev.ToLowerInvariant() + '${3}'
+        $updated = [regex]::Replace($new, $pattern, $replacement)
+        if ($updated -eq $new) {
+            throw "No exact-version/revision pin was changed for rusty-kaspa dependency '$name'."
+        }
+        $new = $updated
     }
 
     Set-Content $path $new -Encoding UTF8
@@ -149,33 +215,38 @@ Step "Verify clean working tree" {
     }
 }
 
-Step "Find highest rusty-kaspa semver tag" {
+Step "Find and verify rusty-kaspa release pin" {
     $script:LatestTag = Get-LatestKaspaReleaseTag -AllowPrerelease:$AllowPrerelease
+    $script:LatestRev = Get-KaspaTagRevision -Tag $script:LatestTag
     Write-Host "Highest eligible rusty-kaspa tag: $script:LatestTag"
+    Write-Host "Immutable revision for $script:LatestTag: $script:LatestRev"
 
-    $script:CurrentTags = @(Get-CurrentKaspaTags)
-    Write-Host "Current rusty-kaspa tags in Cargo.toml: $($script:CurrentTags -join ', ')"
-
-    if ($script:CurrentTags.Count -eq 0) {
-        throw "No rusty-kaspa tag dependencies found in Cargo.toml."
-    }
-    if ($script:CurrentTags.Count -ne 1) {
-        throw "rusty-kaspa dependencies are not pinned to one consistent tag."
+    $script:CurrentPins = @(Get-CurrentKaspaPins)
+    $currentVersions = @($script:CurrentPins.Version | Sort-Object -Unique)
+    $currentRevisions = @($script:CurrentPins.Rev | Sort-Object -Unique)
+    if ($currentVersions.Count -ne 1 -or $currentRevisions.Count -ne 1) {
+        throw "rusty-kaspa dependencies are not pinned to one consistent exact version and revision."
     }
 
-    $currentVersion = ConvertTo-KaspaSemver -Tag $script:CurrentTags[0]
+    $script:CurrentTag = "v$($currentVersions[0])"
+    $script:CurrentRev = $currentRevisions[0]
+    Write-Host "Current rusty-kaspa pin: $script:CurrentTag @ $script:CurrentRev"
+
+    $currentVersion = ConvertTo-KaspaSemver -Tag $script:CurrentTag
     $latestVersion = ConvertTo-KaspaSemver -Tag $script:LatestTag
     if ($null -eq $currentVersion -or $null -eq $latestVersion) {
-        throw "Unable to compare current and target rusty-kaspa tags safely."
+        throw "Unable to compare current and target rusty-kaspa versions safely."
     }
-
     if ((Compare-KaspaSemverCore -Left $currentVersion -Right $latestVersion) -gt 0) {
-        throw "Refusing downgrade from $($script:CurrentTags[0]) to $script:LatestTag."
+        throw "Refusing downgrade from $script:CurrentTag to $script:LatestTag."
     }
 }
 
-if ($script:CurrentTags[0] -eq $script:LatestTag) {
-    Write-Host "`nAlready on highest eligible rusty-kaspa tag: $script:LatestTag" -ForegroundColor Green
+if ($script:CurrentTag -eq $script:LatestTag) {
+    if ($script:CurrentRev -ne $script:LatestRev) {
+        throw "SECURITY: upstream tag drift detected for $script:LatestTag. Current immutable pin is $script:CurrentRev but upstream now resolves to $script:LatestRev. Refusing automatic mutation; review manually."
+    }
+    Write-Host "`nAlready on highest eligible immutable rusty-kaspa pin: $script:LatestTag @ $script:LatestRev" -ForegroundColor Green
     exit 0
 }
 
@@ -190,7 +261,7 @@ if (-not $NoBranch) {
         $branch = "auto/rusty-kaspa-$safeTag"
         $existing = git branch --list $branch
         if ($existing) {
-            git branch -D $branch
+            throw "Local update branch '$branch' already exists. Refusing to delete or overwrite it automatically."
         }
 
         git checkout -b $branch
@@ -204,18 +275,19 @@ if (-not $NoBranch) {
     }
 }
 
-Step "Update Cargo.toml rusty-kaspa tags" {
-    Update-KaspaTags -TargetTag $script:LatestTag
-    Select-String -Path "Cargo.toml" -Pattern "kaspanet/rusty-kaspa|tag ="
-}
-
-Step "Refresh Cargo.lock" {
-    cargo update
+Step "Update Cargo.toml rusty-kaspa immutable pins" {
+    Update-KaspaPins -TargetTag $script:LatestTag -TargetRev $script:LatestRev
+    Select-String -Path "Cargo.toml" -Pattern "kaspanet/rusty-kaspa|version =|rev ="
 }
 
 $env:SQLX_OFFLINE = "true"
 $env:CARGO_INCREMENTAL = "0"
 $env:RUST_BACKTRACE = "1"
+
+Step "Refresh Cargo.lock with minimal resolver changes" {
+    cargo check --all-targets --all-features
+}
+
 $allGood = $true
 
 if (-not (Run-AllowFail "cargo fmt" { cargo fmt --all })) { $allGood = $false }
@@ -265,7 +337,7 @@ if ($Push) {
     }
 
     Step "Push validated update branch" {
-        git push --set-upstream origin $script:UpdateBranch --force-with-lease
+        git push --set-upstream origin $script:UpdateBranch
     }
 }
 
