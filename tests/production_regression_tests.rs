@@ -729,3 +729,24 @@ fn kas_price_history_migration_must_grant_application_roles_safely() {
         "kas_price_history migration must include safe grants for application DB roles"
     );
 }
+
+#[test]
+fn build_provenance_must_be_embedded_and_propagated() {
+    let build_info = read_source("src/build_info.rs");
+    let main_source = read_source("src/main.rs");
+    let metrics = read_source("src/infrastructure/metrics.rs");
+    let dockerfile = read_source("Dockerfile");
+    let rust_ci = read_source(".github/workflows/rust-ci.yml");
+    let release = read_source(".github/workflows/release.yml");
+
+    assert!(build_info.contains("KASPA_PULSE_SOURCE_REVISION"));
+    assert!(build_info.contains("kaspa_pulse_build_info"));
+    assert!(main_source.contains("source_revision = build_info::source_revision()"));
+    assert!(metrics.contains("crate::build_info::render_prometheus()"));
+    assert!(dockerfile.contains("ARG SOURCE_REVISION=unknown"));
+    assert!(dockerfile.contains("KASPA_PULSE_SOURCE_REVISION=$SOURCE_REVISION"));
+    assert!(dockerfile.contains("org.opencontainers.image.revision=\"$SOURCE_REVISION\""));
+    assert!(rust_ci.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
+    assert!(rust_ci.contains("--build-arg SOURCE_REVISION=\"$GITHUB_SHA\""));
+    assert!(release.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
+}

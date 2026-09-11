@@ -1,5 +1,6 @@
 #[allow(clippy::too_many_arguments)]
 pub mod application;
+pub mod build_info;
 pub mod config;
 pub mod domain;
 pub mod infrastructure;
