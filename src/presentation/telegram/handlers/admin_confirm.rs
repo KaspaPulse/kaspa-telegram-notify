@@ -375,10 +375,8 @@ mod tests {
 
     #[test]
     fn callback_data_stays_within_telegram_limit() {
-        let callback = confirmation_callback(
-            SensitiveAction::ToggleMaintenance,
-            "0123456789abcdef0123456789abcdef",
-        );
+        let nonce = generate_nonce().expect("system RNG should be available");
+        let callback = confirmation_callback(SensitiveAction::ToggleMaintenance, &nonce);
         assert!(callback.len() <= 64);
     }
 
@@ -386,16 +384,19 @@ mod tests {
     fn invalid_admin_do_callback_is_rejected() {
         assert!(action_from_admin_do_callback("bad").is_err());
         assert!(
-            action_from_admin_do_callback("admin_do:unknown:0123456789abcdef0123456789abcdef")
-                .is_err()
+            action_from_admin_do_callback(&format!(
+                "admin_do:unknown:{}",
+                generate_nonce().expect("system RNG should be available")
+            ))
+            .is_err()
         );
         assert!(action_from_admin_do_callback("admin_do:pause:short").is_err());
     }
 
     #[test]
     fn confirmation_is_bound_to_actor_chat_message_and_is_single_use() {
-        let nonce = "0123456789abcdef0123456789abcdef";
-        let key = nonce_hash(nonce).unwrap();
+        let nonce = generate_nonce().expect("system RNG should be available");
+        let key = nonce_hash(&nonce).unwrap();
         let confirmations = DashMap::new();
         let identity = RequestIdentity {
             actor_user_id: 42,
@@ -420,7 +421,7 @@ mod tests {
                 &confirmations,
                 identity,
                 SensitiveAction::Pause,
-                nonce,
+                &nonce,
                 100,
                 42,
                 42,
@@ -433,7 +434,7 @@ mod tests {
                 &confirmations,
                 identity,
                 SensitiveAction::Pause,
-                nonce,
+                &nonce,
                 100,
                 42,
                 42,
@@ -444,8 +445,8 @@ mod tests {
 
     #[test]
     fn another_actor_cannot_consume_the_confirmation() {
-        let nonce = "fedcba9876543210fedcba9876543210";
-        let key = nonce_hash(nonce).unwrap();
+        let nonce = generate_nonce().expect("system RNG should be available");
+        let key = nonce_hash(&nonce).unwrap();
         let confirmations = DashMap::new();
 
         confirmations.insert(
@@ -471,7 +472,7 @@ mod tests {
                 &confirmations,
                 attacker,
                 SensitiveAction::Pause,
-                nonce,
+                &nonce,
                 100,
                 42,
                 42,
@@ -483,8 +484,8 @@ mod tests {
 
     #[test]
     fn admin_confirmation_is_rejected_outside_private_chat() {
-        let nonce = "11111111111111112222222222222222";
-        let key = nonce_hash(nonce).unwrap();
+        let nonce = generate_nonce().expect("system RNG should be available");
+        let key = nonce_hash(&nonce).unwrap();
         let confirmations = DashMap::new();
 
         confirmations.insert(
@@ -510,7 +511,7 @@ mod tests {
                 &confirmations,
                 group_identity,
                 SensitiveAction::Pause,
-                nonce,
+                &nonce,
                 100,
                 42,
                 42,
