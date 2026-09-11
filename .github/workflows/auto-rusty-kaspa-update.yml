@@ -138,12 +138,21 @@ jobs:
 
           git commit -m "chore(deps): update rusty-kaspa"
           gh auth setup-git
-          git push --set-upstream origin $branch --force-with-lease
 
-          $existing = gh pr list --head $branch --base dev --json number --jq ".[0].number"
+          $existing = gh pr list --head $branch --base dev --state open --json number --jq ".[0].number"
           if ($existing) {
-            Write-Host "PR already exists: $existing"
+            Write-Host "Open PR already exists: $existing. Refusing to overwrite its branch."
             exit 0
+          }
+
+          git ls-remote --exit-code --heads origin "refs/heads/$branch" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Remote update branch '$branch' already exists without an open PR. Refusing automatic overwrite."
+          }
+          $global:LASTEXITCODE = 0
+          git push --set-upstream origin $branch
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to publish update branch '$branch'."
           }
 
           gh pr create `
