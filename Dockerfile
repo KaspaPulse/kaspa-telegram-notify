@@ -8,9 +8,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ARG TARGETARCH
 
+# Keep Cargo downloads and compiled dependencies reusable across source/version bumps.
+# Target caches are architecture-scoped; the final binary is copied to /out because
+# BuildKit cache-mount contents are intentionally not committed to image layers.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src \
+RUN --mount=type=cache,id=kaspa-pulse-cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=kaspa-pulse-cargo-git-${TARGETARCH},target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=kaspa-pulse-target-${TARGETARCH},target=/app/target,sharing=locked \
+    mkdir src \
     && printf 'fn main() {}\n' > src/main.rs \
     && touch src/lib.rs \
     && cargo build --locked --release --all-features \
@@ -20,8 +27,12 @@ COPY . .
 ARG SOURCE_REVISION=unknown
 ENV KASPA_PULSE_SOURCE_REVISION=$SOURCE_REVISION
 ENV SQLX_OFFLINE=true
-RUN touch src/main.rs \
-    && cargo build --locked --release --all-features
+RUN --mount=type=cache,id=kaspa-pulse-cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=kaspa-pulse-cargo-git-${TARGETARCH},target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=kaspa-pulse-target-${TARGETARCH},target=/app/target,sharing=locked \
+    touch src/main.rs \
+    && cargo build --locked --release --all-features \
+    && install -D -m 0755 target/release/kaspa-pulse /out/kaspa-pulse
 
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
 
@@ -39,7 +50,7 @@ LABEL org.opencontainers.image.source="https://github.com/KaspaPulse/kaspa-teleg
       org.opencontainers.image.revision="$SOURCE_REVISION"
 
 WORKDIR /app
-COPY --from=builder --chown=kaspa:kaspa /app/target/release/kaspa-pulse /usr/local/bin/kaspa-pulse
+COPY --from=builder --chown=kaspa:kaspa /out/kaspa-pulse /usr/local/bin/kaspa-pulse
 
 ENV PANIC_EVENT_MARKER_PATH=/var/lib/kaspa-pulse/panic_event_pending.json
 

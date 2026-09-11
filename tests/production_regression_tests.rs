@@ -768,3 +768,18 @@ fn production_http_clients_must_be_fallible_and_versioned() {
     assert!(main.contains("Arc::new(CoinGeckoAdapter::new()?)"));
     assert!(main.contains("spawn_price_monitor(") && main.contains(")?;"));
 }
+
+#[test]
+fn docker_build_cache_is_arch_scoped_and_preserves_final_binary() {
+    let dockerfile = read_source("Dockerfile");
+
+    assert!(dockerfile.contains("ARG TARGETARCH"));
+    assert!(dockerfile.contains("id=kaspa-pulse-cargo-registry-${TARGETARCH}"));
+    assert!(dockerfile.contains("id=kaspa-pulse-cargo-git-${TARGETARCH}"));
+    assert!(dockerfile.contains("id=kaspa-pulse-target-${TARGETARCH}"));
+    assert!(dockerfile.matches("sharing=locked").count() >= 6);
+    assert!(dockerfile.contains("install -D -m 0755 target/release/kaspa-pulse /out/kaspa-pulse"));
+    assert!(dockerfile.contains(
+        "COPY --from=builder --chown=kaspa:kaspa /out/kaspa-pulse /usr/local/bin/kaspa-pulse"
+    ));
+}
