@@ -1,7 +1,7 @@
 header:
   schema-version: "2.2.0"
-  last-updated: "2026-08-08"
-  last-reviewed: "2026-08-08"
+  last-updated: "2026-09-11"
+  last-reviewed: "2026-09-11"
   url: "https://raw.githubusercontent.com/KaspaPulse/kaspa-telegram-notify/main/security-insights.yml"
   comment: "Machine-readable security posture for the canonical Kaspa Pulse repository."
 
@@ -66,15 +66,15 @@ repository:
         comment: "Canonical signed GitHub Releases."
     attestations:
       - name: "SLSA build provenance"
-        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.2.0/kaspa-pulse-1.2.0-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.2.1/kaspa-pulse-1.2.1-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
         predicate-uri: "https://slsa.dev/provenance/v1"
-        comment: "Cryptographically signed provenance for the v1.2.0 Linux x86_64 release archive."
+        comment: "Cryptographically signed provenance for the v1.2.1 Linux x86_64 release archive."
   security:
     assessments:
       self:
         name: "Kaspa Pulse security posture review"
-        date: "2026-08-08"
-        evidence: "https://github.com/KaspaPulse/kaspa-telegram-notify/actions/runs/31278117325"
+        date: "2026-09-11"
+        evidence: "https://github.com/KaspaPulse/kaspa-telegram-notify/actions/runs/34586958822"
         comment: "Maintainer review backed by the current OpenSSF Scorecard run, signed release evidence, CodeQL, dependency scanning, fuzzing, and protected pull-request CI."
     champions:
       - name: "KaspaPulse"
