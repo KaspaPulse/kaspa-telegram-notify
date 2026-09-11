@@ -3,6 +3,24 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
+const WALLET_DATA_UNAVAILABLE_MESSAGE: &str =
+    "❌ <b>Wallet data is temporarily unavailable.</b>\nPlease try again.";
+
+pub(super) fn wallet_data_unavailable_message() -> &'static str {
+    WALLET_DATA_UNAVAILABLE_MESSAGE
+}
+
+pub(super) fn log_wallet_data_error(
+    operation: &'static str,
+    error: &crate::domain::errors::AppError,
+) {
+    tracing::error!(
+        operation,
+        error = %crate::utils::sanitize_for_log(&error.to_string()),
+        "[DATABASE ERROR] Wallet data operation failed."
+    );
+}
+
 pub async fn handle_add(
     bot: Bot,
     msg: Message,
@@ -121,8 +139,9 @@ pub async fn handle_list(
 ) -> anyhow::Result<()> {
     let wallets = match wallet_query.get_list(cid).await {
         Ok(wallets) => wallets,
-        Err(e) => {
-            crate::send_logged!(bot, msg, format!("❌ {}", e));
+        Err(error) => {
+            log_wallet_data_error("list_wallets_command", &error);
+            crate::send_logged!(bot, msg, WALLET_DATA_UNAVAILABLE_MESSAGE);
             return Ok(());
         }
     };
@@ -154,8 +173,9 @@ pub async fn handle_balance(
 ) -> anyhow::Result<()> {
     let wallet_details = match wallet_query.get_wallet_balances(cid).await {
         Ok(details) => details,
-        Err(e) => {
-            crate::send_logged!(bot, msg, format!("❌ Error: {}", e));
+        Err(error) => {
+            log_wallet_data_error("wallet_balance_command", &error);
+            crate::send_logged!(bot, msg, WALLET_DATA_UNAVAILABLE_MESSAGE);
             return Ok(());
         }
     };
@@ -230,7 +250,21 @@ pub async fn handle_wallet_panel(
     index: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
-    let wallets = wallet_query.get_list(cid).await.unwrap_or_default();
+    let wallets = match wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            log_wallet_data_error("wallet_panel", &error);
+            edit_text(
+                &bot,
+                chat_id,
+                message_id,
+                WALLET_DATA_UNAVAILABLE_MESSAGE.to_string(),
+                crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+            )
+            .await;
+            return Err(error.into());
+        }
+    };
 
     let Some(address) = wallets.get(index) else {
         edit_text(
@@ -266,10 +300,21 @@ pub async fn handle_wallet_balance_detail(
     index: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
-    let details = wallet_query
-        .get_wallet_balances(cid)
-        .await
-        .unwrap_or_default();
+    let details = match wallet_query.get_wallet_balances(cid).await {
+        Ok(details) => details,
+        Err(error) => {
+            log_wallet_data_error("wallet_balance_detail", &error);
+            edit_text(
+                &bot,
+                chat_id,
+                message_id,
+                WALLET_DATA_UNAVAILABLE_MESSAGE.to_string(),
+                crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+            )
+            .await;
+            return Err(error.into());
+        }
+    };
 
     let Some(detail) = details.get(index) else {
         edit_text(
@@ -336,7 +381,21 @@ pub async fn handle_wallet_remove_confirm(
     index: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
-    let wallets = wallet_query.get_list(cid).await.unwrap_or_default();
+    let wallets = match wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            log_wallet_data_error("wallet_remove_confirm", &error);
+            edit_text(
+                &bot,
+                chat_id,
+                message_id,
+                WALLET_DATA_UNAVAILABLE_MESSAGE.to_string(),
+                crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+            )
+            .await;
+            return Err(error.into());
+        }
+    };
 
     let Some(address) = wallets.get(index) else {
         edit_text(

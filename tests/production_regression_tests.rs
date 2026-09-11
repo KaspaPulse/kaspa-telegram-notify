@@ -783,3 +783,39 @@ fn docker_build_cache_is_arch_scoped_and_preserves_final_binary() {
         "COPY --from=builder --chown=kaspa:kaspa /out/kaspa-pulse /usr/local/bin/kaspa-pulse"
     ));
 }
+
+#[test]
+fn wallet_ui_must_fail_closed_when_wallet_database_reads_fail() {
+    let wallet = read_source("src/presentation/telegram/handlers/wallet.rs");
+    let handlers = read_source("src/presentation/telegram/handlers/mod.rs");
+
+    assert!(!wallet.contains("get_list(cid).await.unwrap_or_default()"));
+    assert!(!handlers.contains("get_list(cid).await.unwrap_or_default()"));
+    assert!(
+        !wallet.contains(".get_wallet_balances(cid)\n        .await\n        .unwrap_or_default()")
+    );
+    assert!(wallet.contains("Wallet data is temporarily unavailable."));
+    assert!(wallet.contains("sanitize_for_log(&error.to_string())"));
+
+    let list_handler = extract_between(
+        &wallet,
+        "pub async fn handle_list",
+        "pub async fn handle_balance",
+    );
+    assert!(list_handler.contains("WALLET_DATA_UNAVAILABLE_MESSAGE"));
+    assert!(!list_handler.contains("format!(\"❌ {}\", e)"));
+
+    let balance_handler = extract_between(
+        &wallet,
+        "pub async fn handle_balance",
+        "pub async fn handle_wallet_panel",
+    );
+    assert!(balance_handler.contains("WALLET_DATA_UNAVAILABLE_MESSAGE"));
+    assert!(!balance_handler.contains("format!(\"❌ Error: {}\", e)"));
+
+    assert!(handlers.contains("wallet::wallet_data_unavailable_message()"));
+    assert!(handlers.contains("wallet::log_wallet_data_error(\"render_wallet_panel\", &error)"));
+    assert!(
+        handlers.contains("wallet::log_wallet_data_error(\"render_remove_wallet_panel\", &error)")
+    );
+}
