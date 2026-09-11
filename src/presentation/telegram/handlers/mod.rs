@@ -1618,7 +1618,24 @@ async fn render_wallet_panel(
     ucs: &BotUseCases,
     cid: i64,
 ) -> anyhow::Result<()> {
-    let wallets = ucs.wallet_query.get_list(cid).await.unwrap_or_default();
+    let wallets = match ucs.wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            wallet::log_wallet_data_error("render_wallet_panel", &error);
+            let _ = bot
+                .edit_message_text(
+                    chat_id,
+                    message_id,
+                    wallet::wallet_data_unavailable_message(),
+                )
+                .parse_mode(ParseMode::Html)
+                .reply_markup(
+                    crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+                )
+                .await;
+            return Err(error.into());
+        }
+    };
 
     let text = if wallets.is_empty() {
         "👛 <b>Wallets</b>\n━━━━━━━━━━━━━━━━━━\nNo tracked wallets yet.\n\nPress Add Wallet and send your <code>kaspa:...</code> address.".to_string()
@@ -1652,7 +1669,24 @@ async fn render_remove_wallet_panel(
     ucs: &BotUseCases,
     cid: i64,
 ) -> anyhow::Result<()> {
-    let wallets = ucs.wallet_query.get_list(cid).await.unwrap_or_default();
+    let wallets = match ucs.wallet_query.get_list(cid).await {
+        Ok(wallets) => wallets,
+        Err(error) => {
+            wallet::log_wallet_data_error("render_remove_wallet_panel", &error);
+            let _ = bot
+                .edit_message_text(
+                    chat_id,
+                    message_id,
+                    wallet::wallet_data_unavailable_message(),
+                )
+                .parse_mode(ParseMode::Html)
+                .reply_markup(
+                    crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
+                )
+                .await;
+            return Err(error.into());
+        }
+    };
 
     if wallets.is_empty() {
         let _ = bot
