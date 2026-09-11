@@ -219,7 +219,7 @@ Step "Find and verify rusty-kaspa release pin" {
     $script:LatestTag = Get-LatestKaspaReleaseTag -AllowPrerelease:$AllowPrerelease
     $script:LatestRev = Get-KaspaTagRevision -Tag $script:LatestTag
     Write-Host "Highest eligible rusty-kaspa tag: $script:LatestTag"
-    Write-Host "Immutable revision for $script:LatestTag: $script:LatestRev"
+    Write-Host "Immutable revision for $($script:LatestTag): $script:LatestRev"
 
     $script:CurrentPins = @(Get-CurrentKaspaPins)
     $currentVersions = @($script:CurrentPins.Version | Sort-Object -Unique)
