@@ -98,10 +98,8 @@ fn request_identity_requires_private_actor_and_chat_match_for_admin() {
 
 #[test]
 fn confirmation_callback_fits_telegram_limit() {
-    let callback = confirmation_callback(
-        SensitiveAction::ToggleMaintenance,
-        "0123456789abcdef0123456789abcdef",
-    );
+    let nonce = format!("{:032x}", std::process::id());
+    let callback = confirmation_callback(SensitiveAction::ToggleMaintenance, &nonce);
 
     assert!(callback.len() <= 64);
 }

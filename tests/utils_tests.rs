@@ -36,11 +36,11 @@ fn add_wallet_rate_limit_blocks_burst() {
 
 #[test]
 fn admin_confirmation_nonce_is_redacted_from_callback_logs() {
-    let nonce = "0123456789abcdef0123456789abcdef";
+    let nonce = format!("{:032x}", std::process::id());
     let safe = sanitize_callback_data_for_log(&format!("admin_do:resume:{nonce}"));
 
     assert_eq!(safe, "admin_do:resume:[REDACTED]");
-    assert!(!safe.contains(nonce));
+    assert!(!safe.contains(&nonce));
 }
 
 #[test]
