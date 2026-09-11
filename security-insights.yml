@@ -66,15 +66,15 @@ repository:
         comment: "Canonical signed GitHub Releases."
     attestations:
       - name: "SLSA build provenance"
-        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.2.1/kaspa-pulse-1.2.1-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.2.2/kaspa-pulse-1.2.2-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
         predicate-uri: "https://slsa.dev/provenance/v1"
-        comment: "Cryptographically signed provenance for the v1.2.1 Linux x86_64 release archive."
+        comment: "Cryptographically signed provenance for the v1.2.2 Linux x86_64 release archive."
   security:
     assessments:
       self:
         name: "Kaspa Pulse security posture review"
         date: "2026-09-11"
-        evidence: "https://github.com/KaspaPulse/kaspa-telegram-notify/actions/runs/34586958822"
+        evidence: "https://github.com/KaspaPulse/kaspa-telegram-notify/actions/runs/34607349286"
         comment: "Maintainer review backed by the current OpenSSF Scorecard run, signed release evidence, CodeQL, dependency scanning, fuzzing, and protected pull-request CI."
     champions:
       - name: "KaspaPulse"

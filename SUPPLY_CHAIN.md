@@ -19,10 +19,10 @@ The release workflow uses GitHub OIDC and ephemeral Sigstore signing through Git
 
 Install the GitHub CLI, authenticate to GitHub if required, and download the assets for the release you want to verify.
 
-For `v1.2.1` on Linux x86_64:
+For `v1.2.2` on Linux x86_64:
 
 ```bash
-archive="kaspa-pulse-1.2.1-x86_64-unknown-linux-gnu.tar.gz"
+archive="kaspa-pulse-1.2.2-x86_64-unknown-linux-gnu.tar.gz"
 
 sha256sum --check "${archive}.sha256"
 
