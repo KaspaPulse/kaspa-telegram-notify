@@ -1334,6 +1334,7 @@ pub async fn handle_callback(
                 msg.chat().id.0,
                 index,
                 ucs.wallet_query.clone(),
+                app_context.clone(),
             )
             .await?;
         }

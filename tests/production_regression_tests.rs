@@ -819,3 +819,17 @@ fn wallet_ui_must_fail_closed_when_wallet_database_reads_fail() {
         handlers.contains("wallet::log_wallet_data_error(\"render_remove_wallet_panel\", &error)")
     );
 }
+
+#[test]
+fn telegram_http_requests_use_central_policy_or_shared_price_cache() {
+    let wallet = read_source("src/presentation/telegram/handlers/wallet.rs");
+    let network = read_source("src/presentation/telegram/handlers/network.rs");
+
+    assert!(!wallet.contains("reqwest::get("));
+    assert!(!network.contains("reqwest::get("));
+    assert!(wallet.matches("price_cache.read().await.0").count() >= 2);
+    assert!(network.contains("build_http_client()"));
+    assert!(network.contains("with_timeout_result("));
+    assert!(network.contains("error_for_status()"));
+    assert!(network.contains("sanitize_for_log(&error)"));
+}

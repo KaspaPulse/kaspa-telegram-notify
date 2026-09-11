@@ -184,48 +184,73 @@ pub async fn handle_dag(
     Ok(())
 }
 
-pub async fn handle_fees(bot: Bot, msg: Message) -> anyhow::Result<()> {
-    if let Ok(response) = reqwest::get("https://api.kaspa.org/info/fee-estimate").await
-        && let Ok(json) = response.json::<serde_json::Value>().await
-    {
-        let normal = json["normalBuckets"][0]["feerate"].as_f64().unwrap_or(1.0);
-        let priority = json["priorityBucket"]["feerate"]
-            .as_f64()
-            .unwrap_or(normal * 1.5);
-        let low = json["lowBuckets"][0]["feerate"]
-            .as_f64()
-            .unwrap_or(normal * 0.5);
+async fn fetch_fee_estimate() -> Result<serde_json::Value, String> {
+    let client = crate::infrastructure::resilience::runtime::build_http_client()
+        .map_err(|error| error.to_string())?;
+    let timeout = crate::infrastructure::resilience::runtime::http_timeout_duration();
+    let response = crate::infrastructure::resilience::runtime::with_timeout_result(
+        "kaspa.org fee estimate request",
+        timeout,
+        client.get("https://api.kaspa.org/info/fee-estimate").send(),
+    )
+    .await?;
+    let response = response
+        .error_for_status()
+        .map_err(|error| format!("kaspa.org fee estimate HTTP status failed: {error}"))?;
 
-        let text = format!(
-            "⛽ <b>Network Fee Market</b>\n\
+    crate::infrastructure::resilience::runtime::with_timeout_result(
+        "kaspa.org fee estimate json parse",
+        timeout,
+        response.json::<serde_json::Value>(),
+    )
+    .await
+}
+
+pub async fn handle_fees(bot: Bot, msg: Message) -> anyhow::Result<()> {
+    match fetch_fee_estimate().await {
+        Ok(json) => {
+            let normal = json["normalBuckets"][0]["feerate"].as_f64().unwrap_or(1.0);
+            let priority = json["priorityBucket"]["feerate"]
+                .as_f64()
+                .unwrap_or(normal * 1.5);
+            let low = json["lowBuckets"][0]["feerate"]
+                .as_f64()
+                .unwrap_or(normal * 0.5);
+
+            let text = format!(
+                "⛽ <b>Network Fee Market</b>\n\
                  ━━━━━━━━━━━━━━━━━━\n\
                  🚀 <b>Priority:</b> <code>{:.2} sompi/gram</code>\n\
                  ⚡ <b>Normal:</b> <code>{:.2} sompi/gram</code>\n\
                  🐢 <b>Low:</b> <code>{:.2} sompi/gram</code>\n\n\
                  <i>* Standard transaction size is ~3000 mass.</i>\n\n\
                  ⏱️ <code>{}</code>",
-            priority,
-            normal,
-            low,
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        );
+                priority,
+                normal,
+                low,
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            );
 
-        let markup = crate::utils::refresh_markup("refresh_fees");
-
-        let _ = crate::utils::send_reply_or_edit_log(
-            &bot,
-            msg.chat.id,
-            msg.id,
-            msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id),
-            text,
-            Some(markup),
-        )
-        .await;
-
-        return Ok(());
+            let markup = crate::utils::refresh_markup("refresh_fees");
+            let _ = crate::utils::send_reply_or_edit_log(
+                &bot,
+                msg.chat.id,
+                msg.id,
+                msg.from.as_ref().filter(|u| u.is_bot).map(|_| msg.id),
+                text,
+                Some(markup),
+            )
+            .await;
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %crate::utils::sanitize_for_log(&error),
+                "[NETWORK FEES] Kaspa.org fee estimate request failed."
+            );
+            crate::send_logged!(bot, msg, "⚠️ Kaspa.org API unreachable.");
+        }
     }
 
-    crate::send_logged!(bot, msg, "⚠️ Kaspa.org API unreachable.");
     Ok(())
 }
 
