@@ -1,111 +1,104 @@
-# Project State — functional closure v1.2.6
+# Project State — runtime migration contract correction v1.2.7
 
-Repository: KaspaPulse/kaspa-telegram-notify only.
-Development host: kas. Worktree:
-`/home/kas/kaspa-telegram-functional-closure-v126-20260912`
-Branch: `fix/functional-closure-f01-f10-v1.2.6-20260912`
-Base: `02ad378c1525f8841c8deadab7180ea96a51a612`
-Resolve current HEAD and working-tree status with Git; do not substitute a historical SHA.
+Repository: KaspaPulse/kaspa-telegram-notify only. AGENTS.md remains authoritative.
+Development: kas only. Production: dns; no production access/change during this continuation.
+Worktree: `/home/kas/kaspa-telegram-runtime-contract-v127-20260912`
+Branch: `fix/runtime-schema-contract-v1.2.7-20260912`
+Base: `71fb0aaf3acd2e519acb90f11e990efae5ab373c` (protected main, PR #58).
+Always verify actual Git HEAD, branch and working tree before resuming.
+AGENTS.override.md was absent. No PLANS.md was needed/read.
 
-## Current task and source state
+## Reconciled publication history
 
-The existing F-01…F-10 remediation is implemented, including the final review
-corrections to F-01 concurrent subscription safety, F-01 migration privileges,
-F-06 response length/non-recursive logging, and the F-11 runtime event-write
-privilege contract discovered during artifact acceptance. The scoped report is
-`FUNCTIONAL_CLOSURE_REPORT.md`.
+The user approved publication/deployment after local qualification. The single
+real branch push was completed; PR #58 passed all protected CI and was squash
+merged to the base SHA above. GitHub published signed release v1.2.6 at that SHA.
+The original eleven local checkpoints and their worktree are preserved:
+`/home/kas/kaspa-telegram-functional-closure-v126-20260912` at `a5bbc129...`.
 
-The latest user instruction forbids any push to real GitHub. Work and
-qualification remain local. Production deployment is outside this instruction.
+An ARM64 binary was then built on kas from the exact merged SHA. Its Ubuntu 24.04
+runtime qualification exposed F-12 before production was accessed: a database
+prepared exclusively by versioned migrations lacked system_settings access and
+wallet/reward write privileges. The CI preparation script had supplied some of
+those grants separately and hid the missing production migration contract.
+Therefore v1.2.6 is NOT qualified for production deployment. Do not deploy it,
+rewrite its published commit/tag/assets, or apply undocumented production grants.
 
-## Commit-bound qualification and NEXT ACTION
+## Current correction
 
-Final validation is stored as a local Git note so recording the result does not
-change the tested/built source SHA:
+The v1.2.7 candidate adds one migration defining the required runtime DML for
+system_settings, user_wallets, wallet_seen_utxos, pending_rewards, mined_blocks
+and wallet_alert_dedup, plus the mined-block ID sequence USAGE. It adds no schema
+CREATE, TRUNCATE, unused legacy-table access, or administrative privilege.
+CI preparation now adds only its existing test reset TRUNCATE privileges; all
+runtime DML must come from the same versioned migrations used for deployment.
+
+The new migrations-only regression creates a unique database, applies every SQL
+migration in lexical order as the admin role, and exercises the real repository
+as kaspa_pulse_app. It checks settings, wallet insert/update, UTXO state,
+pending-reward insert/update, mined-block insertion, deduplication and forget-all.
+It closes/drops its isolated DB before checking the result. It neither grants
+runtime privileges itself nor relies on CI grants in the ordinary test DB.
+RED: permission denied system_settings with 20 migrations. GREEN: the actual
+workflows pass with 21 migrations. The unchanged merged ARM64 binary also passes
+the runtime schema proof after adding only the proposed migration: settings,
+commands, event persistence, queue delivery, invalid-value fail-closed and clean
+idle shutdown. This is not a v1.2.7 production artifact qualification.
+The isolated mock can return HTTP 200 with readiness body degraded (inactive
+subscription / stale scan); the harness records it explicitly per the existing
+readiness contract. It does not prove live integrations. Final local qualification
+is commit-bound.
+
+## Qualification and NEXT ACTION
 
 ```bash
 git status --short --branch
 git rev-parse HEAD
-git notes --ref=refs/notes/functional-closure-v126 show HEAD
+git notes --ref=refs/notes/runtime-contract-v127 show HEAD
 ```
 
-Read that note and verify its `source_revision` equals actual HEAD. It records
-the final test results, image identity, evidence directory, limitations and
-`next_action`. The note is checkpointed to the existing local remote.
+If the note is missing or incomplete, inspect existing logs/processes and finish
+only the missing gate. Do not repeat passed tests or an active artifact build.
+If it reports LOCAL_COMPLETE, the correction is ready for a publication decision.
+The task's explicit EXACTLY ONE real push allowance was already consumed by
+v1.2.6. A second real branch push requires an explicit user exception/new release
+cycle authorization. Prepare the correction fully before asking. Until then,
+use only the existing local mirror and do not deploy.
 
-- If the note says `LOCAL_COMPLETE` and the worktree is clean, local remediation
-  is complete. NEXT ACTION: retain the qualified checkpoint and await an explicit
-  publication instruction. Do not rerun the audit or push to GitHub.
-- If the note is missing or a gate is incomplete, NEXT ACTION: inspect the
-  commit-specific evidence below and complete only the missing/failed gate.
-  Do not infer qualification from source changes or this document alone.
+After that authorization: one validated corrective branch push, protected PR/CI,
+squash merge (required by main protection), then build/package the exact merged
+SHA on kas, verify the ARM64 native artifact on Ubuntu 24.04, preserve production
+rollback, deploy, and verify production health/integrations. Do not build on dns.
 
-Final evidence directory:
-`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_FUNCTIONAL_CLOSURE_V126_FINAL_20260912/<HEAD>/`
+## Evidence and continuity
 
-## Historical evidence and what must not be repeated
+v1.2.6 publication and failed ARM qualification:
+`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_V126_PUBLICATION_20260912/`
+`/home/kas/kaspa-telegram-artifacts/71fb0aaf3acd2e519acb90f11e990efae5ab373c/`
+Current F-12 evidence:
+`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_RUNTIME_CONTRACT_V127_20260912/`
+Final per-commit qualification belongs below that directory and in the Git note.
+Report: `FUNCTIONAL_CLOSURE_REPORT.md` (includes the historical verification limits).
 
-Historical candidate `5edc43cae00a33d00cfc703f95af1da5988743ef` had 269 passing
-test executions (24 binaries; 213 unique test names), including F-01…F-10 10/10,
-and an image/mock smoke. Its smoke continued past the quoted timeout.
-These results are historical and do not qualify later source edits.
+Original v1.2.6 qualification: 277 executions / 26 binaries / 218 unique names;
+F-01 through F-10 10/10 plus F-11 passed. Its 64-file manifest is unchanged. These
+are historical results, not proof that migrations-only bootstrap succeeded.
 
-Candidate 9ba11c1f86c24c3dcb2b242ea80244fa0bc095f6 then passed 276 test
-executions and built its image, but artifact startup exposed F-11 event INSERT
-permission loss plus mock schema defects. It is not the final qualified release.
+## Reuse constraints
 
-Evidence and continuation scripts:
-`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_FUNCTIONAL_CLOSURE_V126_20260912_5edc43c/resume/`
-
-Confirmed recurring failure knowledge:
-
-- Host PostgreSQL CLI tools are absent; use the task container's psql through
-  `docker exec -i`. The Rust tests connect to loopback.
-- Run every migration in lexical order. The F-01 migration must follow legacy
-  schema creation and establish its complete runtime SELECT/DELETE contract.
-  Do not replace missing migration grants with unexplained fixture grants.
-- Telegram Bot::new uses its normal API hostname. The runtime fixture resolves
-  api.telegram.org to a TLS mock and trusts the existing test CA bundle.
-- The old permissive Telegram mock accepted oversized messages; the final
-  mock enforces 4096 UTF-16 units. /logs must stay within 4000 including HTML.
-- Runtime event persistence also requires bot_event_log INSERT and its id
-  sequence USAGE. The separate F-11 migration and actual app-role test protect
-  this documented bootstrap contract. Do not add ad-hoc fixture grants.
-- Telegram getMe must include the fields required by pinned Teloxide Me. Kaspa
-  transport subscriptions use subscribe/unsubscribe and SubscribeResponse.id;
-  a mock that only supports notifyVirtualDaaScoreChanged is insufficient.
-- Do not count a filtered-out test as executed. Preserve commands, SHA and
-  exit codes with the final test output.
-- Internal Docker network host-published ports may refuse connections. Run smoke
-  HTTP from the mock container against the app network hostname; retain isolation.
-  The corrected fixture and migrated DB passed the full pilot on 9ba11c1; only
-  final-HEAD qualification recorded by the matching Git note closes the gate.
-
-Task-owned fixtures, if retained: PostgreSQL `kp-fc-resume-pg`, test DB
-`kaspa_dev` on `127.0.0.1:55436`, separate runtime DB `kaspa_smoke`;
-internal Docker network `kp-fc-runtime-net`; mock containers
-`kp-fc-resume-tg` and `kp-fc-resume-node`. Inspect their state before reuse.
-Synthetic environment files belong to evidence directories, never Git.
-
-## Git and execution constraints
-
-local fetch/push:
-`/home/kas/kaspa-telegram-dev/local-git/kaspa-telegram-notify.git`
-origin fetch:
-`https://github.com/KaspaPulse/kaspa-telegram-notify.git`
-origin push:
-`local-first-push-disabled://KaspaPulse/kaspa-telegram-notify.git`
-
-Preserve the branch, local mirror, history and existing checkpoints.
-Use FIX → TEST → VERIFY → REVIEW → LOCAL COMMIT → CONTINUE.
-Do not reset, discard, rebase, squash or force-push this work.
-Do not alter any other repository's policies or worktrees.
-
-AGENTS.md was read fully and governs the kas/dns boundary.
-AGENTS.override.md was absent at recovery; check for newly introduced
-instructions before future work. PROJECT_STATE.md was absent at recovery
-and was created during this continuation. No PLANS.md was needed/read.
-
-A later publication instruction must still follow AGENTS.md: protected CI
-and merge, then build/deploy the exact merged SHA outside production.
-Never deploy this local candidate merely because its local gates passed.
+- Preserve original worktrees, eleven checkpoints, history, remotes and notes.
+- local: `/home/kas/kaspa-telegram-dev/local-git/kaspa-telegram-notify.git`
+- origin fetch: `https://github.com/KaspaPulse/kaspa-telegram-notify.git`
+- origin push remains `local-first-push-disabled://KaspaPulse/kaspa-telegram-notify.git`.
+- Keep FIX → TEST → VERIFY → REVIEW → LOCAL COMMIT → CONTINUE.
+- PostgreSQL clients run inside task containers; host psql is absent.
+- Development test container: kp-f12-dev-pg, loopback 55436, kaspa_dev.
+- Isolated native fixture: kp-fc-runtime-net (internal), kp-fc-resume-pg,
+  kp-fc-resume-tg, kp-fc-resume-node, kp-fc-resume-app. Inspect before reusing.
+- Fixture HTTP must run inside the internal network, not host-published ports.
+- Reuse corrected Telegram TLS and Kaspa subscribe/unsubscribe mocks; synthetic
+  environment files and private certificate keys must never enter Git.
+- Never run ci-prepare-postgres.sh on production: it resets a synthetic test role
+  password and grants CI-only TRUNCATE. Production applies versioned SQL as admin.
+- Busy price refresh may exceed the documented three-second shutdown drain;
+  retain bounded-shutdown evidence and verify clean shutdown separately at idle.

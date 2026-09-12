@@ -58,7 +58,7 @@ done < <(
     sort
 )
 
-echo "Granting runtime DML and CI-only reset privileges..."
+echo "Granting CI-only reset privileges; runtime DML comes from migrations..."
 psql "$DATABASE_ADMIN_URL" \
     -v ON_ERROR_STOP=1 <<'SQL'
 GRANT TRUNCATE ON TABLE
@@ -67,21 +67,6 @@ GRANT TRUNCATE ON TABLE
     user_wallets
 TO kaspa_pulse_app;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-    user_wallets
-TO kaspa_pulse_app;
-
-GRANT SELECT, INSERT, DELETE ON TABLE
-    wallet_alert_dedup
-TO kaspa_pulse_app;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-    wallet_seen_utxos
-TO kaspa_pulse_app;
-
-GRANT SELECT, INSERT, UPDATE ON TABLE
-    system_settings
-TO kaspa_pulse_app;
 SQL
 
 echo "Verifying the complete CI runtime privilege matrix..."
