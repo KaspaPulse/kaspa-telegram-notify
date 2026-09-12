@@ -221,18 +221,12 @@ pub async fn handle_sys(bot: Bot, msg: Message, monitoring_status: bool) -> anyh
 
 pub async fn handle_logs(bot: Bot, msg: Message) -> anyhow::Result<()> {
     let lines = crate::infrastructure::recent_logs::recent_lines(25);
-    let content = if lines.is_empty() {
-        "No recent in-process service logs are available yet.".to_string()
-    } else {
-        lines.join("\n")
-    };
-    let safe = crate::utils::html_escape(&content);
-
-    crate::send_logged!(
-        bot,
-        msg,
-        format!("📜 <b>Recent Service Logs</b>\n<pre>{}</pre>", safe)
-    );
+    let text = crate::infrastructure::recent_logs::response_html(&lines);
+    // Do not feed the log response back into the tracing buffer it displays.
+    bot.send_message(msg.chat.id, text)
+        .reply_parameters(teloxide::types::ReplyParameters::new(msg.id))
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
     Ok(())
 }
 

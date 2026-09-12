@@ -54,6 +54,63 @@ pub fn recent_lines(limit: usize) -> Vec<String> {
         .collect()
 }
 
+// Keep the complete encoded HTML below Telegram's limit as well as the rendered
+// text. Budget UTF-16 units so supplementary Unicode characters remain safe.
+const RESPONSE_MAX_UTF16_UNITS: usize = 4_000;
+const RESPONSE_HEADER: &str = "📜 <b>Recent Service Logs</b>\n<pre>";
+const RESPONSE_FOOTER: &str = "</pre>";
+const RESPONSE_OMITTED: &str = "[Earlier log content omitted]\n";
+
+pub fn response_html(lines: &[String]) -> String {
+    if lines.is_empty() {
+        return format!(
+            "{RESPONSE_HEADER}No recent in-process service logs are available yet.{RESPONSE_FOOTER}"
+        );
+    }
+
+    let overhead = [RESPONSE_HEADER, RESPONSE_FOOTER, RESPONSE_OMITTED]
+        .iter()
+        .map(|part| part.encode_utf16().count())
+        .sum::<usize>();
+    let mut remaining = RESPONSE_MAX_UTF16_UNITS - overhead;
+    let mut selected = Vec::new();
+    let mut omitted = false;
+    for line in lines.iter().rev() {
+        let safe = crate::utils::html_escape(line);
+        let units = safe.encode_utf16().count();
+        let separator = usize::from(!selected.is_empty());
+        if units + separator <= remaining {
+            remaining -= units + separator;
+            selected.push(safe);
+        } else {
+            // Preserve at least part of the newest event even when one line
+            // alone exceeds the response budget. Escape complete characters.
+            if selected.is_empty() {
+                let mut partial = String::new();
+                for character in line.chars() {
+                    let escaped = crate::utils::html_escape(&character.to_string());
+                    let units = escaped.encode_utf16().count();
+                    if units + 1 > remaining {
+                        break;
+                    }
+                    remaining -= units;
+                    partial.push_str(&escaped);
+                }
+                partial.push('…');
+                selected.push(partial);
+            }
+            omitted = true;
+            break;
+        }
+    }
+    selected.reverse();
+    let notice = if omitted { RESPONSE_OMITTED } else { "" };
+    format!(
+        "{RESPONSE_HEADER}{notice}{}{RESPONSE_FOOTER}",
+        selected.join("\n")
+    )
+}
+
 #[derive(Default)]
 struct FieldVisitor {
     rendered: String,
@@ -101,6 +158,61 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn f06_log_response_bounds_long_events_and_keeps_newest_in_order() {
+        let lines = (0..25)
+            .map(|index| format!("event-{index:02}: {}", "x".repeat(1_000)))
+            .collect::<Vec<_>>();
+        // This is the old handler's message payload: it violates Telegram's limit.
+        let previous = format!("{RESPONSE_HEADER}{}{RESPONSE_FOOTER}", lines.join("\n"));
+        assert!(previous.encode_utf16().count() > 4_096);
+
+        let response = response_html(&lines);
+        assert!(response.encode_utf16().count() <= RESPONSE_MAX_UTF16_UNITS);
+        assert!(response.contains(RESPONSE_OMITTED));
+        assert!(!response.contains("event-00:"));
+        let previous_event = response.find("event-23:").unwrap();
+        let newest_event = response.find("event-24:").unwrap();
+        assert!(previous_event < newest_event);
+        assert!(response.ends_with(RESPONSE_FOOTER));
+    }
+
+    #[test]
+    fn f06_log_response_truncates_unicode_without_broken_html_entities() {
+        let line = format!("newest: {}", "🧪&<>'\"".repeat(1_000));
+        let response = response_html(&[line]);
+        assert!(response.encode_utf16().count() <= RESPONSE_MAX_UTF16_UNITS);
+        assert!(response.contains("newest: 🧪&amp;&lt;&gt;&#39;&quot;"));
+        assert!(response.ends_with("…</pre>"));
+        let body = response
+            .strip_prefix(RESPONSE_HEADER)
+            .unwrap()
+            .strip_suffix(RESPONSE_FOOTER)
+            .unwrap();
+        assert!(!body.contains('<'));
+        assert!(!body.contains('>'));
+        // Every encoded ampersand must begin a complete entity.
+        for entity in body.split('&').skip(1) {
+            assert!(
+                ["amp;", "lt;", "gt;", "quot;", "#39;"]
+                    .iter()
+                    .any(|known| entity.starts_with(known))
+            );
+        }
+    }
+
+    #[test]
+    fn f06_log_response_preserves_short_events_and_explicit_empty_state() {
+        let response = response_html(&["first <event>".to_string(), "second 🧪".to_string()]);
+        assert_eq!(
+            response,
+            format!("{RESPONSE_HEADER}first &lt;event&gt;\nsecond 🧪{RESPONSE_FOOTER}")
+        );
+        let empty = response_html(&[]);
+        assert!(empty.contains("No recent in-process service logs are available yet."));
+        assert!(!empty.contains(RESPONSE_OMITTED));
+    }
 
     #[test]
     fn f06_recent_logs_are_bounded_and_sanitized() {
