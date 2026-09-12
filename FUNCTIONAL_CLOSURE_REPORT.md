@@ -128,3 +128,28 @@ on its own branch from that merged SHA and pushed only to the existing local
 mirror. A second real push requires the user exception documented in PROJECT_STATE.md.
 PROJECT_STATE.md contains the exact recovery commands and points to the
 commit-bound qualification note. Follow its NEXT ACTION.
+
+
+## F-13 — legacy upgrade requires a nonexistent sequence
+
+- Feature/location: administrative deployment, runtime write migration
+  20260912_020000_runtime_data_write_contract.sql.
+- Expected: upgrade both composite-key and serial-ID mined_blocks schemas while
+  retaining existing records.
+- Actual: v1.2.7 stopped in the migration transaction before runtime replacement.
+  Production remained healthy on v1.2.3.
+- Mechanism: unconditional GRANT USAGE referenced public.mined_blocks_id_seq;
+  the observed production table has neither an ID column nor that sequence.
+- Severity: high — blocks deployment; no observed downtime or data loss.
+- Evidence: production catalog inspection and local PostgreSQL 18 reproduction
+  with SQLSTATE 42P01 at that GRANT. Original production stderr was not retained.
+- Components: versioned migration, migrations-only regression and administrative
+  deployment backup/error reporting.
+- Fix: guard the sequence grant by existence. Exercise real repository operations
+  under both schema histories, preserve a pre-upgrade record, and restore required
+  absent tables through the selected published init without destructive replay.
+- Result: both regressions pass. Five operational checks pass for retained backups,
+  valid archives, SQL error evidence, transaction rollback and unqualified refusal.
+- Limit: local correction results do not establish publication or deployment.
+  Exact final qualification belongs in refs/notes/legacy-upgrade-v128 and the
+  PROJECT_STATE.md evidence directory.
