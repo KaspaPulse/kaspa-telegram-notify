@@ -11,7 +11,8 @@ Resolve current HEAD and working-tree status with Git; do not substitute a histo
 
 The existing F-01…F-10 remediation is implemented, including the final review
 corrections to F-01 concurrent subscription safety, F-01 migration privileges,
-and F-06 response length/non-recursive logging. The scoped report is
+F-06 response length/non-recursive logging, and the F-11 runtime event-write
+privilege contract discovered during artifact acceptance. The scoped report is
 `FUNCTIONAL_CLOSURE_REPORT.md`.
 
 The latest user instruction forbids any push to real GitHub. Work and
@@ -49,6 +50,10 @@ test executions (24 binaries; 213 unique test names), including F-01…F-10 10/1
 and an image/mock smoke. Its smoke continued past the quoted timeout.
 These results are historical and do not qualify later source edits.
 
+Candidate 9ba11c1f86c24c3dcb2b242ea80244fa0bc095f6 then passed 276 test
+executions and built its image, but artifact startup exposed F-11 event INSERT
+permission loss plus mock schema defects. It is not the final qualified release.
+
 Evidence and continuation scripts:
 `/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_FUNCTIONAL_CLOSURE_V126_20260912_5edc43c/resume/`
 
@@ -63,8 +68,18 @@ Confirmed recurring failure knowledge:
   api.telegram.org to a TLS mock and trusts the existing test CA bundle.
 - The old permissive Telegram mock accepted oversized messages; the final
   mock enforces 4096 UTF-16 units. /logs must stay within 4000 including HTML.
+- Runtime event persistence also requires bot_event_log INSERT and its id
+  sequence USAGE. The separate F-11 migration and actual app-role test protect
+  this documented bootstrap contract. Do not add ad-hoc fixture grants.
+- Telegram getMe must include the fields required by pinned Teloxide Me. Kaspa
+  transport subscriptions use subscribe/unsubscribe and SubscribeResponse.id;
+  a mock that only supports notifyVirtualDaaScoreChanged is insufficient.
 - Do not count a filtered-out test as executed. Preserve commands, SHA and
   exit codes with the final test output.
+- Internal Docker network host-published ports may refuse connections. Run smoke
+  HTTP from the mock container against the app network hostname; retain isolation.
+  The corrected fixture and migrated DB passed the full pilot on 9ba11c1; only
+  final-HEAD qualification recorded by the matching Git note closes the gate.
 
 Task-owned fixtures, if retained: PostgreSQL `kp-fc-resume-pg`, test DB
 `kaspa_dev` on `127.0.0.1:55436`, separate runtime DB `kaspa_smoke`;

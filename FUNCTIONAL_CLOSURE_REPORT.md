@@ -1,6 +1,7 @@
 # Functional remediation closure — v1.2.6
 
-This report continues the existing F-01…F-10 remediation. It records the
+This report continues the existing F-01…F-10 remediation and the F-11 runtime privilege
+gap discovered during final artifact acceptance. It records the
 completed source changes and the boundaries of their verification. It is
 not a new whole-application audit and does not claim every external workflow
 has been exercised against live services.
@@ -26,6 +27,7 @@ final qualification is still incomplete.
 | F-08 | /help and registered owner menus | Help must match actual commands/buttons. | Aligned registered commands, help wording and owner menu entries. | Registered-command and actual-button contracts. |
 | F-09 | Startup persisted settings | Missing rows get documented defaults; DB/schema/permission/invalid boolean errors stop startup. | Persisted runtime loader propagates errors and parses booleans strictly; main fails closed. | PostgreSQL missing-row/schema fault tests; final artifact invalid-boolean/restart assertion. |
 | F-10 | Unknown commands and maintenance raw messages | Give explicit feedback instead of silence. | Unknown-command /help response and Maintenance Mode response in raw_message.rs. | Regression contracts and actual artifact/mock replies. |
+| F-11 | Persisted startup and webhook events | The runtime role must persist operational events. Fresh migrated databases rejected INSERT even though reads/deletes worked. | Separate runtime-event migration grants INSERT on bot_event_log and USAGE on its id sequence; no UPDATE or schema-wide grant. | Actual app-role event persistence regression and artifact SQL assertions for SYSTEM_START/WEBHOOK_START. |
 
 ## Additional evidence found during final review
 
@@ -43,13 +45,22 @@ the repository migrations and ordinary CI preparation left the runtime role
 without DELETE on bot_event_log and other cleanup tables. The existing F-01
 test failed with permission denied. The final F-01 migration now establishes
 SELECT/DELETE on deletion tables plus SELECT and identity-column UPDATE for
-audit anonymization. No new INSERT/TRUNCATE or schema-wide grant was added;
+audit anonymization. The F-01 migration adds no INSERT/TRUNCATE or schema-wide grant;
 pre-existing audit grants are preserved.
 
 F-06 long responses — medium severity: the initial log response could reach
 25065 UTF-16 units. A permissive mock did not reject it. The corrected response
 is bounded at 4000 units including HTML entities and supplementary Unicode.
 Repeated log views no longer copy their response bodies into the buffer.
+
+F-11 runtime event writes — medium severity: artifact startup could not persist
+SYSTEM_START or WEBHOOK_START because the application role lacked INSERT on
+bot_event_log. DATABASE_SECURITY.md and the actual migration runner provide no
+external grant phase. A separate migration supplies the exact INSERT/sequence
+contract; a regression calls the real repository writer as the runtime role.
+The original artifact failure also exposed incomplete mock getMe/subscription
+responses. Those fixture corrections changed no application behavior and their
+initial failure evidence is retained.
 
 ## Qualification and coverage limits
 
