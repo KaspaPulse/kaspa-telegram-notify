@@ -52,16 +52,21 @@ impl TelegramMenus {
         ];
 
         let admin_row3 = vec![
-            InlineKeyboardButton::callback("🔄 Restart", "cmd_restart"),
-            InlineKeyboardButton::callback("🗄️ DB", "cmd_db_diag"),
-            InlineKeyboardButton::callback("📜 Events", "cmd_events"),
+            InlineKeyboardButton::callback("ℹ️ Restart Info", "cmd_restart_info"),
+            InlineKeyboardButton::callback("🗄️ DB Diagnostics", "cmd_db_diag"),
+            InlineKeyboardButton::callback("📜 Logs", "cmd_logs"),
         ];
 
         let admin_row4 = vec![
+            InlineKeyboardButton::callback("📜 Events", "cmd_events"),
             InlineKeyboardButton::callback("🚨 Errors", "cmd_errors"),
             InlineKeyboardButton::callback("📬 Delivery", "cmd_delivery"),
-            InlineKeyboardButton::callback("🧹 Cleanup", "cmd_cleanup_events"),
         ];
+
+        let admin_row5 = vec![InlineKeyboardButton::callback(
+            "🧹 Cleanup Events",
+            "cmd_cleanup_events",
+        )];
 
         let admin_alerts_row = vec![
             InlineKeyboardButton::callback("🔕 Stop Alerts", "cmd_mute_alerts"),
@@ -69,7 +74,7 @@ impl TelegramMenus {
             InlineKeyboardButton::callback("📣 Alert Status", "cmd_alerts_status"),
         ];
 
-        let admin_row5 = vec![InlineKeyboardButton::callback(
+        let admin_delete_row = vec![InlineKeyboardButton::callback(
             "🚨 Delete My Data",
             "confirm_forget_all",
         )];
@@ -79,8 +84,9 @@ impl TelegramMenus {
         rows.push(admin_row2);
         rows.push(admin_row3);
         rows.push(admin_row4);
-        rows.push(admin_alerts_row);
         rows.push(admin_row5);
+        rows.push(admin_alerts_row);
+        rows.push(admin_delete_row);
 
         InlineKeyboardMarkup::new(rows)
     }

@@ -30,14 +30,12 @@ pub struct BotUseCases {
 
 fn callback_disables_keyboard(data: &str) -> bool {
     data.starts_with("admin_do:")
-        || data.starts_with("rm_wallet_")
-        || data.starts_with("wallet_remove_do_")
+        || data.starts_with("wrd:")
         || data.starts_with("btn_toggle_")
         || matches!(
             data,
             "do_pause"
                 | "do_resume"
-                | "do_restart"
                 | "do_cleanup_events"
                 | "do_mute_alerts"
                 | "do_unmute_alerts"
@@ -309,6 +307,13 @@ Kaspa Pulse monitors Kaspa wallets, detects native node mining rewards, identifi
   - Nonce / block details
 • If some candidate DAG blocks are unavailable, the bot skips them safely and continues searching.
 
+🧭 <b>General, Privacy &amp; Menu Commands</b>
+• /start - Open the main menu.
+• /help - Show this guide.
+• /hidemenu - Hide the persistent reply keyboard.
+• /forget_wallets - Delete all tracked wallets after confirmation.
+• /forget_all - Delete and verify all user-linked tracking data after confirmation.
+
 👛 <b>Wallet Commands</b>
 • /add <code>kaspa:...</code> - Track a wallet.
 • /remove <code>kaspa:...</code> - Stop tracking a wallet.
@@ -343,13 +348,14 @@ Each confirmed mining alert may include:
 • /network - Show node status, peers, sync status, Live BPS, and Expected BPS.
 • /dag - Show BlockDAG overview, pruning point, readable pruning time, and BPS.
 • /price - Show KAS price, market cap, hashrate, peers, pruning point, and BPS.
+• /market - Show KAS market details.
 • /supply - Show circulating supply, max supply, and minted percentage.
 • /fees - Show current network fee estimate.
 
 🌐 <b>Network Buttons</b>
 • <b>Network</b> - Node and sync status.
 • <b>DAG</b> - BlockDAG overview.
-• <b>Price</b> - KAS price and market info.
+• <b>Market</b> - KAS market information.
 • <b>Supply</b> - Supply and minted percentage.
 • <b>Fees</b> - Current network fee estimate.
 
@@ -366,29 +372,34 @@ Each confirmed mining alert may include:
 • /events - Latest 10 compact bot events.
 • /errors - Recent error events.
 • /delivery - Alert delivery summary.
-• /subscribers - Subscriber summary.
-• /wallet_events - Wallet event activity.
+• /subscribers <code>kaspa:...</code> - Show subscribers for one wallet.
+• /wallet_events <code>kaspa:...</code> - Show recent events for one wallet.
 • /cleanup_events - Clean old bot events.
 • /pause - Pause live monitoring.
 • /resume - Resume live monitoring.
-• /restart - Restart the service.
+• /mute_alerts - Stop Telegram mining-alert delivery.
+• /unmute_alerts - Resume Telegram mining-alert delivery.
+• /alerts_status - Show mining-alert delivery status.
+• /toggle <code>MEMORY|SYNC|MAINTENANCE</code> - Confirm and change an admin feature flag.
+• /restart_info - Explain the external supervisor restart procedure.
 
 🛡️ <b>Owner Buttons</b>
 • <b>Health</b> - Production health report.
 • <b>Settings</b> - Open settings panel.
 • <b>Stats</b> - System statistics.
 • <b>System</b> - Server diagnostics.
-• <b>Logs</b> - Recent logs.
+• <b>Logs</b> - Recent bounded in-process service logs.
 • <b>DB Diagnostics</b> - Database checks.
 • <b>Events</b> - Latest compact event log.
 • <b>Errors</b> - Recent errors.
 • <b>Delivery</b> - Alert delivery summary.
-• <b>Subscribers</b> - Subscriber information.
-• <b>Wallet Events</b> - Wallet-related activity.
 • <b>Cleanup Events</b> - Purge old event logs.
 • <b>Pause</b> - Pause monitoring.
 • <b>Resume</b> - Resume monitoring.
-• <b>Restart</b> - Restart service.
+• <b>Stop Alerts</b> - Stop Telegram mining-alert delivery.
+• <b>Resume Alerts</b> - Resume Telegram mining-alert delivery.
+• <b>Alert Status</b> - Show mining-alert delivery status.
+• <b>Restart Info</b> - Explain how production restarts are controlled.
 
 ⚙️ <b>System Behavior</b>
 • Telegram commands are synced automatically at startup.
@@ -543,19 +554,12 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
 
                 admin::handle_alerts_status(bot, msg, app_context).await?;
             }
-            Command::Restart => {
+            Command::RestartInfo => {
                 if !is_admin {
                     crate::send_logged!(bot, msg, "⛔ Unauthorized.");
                     return Ok(());
                 }
-
-                crate::presentation::telegram::handlers::admin_confirm::send_command_confirmation(
-                    &bot,
-                    &app_context,
-                    identity,
-                    SensitiveAction::Restart,
-                )
-                .await?;
+                admin::handle_restart_info(bot, msg).await?;
             }
             Command::Stats => {
                 if !is_admin {
@@ -653,13 +657,6 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
                     return Ok(());
                 }
                 admin::handle_logs(bot, msg).await?;
-            }
-            Command::Broadcast(msg_text) => {
-                if !is_admin {
-                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
-                    return Ok(());
-                }
-                admin::handle_broadcast(bot, msg, msg_text).await?;
             }
             Command::Settings => {
                 if !is_admin {
@@ -909,7 +906,7 @@ pub async fn handle_callback(
 
     if matches!(
         data.as_str(),
-        "do_pause" | "do_resume" | "do_restart" | "do_cleanup_events"
+        "do_pause" | "do_resume" | "do_cleanup_events"
     ) {
         if !confirmed_sensitive_action {
             let _ = bot
@@ -955,7 +952,6 @@ pub async fn handle_callback(
                     "do_resume" => {
                         admin::handle_resume(bot.clone(), message, app_context.clone()).await
                     }
-                    "do_restart" => admin::handle_restart(bot.clone(), message).await,
                     "do_cleanup_events" => {
                         admin::handle_cleanup_events(bot.clone(), message, app_context.clone())
                             .await
@@ -1167,24 +1163,49 @@ pub async fn handle_callback(
             let db = PostgresRepository::new(app_context.pool.clone());
             let chat_id = message.chat().id.0;
 
-            if let Err(error) = db.remove_all_user_data(chat_id).await {
-                tracing::error!("[DATABASE ERROR] Failed to delete user data: {}", error);
-                restore_contextual_callback_menu(
-                    &bot,
-                    &q,
-                    &data,
-                    callback_is_admin,
-                    "❌ <b>Your data was not deleted.</b>\nPlease try again.",
-                )
-                .await;
-                return Err(error.into());
+            let deletion = match db
+                .remove_all_user_data(chat_id, identity.actor_user_id)
+                .await
+            {
+                Ok(summary) => summary,
+                Err(error) => {
+                    tracing::error!("[DATABASE ERROR] Failed to delete user data: {}", error);
+                    restore_contextual_callback_menu(
+                        &bot,
+                        &q,
+                        &data,
+                        callback_is_admin,
+                        "❌ <b>Your data was not deleted.</b>\nPlease try again.",
+                    )
+                    .await;
+                    return Err(error.into());
+                }
+            };
+
+            crate::presentation::telegram::handlers::admin_confirm::clear_all_runtime_state_for_identity(
+                &app_context,
+                identity,
+            );
+            for wallet in &deletion.orphan_wallet_addresses {
+                app_context.state.remove(wallet);
+                app_context.utxo_state.remove(wallet);
             }
+
+            tracing::info!(
+                wallets_deleted = deletion.wallets_deleted,
+                event_rows_deleted = deletion.event_rows_deleted,
+                chat_history_rows_deleted = deletion.chat_history_rows_deleted,
+                queue_rows_deleted = deletion.queue_rows_deleted,
+                admin_audit_rows_anonymized = deletion.admin_audit_rows_anonymized,
+                orphan_wallets_cleaned = deletion.orphan_wallets_cleaned,
+                "[PRIVACY] User data deletion completed and verified."
+            );
 
             restore_safe_callback_menu(
                 &bot,
                 &q,
                 false,
-                "🗑️ <b>All your tracking data has been deleted.</b>",
+                "🗑️ <b>Your user-linked tracking data has been deleted and verified.</b>",
             )
             .await;
         }
@@ -1244,203 +1265,158 @@ pub async fn handle_callback(
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("rm_wallet_") {
+    if [
+        "rm_wallet_",
+        "wallet_panel_",
+        "wallet_balance_",
+        "wallet_blocks_",
+        "wallet_miner_",
+        "wallet_remove_confirm_",
+        "wallet_remove_do_",
+    ]
+    .iter()
+    .any(|prefix| data.starts_with(prefix))
+    {
         let _ = bot
             .answer_callback_query(q.id.clone())
-            .text("Removing wallet...")
+            .text("This wallet button is outdated. Open Wallets again.")
             .await;
-
-        if let Some(message) = q.message.as_ref() {
-            let chat_id = message.chat().id.0;
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
-            let wallets = match ucs.wallet_query.get_list(chat_id).await {
-                Ok(wallets) => wallets,
-                Err(error) => {
-                    restore_wallet_callback_menu(
-                        &bot,
-                        &q,
-                        "❌ <b>Wallet list could not be loaded.</b>\nPlease try again.",
-                    )
-                    .await;
-                    return Err(error.into());
-                }
-            };
-
-            if let Some(wallet_address) = wallets.get(index) {
-                if let Err(error) = ucs.wallet_mgt.remove_wallet(wallet_address, chat_id).await {
-                    tracing::error!("[DATABASE ERROR] Failed to remove wallet: {}", error);
-                    restore_wallet_callback_menu(
-                        &bot,
-                        &q,
-                        "❌ <b>Wallet was not removed.</b>\nPlease try again.",
-                    )
-                    .await;
-                    return Err(error.into());
-                }
-
-                if let Err(error) =
-                    render_wallet_panel(&bot, message.chat().id, message.id(), &ucs, chat_id).await
-                {
-                    restore_wallet_callback_menu(
-                        &bot,
-                        &q,
-                        "✅ <b>Wallet removed.</b>\nThe wallet menu has been restored.",
-                    )
-                    .await;
-                    return Err(error);
-                }
-            } else {
-                restore_wallet_callback_menu(&bot, &q, "⚠️ Wallet not found.").await;
-            }
-        }
-
+        restore_wallet_callback_menu(
+            &bot,
+            &q,
+            "⏳ <b>This wallet button is outdated.</b>\nOpen Wallets again to get a fresh action panel.",
+        )
+        .await;
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("wallet_panel_") {
+    if let Some(token) = data.strip_prefix("wp:") {
         let _ = bot
             .answer_callback_query(q.id.clone())
             .text("Wallet panel")
             .await;
-
         if let Some(msg) = q.message {
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
             wallet::handle_wallet_panel(
                 bot,
                 msg.chat().id,
                 msg.id(),
                 msg.chat().id.0,
-                index,
+                token,
                 ucs.wallet_query.clone(),
             )
             .await?;
         }
-
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("wallet_balance_") {
+    if let Some(token) = data.strip_prefix("wbal:") {
         let _ = bot
             .answer_callback_query(q.id.clone())
             .text("Balance")
             .await;
-
         if let Some(msg) = q.message {
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
             wallet::handle_wallet_balance_detail(
                 bot,
                 msg.chat().id,
                 msg.id(),
                 msg.chat().id.0,
-                index,
+                token,
                 ucs.wallet_query.clone(),
                 app_context.clone(),
             )
             .await?;
         }
-
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("wallet_blocks_") {
+    if let Some(rest) = data.strip_prefix("wblk:") {
         let _ = bot.answer_callback_query(q.id.clone()).text("Blocks").await;
-
-        if let Some(msg) = q.message {
-            let mut parts = index_text.split('_');
-            let index = parts
-                .next()
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(usize::MAX);
+        if let Some(ref msg) = q.message {
+            let mut parts = rest.split(':');
+            let token = parts.next().unwrap_or_default();
             let history_page = parts
                 .next()
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(0);
-
+            if parts.next().is_some() {
+                restore_wallet_callback_menu(&bot, &q, "⚠️ Invalid wallet action.").await;
+                return Ok(());
+            }
             mining::handle_wallet_blocks_detail(
                 bot,
                 msg.chat().id,
                 msg.id(),
                 msg.chat().id.0,
-                index,
+                token,
                 history_page,
                 ucs.wallet_query.clone(),
             )
             .await?;
         }
-
         return Ok(());
     }
-    if let Some(index_text) = data.strip_prefix("wallet_miner_") {
-        let _ = bot.answer_callback_query(q.id.clone()).text("Miner").await;
 
+    if let Some(token) = data.strip_prefix("wmin:") {
+        let _ = bot.answer_callback_query(q.id.clone()).text("Miner").await;
         if let Some(msg) = q.message {
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
             mining::handle_wallet_miner_detail(
                 bot,
                 msg.chat().id,
                 msg.id(),
                 msg.chat().id.0,
-                index,
+                token,
                 ucs.wallet_query.clone(),
                 ucs.miner_stats.clone(),
             )
             .await?;
         }
-
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("wallet_remove_confirm_") {
+    if let Some(token) = data.strip_prefix("wrc:") {
         let _ = bot
             .answer_callback_query(q.id.clone())
             .text("Confirm remove")
             .await;
-
         if let Some(msg) = q.message {
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
             wallet::handle_wallet_remove_confirm(
                 bot,
                 msg.chat().id,
                 msg.id(),
                 msg.chat().id.0,
-                index,
+                token,
                 ucs.wallet_query.clone(),
             )
             .await?;
         }
-
         return Ok(());
     }
 
-    if let Some(index_text) = data.strip_prefix("wallet_remove_do_") {
+    if let Some(token) = data.strip_prefix("wrd:") {
         let _ = bot
             .answer_callback_query(q.id.clone())
             .text("Removing wallet")
             .await;
-
-        if let Some(message) = q.message.as_ref() {
-            let index: usize = index_text.parse().unwrap_or(usize::MAX);
-            if let Err(error) = wallet::handle_wallet_remove_do(
+        if let Some(message) = q.message.as_ref()
+            && let Err(error) = wallet::handle_wallet_remove_do(
                 bot.clone(),
                 message.chat().id,
                 message.id(),
                 message.chat().id.0,
-                index,
+                token,
                 ucs.wallet_query.clone(),
                 ucs.wallet_mgt.clone(),
             )
             .await
-            {
-                restore_wallet_callback_menu(
-                    &bot,
-                    &q,
-                    "❌ <b>Wallet was not removed.</b>\nPlease try again.",
-                )
-                .await;
-                return Err(error);
-            }
+        {
+            restore_wallet_callback_menu(
+                &bot,
+                &q,
+                "❌ <b>Wallet was not removed.</b>\nPlease try again.",
+            )
+            .await;
+            return Err(error);
         }
-
         return Ok(());
     }
 
@@ -1577,7 +1553,7 @@ pub async fn handle_callback(
         "cmd_alerts_status" => Some(Command::AlertsStatus),
         "cmd_pause" => Some(Command::Pause),
         "cmd_resume" => Some(Command::Resume),
-        "cmd_restart" => Some(Command::Restart),
+        "cmd_restart_info" => Some(Command::RestartInfo),
         "cmd_settings" => Some(Command::Settings),
         "cmd_db_diag" => Some(Command::DbDiag),
 
@@ -1705,10 +1681,10 @@ async fn render_remove_wallet_panel(
 
     let mut rows = Vec::new();
 
-    for (index, wallet) in wallets.iter().enumerate() {
+    for wallet in &wallets {
         rows.push(vec![InlineKeyboardButton::callback(
             format!("➖ {}", crate::utils::format_short_wallet(wallet)),
-            format!("rm_wallet_{}", index),
+            format!("wrc:{}", wallet::wallet_callback_token(cid, wallet)),
         )]);
     }
 
@@ -1749,16 +1725,20 @@ mod callback_execution_tests {
 
     #[test]
     fn state_changing_callbacks_disable_the_keyboard() {
-        assert!(callback_disables_keyboard("admin_do:restart:redacted"));
+        assert!(callback_disables_keyboard("admin_do:pause:redacted"));
         assert!(callback_disables_keyboard("do_forget_wallets"));
-        assert!(callback_disables_keyboard("wallet_remove_do_2"));
+        assert!(callback_disables_keyboard(
+            "wrd:0123456789abcdef0123456789abcdef"
+        ));
         assert!(callback_disables_keyboard("btn_toggle_ENABLE_LIVE_SYNC"));
     }
 
     #[test]
     fn navigation_callbacks_keep_their_keyboard_until_rendered() {
         assert!(!callback_disables_keyboard("cmd_wallets"));
-        assert!(!callback_disables_keyboard("wallet_panel_0"));
+        assert!(!callback_disables_keyboard(
+            "wp:0123456789abcdef0123456789abcdef"
+        ));
     }
 
     #[test]

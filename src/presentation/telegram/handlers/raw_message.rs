@@ -5,6 +5,15 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use teloxide::prelude::*;
 
+pub const MAINTENANCE_MESSAGE: &str =
+    "🚧 <b>Maintenance Mode</b>\nThe bot is currently under maintenance.";
+pub const UNKNOWN_COMMAND_MESSAGE: &str =
+    "❓ <b>Unknown command.</b>\nUse /help to see the available commands.";
+
+pub fn is_unknown_command_text(text: &str) -> bool {
+    text.trim_start().starts_with('/')
+}
+
 pub async fn handle_raw_message(
     bot: Bot,
     msg: Message,
@@ -18,6 +27,7 @@ pub async fn handle_raw_message(
     let is_admin = identity.is_private_admin(app_context.admin_user_id, app_context.admin_chat_id);
 
     if app_context.maintenance_mode.load(Ordering::Relaxed) && !is_admin {
+        crate::send_logged!(bot, msg, MAINTENANCE_MESSAGE);
         return Ok(());
     }
 
@@ -33,6 +43,11 @@ pub async fn handle_raw_message(
 
     if let Err(reason) = crate::utils::validate_raw_message_size(raw_text) {
         crate::send_logged!(bot, msg, format!("🚫 <b>Message rejected.</b>\n{}", reason));
+        return Ok(());
+    }
+
+    if is_unknown_command_text(raw_text) {
+        crate::send_logged!(bot, msg, UNKNOWN_COMMAND_MESSAGE);
         return Ok(());
     }
 

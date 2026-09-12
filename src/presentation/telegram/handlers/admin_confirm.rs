@@ -17,7 +17,6 @@ impl SensitiveAction {
         match self {
             Self::Pause => "Pause live monitoring",
             Self::Resume => "Resume live monitoring",
-            Self::Restart => "Restart service request",
             Self::CleanupEvents => "Purge old event logs",
             Self::MuteAlerts => "Stop mining alert delivery",
             Self::UnmuteAlerts => "Resume mining alert delivery",
@@ -33,7 +32,6 @@ impl SensitiveAction {
         match self {
             Self::Pause => "This will stop live monitoring until it is resumed.",
             Self::Resume => "This will enable live monitoring again.",
-            Self::Restart => "This will request a service restart action.",
             Self::CleanupEvents => {
                 "This will purge old event records according to the configured cleanup policy."
             }
@@ -223,6 +221,14 @@ pub fn cancel_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
         .remove(&identity.actor_chat_key());
 }
 
+pub fn clear_all_runtime_state_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
+    ctx.admin_confirmations.retain(|_, session| {
+        session.actor_user_id != identity.actor_user_id && session.chat_id != identity.chat_id
+    });
+    ctx.pending_input_sessions
+        .remove(&identity.actor_chat_key());
+}
+
 pub fn sensitive_action_from_toggle_flag(flag: &str) -> Option<SensitiveAction> {
     match flag.trim().to_uppercase().as_str() {
         "ENABLE_MEMORY_CLEANER" | "MEMORY" | "MEM" => Some(SensitiveAction::ToggleMemoryCleaner),
@@ -236,7 +242,6 @@ pub fn sensitive_action_from_callback(data: &str) -> Option<SensitiveAction> {
     match data {
         "cmd_pause" => Some(SensitiveAction::Pause),
         "cmd_resume" => Some(SensitiveAction::Resume),
-        "cmd_restart" => Some(SensitiveAction::Restart),
         "cmd_cleanup_events" => Some(SensitiveAction::CleanupEvents),
         "cmd_mute_alerts" => Some(SensitiveAction::MuteAlerts),
         "cmd_unmute_alerts" => Some(SensitiveAction::UnmuteAlerts),

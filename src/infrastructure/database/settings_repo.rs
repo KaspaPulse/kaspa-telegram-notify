@@ -2,6 +2,23 @@ use crate::domain::errors::AppError;
 
 use super::postgres_adapter::PostgresRepository;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistedRuntimeSettings {
+    pub memory_cleaner_enabled: bool,
+    pub live_sync_enabled: bool,
+    pub maintenance_mode: bool,
+}
+
+fn parse_persisted_bool(key: &str, value: &str) -> Result<bool, AppError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(AppError::Internal(format!(
+            "Persisted setting {key} must be a boolean value"
+        ))),
+    }
+}
+
 impl PostgresRepository {
     pub async fn get_setting(&self, key: &str, default_val: &str) -> Result<String, AppError> {
         let value: Option<String> =
@@ -27,6 +44,20 @@ impl PostgresRepository {
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(default_val.to_string())
+    }
+
+    pub async fn load_persisted_runtime_settings(
+        &self,
+    ) -> Result<PersistedRuntimeSettings, AppError> {
+        let memory = self.get_setting("ENABLE_MEMORY_CLEANER", "false").await?;
+        let live_sync = self.get_setting("ENABLE_LIVE_SYNC", "true").await?;
+        let maintenance = self.get_setting("MAINTENANCE_MODE", "false").await?;
+
+        Ok(PersistedRuntimeSettings {
+            memory_cleaner_enabled: parse_persisted_bool("ENABLE_MEMORY_CLEANER", &memory)?,
+            live_sync_enabled: parse_persisted_bool("ENABLE_LIVE_SYNC", &live_sync)?,
+            maintenance_mode: parse_persisted_bool("MAINTENANCE_MODE", &maintenance)?,
+        })
     }
 
     pub async fn update_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
