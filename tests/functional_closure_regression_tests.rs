@@ -468,3 +468,67 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
     assert!(main.contains("Failed to load required persisted runtime settings"));
     assert!(!main.contains(".get_setting(\"MAINTENANCE_MODE\", \"false\")\n            .await\n            .unwrap_or_else"));
 }
+
+#[test]
+fn f08_help_registered_commands_and_admin_buttons_are_consistent() {
+    use kaspa_pulse::presentation::telegram::commands::admin_bot_commands;
+
+    let handlers = include_str!("../src/presentation/telegram/handlers/mod.rs");
+    let menus = include_str!("../src/presentation/telegram/menus.rs");
+    for command in admin_bot_commands() {
+        let documented = format!("/{}", command.command);
+        assert!(
+            handlers.contains(&documented),
+            "registered command {documented} is missing from /help"
+        );
+    }
+
+    for real_button in [
+        "Health",
+        "System",
+        "Stats",
+        "Settings",
+        "Pause",
+        "Resume",
+        "Restart Info",
+        "DB Diagnostics",
+        "Logs",
+        "Events",
+        "Errors",
+        "Delivery",
+        "Cleanup Events",
+        "Stop Alerts",
+        "Resume Alerts",
+        "Alert Status",
+    ] {
+        assert!(
+            menus.contains(real_button),
+            "admin menu missing {real_button}"
+        );
+        assert!(
+            handlers.contains(&format!("<b>{real_button}</b>")),
+            "help missing {real_button}"
+        );
+    }
+    assert!(!handlers.contains("<b>Subscribers</b> -"));
+    assert!(!handlers.contains("<b>Wallet Events</b> -"));
+    assert!(handlers.contains("<b>Market</b> - KAS market information."));
+    assert!(!handlers.contains("<b>Price</b> - KAS price and market info."));
+}
+
+#[test]
+fn f10_unknown_commands_and_maintenance_messages_are_never_silent() {
+    use kaspa_pulse::presentation::telegram::handlers::raw_message::{
+        MAINTENANCE_MESSAGE, UNKNOWN_COMMAND_MESSAGE, is_unknown_command_text,
+    };
+
+    assert!(is_unknown_command_text("/does_not_exist"));
+    assert!(is_unknown_command_text("  /does_not_exist arg"));
+    assert!(!is_unknown_command_text("kaspa:qexample"));
+    assert!(UNKNOWN_COMMAND_MESSAGE.contains("/help"));
+    assert!(MAINTENANCE_MESSAGE.contains("Maintenance Mode"));
+
+    let raw = include_str!("../src/presentation/telegram/handlers/raw_message.rs");
+    assert!(raw.contains("send_logged!(bot, msg, MAINTENANCE_MESSAGE)"));
+    assert!(raw.contains("send_logged!(bot, msg, UNKNOWN_COMMAND_MESSAGE)"));
+}

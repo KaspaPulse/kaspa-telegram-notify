@@ -307,6 +307,13 @@ Kaspa Pulse monitors Kaspa wallets, detects native node mining rewards, identifi
   - Nonce / block details
 • If some candidate DAG blocks are unavailable, the bot skips them safely and continues searching.
 
+🧭 <b>General, Privacy &amp; Menu Commands</b>
+• /start - Open the main menu.
+• /help - Show this guide.
+• /hidemenu - Hide the persistent reply keyboard.
+• /forget_wallets - Delete all tracked wallets after confirmation.
+• /forget_all - Delete and verify all user-linked tracking data after confirmation.
+
 👛 <b>Wallet Commands</b>
 • /add <code>kaspa:...</code> - Track a wallet.
 • /remove <code>kaspa:...</code> - Stop tracking a wallet.
@@ -341,13 +348,14 @@ Each confirmed mining alert may include:
 • /network - Show node status, peers, sync status, Live BPS, and Expected BPS.
 • /dag - Show BlockDAG overview, pruning point, readable pruning time, and BPS.
 • /price - Show KAS price, market cap, hashrate, peers, pruning point, and BPS.
+• /market - Show KAS market details.
 • /supply - Show circulating supply, max supply, and minted percentage.
 • /fees - Show current network fee estimate.
 
 🌐 <b>Network Buttons</b>
 • <b>Network</b> - Node and sync status.
 • <b>DAG</b> - BlockDAG overview.
-• <b>Price</b> - KAS price and market info.
+• <b>Market</b> - KAS market information.
 • <b>Supply</b> - Supply and minted percentage.
 • <b>Fees</b> - Current network fee estimate.
 
@@ -364,11 +372,15 @@ Each confirmed mining alert may include:
 • /events - Latest 10 compact bot events.
 • /errors - Recent error events.
 • /delivery - Alert delivery summary.
-• /subscribers - Subscriber summary.
-• /wallet_events - Wallet event activity.
+• /subscribers <code>kaspa:...</code> - Show subscribers for one wallet.
+• /wallet_events <code>kaspa:...</code> - Show recent events for one wallet.
 • /cleanup_events - Clean old bot events.
 • /pause - Pause live monitoring.
 • /resume - Resume live monitoring.
+• /mute_alerts - Stop Telegram mining-alert delivery.
+• /unmute_alerts - Resume Telegram mining-alert delivery.
+• /alerts_status - Show mining-alert delivery status.
+• /toggle <code>MEMORY|SYNC|MAINTENANCE</code> - Confirm and change an admin feature flag.
 • /restart_info - Explain the external supervisor restart procedure.
 
 🛡️ <b>Owner Buttons</b>
@@ -376,16 +388,17 @@ Each confirmed mining alert may include:
 • <b>Settings</b> - Open settings panel.
 • <b>Stats</b> - System statistics.
 • <b>System</b> - Server diagnostics.
-• <b>Logs</b> - Recent logs.
+• <b>Logs</b> - Recent bounded in-process service logs.
 • <b>DB Diagnostics</b> - Database checks.
 • <b>Events</b> - Latest compact event log.
 • <b>Errors</b> - Recent errors.
 • <b>Delivery</b> - Alert delivery summary.
-• <b>Subscribers</b> - Subscriber information.
-• <b>Wallet Events</b> - Wallet-related activity.
 • <b>Cleanup Events</b> - Purge old event logs.
 • <b>Pause</b> - Pause monitoring.
 • <b>Resume</b> - Resume monitoring.
+• <b>Stop Alerts</b> - Stop Telegram mining-alert delivery.
+• <b>Resume Alerts</b> - Resume Telegram mining-alert delivery.
+• <b>Alert Status</b> - Show mining-alert delivery status.
 • <b>Restart Info</b> - Explain how production restarts are controlled.
 
 ⚙️ <b>System Behavior</b>
