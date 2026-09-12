@@ -5,6 +5,31 @@ use crate::domain::errors::AppError;
 
 use super::postgres_adapter::PostgresRepository;
 
+// The two-int advisory namespace is separate from the one-BIGINT per-chat locks.
+// Lock actual hash keys in order: even a hash collision cannot invert lock order
+// when two chats forget overlapping sets of wallets concurrently.
+async fn lock_wallet_mutations(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    wallets: &[String],
+) -> Result<(), AppError> {
+    let keys: Vec<i32> = sqlx::query_scalar(
+        "SELECT DISTINCT hashtext(wallet) FROM unnest($1::TEXT[]) AS wallets(wallet) ORDER BY 1",
+    )
+    .bind(wallets)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    for key in keys {
+        sqlx::query("SELECT pg_advisory_xact_lock(1263552332, $1)")
+            .bind(key)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+    Ok(())
+}
+
 impl PostgresRepository {
     // Retained as a narrow read API for database characterization/integration tests. Runtime
     // mutation code performs the equivalent check inside add_tracked_wallet's transaction.
@@ -58,6 +83,9 @@ impl PostgresRepository {
             .execute(&mut *transaction)
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        // A different chat must not subscribe between an orphan check and cleanup.
+        lock_wallet_mutations(&mut transaction, std::slice::from_ref(&wallet.address)).await?;
 
         let already_exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(
@@ -176,6 +204,10 @@ impl PostgresRepository {
         .fetch_all(&mut *transaction)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        // Hold these through commit, covering both the last-subscriber check and
+        // shared-state deletion. Additions by every chat use the same locks.
+        lock_wallet_mutations(&mut transaction, &wallets).await?;
 
         let queue_rows_deleted =
             sqlx::query("DELETE FROM telegram_delivery_queue WHERE chat_id = $1")
