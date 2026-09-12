@@ -540,13 +540,17 @@ fn blocks_history_must_be_full_paginated_and_env_configurable() {
     );
 
     assert!(
-        telegram_handlers.contains("let mut parts = index_text.split('_');"),
-        "wallet_blocks callback must parse index and optional page"
+        telegram_handlers.contains("data.strip_prefix(\"wblk:\")"),
+        "wallet_blocks callback must use the stable wallet-token prefix"
     );
-
     assert!(
-        telegram_handlers.contains("history_page,"),
-        "wallet_blocks callback must pass history_page"
+        telegram_handlers.contains("let mut parts = rest.split(':');")
+            && telegram_handlers.contains("let token = parts.next().unwrap_or_default();"),
+        "wallet_blocks callback must parse stable wallet token and optional page"
+    );
+    assert!(
+        telegram_handlers.contains("token,\n                history_page,"),
+        "wallet_blocks callback must pass stable token and history_page"
     );
 
     assert!(
