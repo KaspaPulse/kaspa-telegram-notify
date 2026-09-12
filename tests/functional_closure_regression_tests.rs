@@ -121,6 +121,10 @@ async fn f01_forget_all_removes_every_allowed_user_link_and_orphan_wallet_state(
     assert_eq!(summary.admin_audit_rows_anonymized, 1);
     assert_eq!(summary.orphan_wallet_addresses, vec![wallet.to_string()]);
 
+    let migration = include_str!("../migrations/20260912_000000_user_data_deletion_contract.sql");
+    assert!(migration.contains("GRANT SELECT, DELETE ON TABLE chat_history"));
+    assert!(migration.contains("CREATE INDEX IF NOT EXISTS idx_chat_history_chat_id"));
+
     for statement in [
         "SELECT COUNT(*) FROM user_wallets WHERE chat_id = $1",
         "SELECT COUNT(*) FROM bot_event_log WHERE chat_id = $1",
