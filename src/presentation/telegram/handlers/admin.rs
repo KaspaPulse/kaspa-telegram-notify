@@ -61,36 +61,11 @@ pub async fn handle_health(
     msg: Message,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1::BIGINT")
-        .fetch_one(&app_context.pool)
-        .await
-        .map(|value| value == 1)
-        .unwrap_or(false);
-
+    let db = crate::infrastructure::admin_diagnostics::collect(&app_context.pool).await;
     let node_ok = app_context.rpc.get_server_info().await.is_ok();
-
-    let tracked_wallets: i64 = if db_ok {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_wallets")
-            .fetch_one(&app_context.pool)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    let last_alert: Option<chrono::NaiveDateTime> = if db_ok {
-        sqlx::query_scalar("SELECT MAX(timestamp) FROM mined_blocks")
-            .fetch_one(&app_context.pool)
-            .await
-            .unwrap_or(None)
-    } else {
-        None
-    };
-
     let webhook_enabled = std::env::var("USE_WEBHOOK")
         .unwrap_or_else(|_| "false".to_string())
         .eq_ignore_ascii_case("true");
-
     let uptime_seconds = current_process_uptime_seconds().unwrap_or_else(System::uptime);
     let uptime = format_uptime(uptime_seconds);
 
@@ -101,64 +76,55 @@ pub async fn handle_health(
          🤖 <b>Bot:</b> <code>Online</code>\n\
          🌐 <b>Node:</b> <code>{}</code>\n\
          🗄️ <b>DB:</b> <code>{}</code>\n\
+         🔎 <b>DB Queries:</b> <code>{}</code>\n\
          🔗 <b>Webhook:</b> <code>{}</code>\n\
          👛 <b>Tracked wallets:</b> <code>{}</code>\n\
          ⛏️ <b>Last alert:</b> <code>{}</code>\n\
          ⏱️ <b>Process uptime:</b> <code>{}</code>",
         if node_ok { "Online" } else { "Offline" },
-        if db_ok { "OK" } else { "FAILED" },
+        if db.connection_ok() {
+            "CONNECTED"
+        } else {
+            "FAILED"
+        },
+        db.database_status(),
         if webhook_enabled {
             "Enabled"
         } else {
             "Disabled"
         },
-        tracked_wallets,
-        last_alert
-            .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| "No alerts yet".to_string()),
+        crate::infrastructure::admin_diagnostics::display_count(&db.wallets_count),
+        crate::infrastructure::admin_diagnostics::display_last_alert(&db.last_alert),
         uptime
     );
-
     crate::send_logged!(bot, msg, text);
     Ok(())
 }
+
 pub async fn handle_stats(
     bot: Bot,
     msg: Message,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    let users_count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT chat_id) FROM user_wallets")
-        .fetch_one(&app_context.pool)
-        .await
-        .unwrap_or(0);
-
-    let wallets_count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_wallets")
-        .fetch_one(&app_context.pool)
-        .await
-        .unwrap_or(0);
-
-    let blocks_count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mined_blocks")
-        .fetch_one(&app_context.pool)
-        .await
-        .unwrap_or(0);
-
+    let db = crate::infrastructure::admin_diagnostics::collect(&app_context.pool).await;
     let text = format!(
         "📊 <b>System Stats</b>\n\
          ━━━━━━━━━━━━━━━━━━\n\
+         🗄️ DB Queries: <code>{}</code>\n\
          👥 Users: <code>{}</code>\n\
          👛 Wallets: <code>{}</code>\n\
          ⛏️ Mined Records: <code>{}</code>\n\
          🔄 Live Monitoring: <code>{}</code>\n\
          🧹 Memory Cleaner: <code>{}</code>\n\
          🚧 Maintenance: <code>{}</code>",
-        users_count,
-        wallets_count,
-        blocks_count,
+        db.database_status(),
+        crate::infrastructure::admin_diagnostics::display_count(&db.users_count),
+        crate::infrastructure::admin_diagnostics::display_count(&db.wallets_count),
+        crate::infrastructure::admin_diagnostics::display_count(&db.mined_count),
         app_context.live_sync_enabled.load(Ordering::Relaxed),
         app_context.memory_cleaner_enabled.load(Ordering::Relaxed),
         app_context.maintenance_mode.load(Ordering::Relaxed),
     );
-
     crate::send_logged!(bot, msg, text);
     Ok(())
 }
@@ -254,32 +220,19 @@ pub async fn handle_sys(bot: Bot, msg: Message, monitoring_status: bool) -> anyh
 }
 
 pub async fn handle_logs(bot: Bot, msg: Message) -> anyhow::Result<()> {
-    let candidates = ["bot.log", "logs/bot.log", "target/debug/bot.log"];
-    let mut content = String::new();
-
-    for path in candidates {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            let lines: Vec<&str> = text.lines().rev().take(25).collect();
-            content = lines.into_iter().rev().collect::<Vec<&str>>().join("\n");
-            break;
-        }
-    }
-
-    if content.trim().is_empty() {
-        content = "No log file found or log file is empty.".to_string();
-    }
-
-    let safe = content
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    let lines = crate::infrastructure::recent_logs::recent_lines(25);
+    let content = if lines.is_empty() {
+        "No recent in-process service logs are available yet.".to_string()
+    } else {
+        lines.join("\n")
+    };
+    let safe = crate::utils::html_escape(&content);
 
     crate::send_logged!(
         bot,
         msg,
-        format!("📜 <b>Last Logs</b>\n<pre>{}</pre>", safe)
+        format!("📜 <b>Recent Service Logs</b>\n<pre>{}</pre>", safe)
     );
-
     Ok(())
 }
 
@@ -306,56 +259,25 @@ pub async fn handle_db_diag(
     msg: Message,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    let connection_ok = sqlx::query_scalar::<_, i64>("SELECT 1::BIGINT")
-        .fetch_one(&app_context.pool)
-        .await
-        .map(|value| value == 1)
-        .unwrap_or(false);
-
-    let settings_count: i64 = if connection_ok {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM system_settings")
-            .fetch_one(&app_context.pool)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    let wallets_count: i64 = if connection_ok {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_wallets")
-            .fetch_one(&app_context.pool)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    let mined_count: i64 = if connection_ok {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mined_blocks")
-            .fetch_one(&app_context.pool)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
+    let db = crate::infrastructure::admin_diagnostics::collect(&app_context.pool).await;
     let text = format!(
         "🧪 <b>Database Diagnostics</b>\n\
          ━━━━━━━━━━━━━━━━━━\n\
          Connection: <code>{}</code>\n\
-         Ping Query: <code>SELECT 1::BIGINT</code>\n\
+         Required Queries: <code>{}</code>\n\
          Settings Rows: <code>{}</code>\n\
          Wallet Rows: <code>{}</code>\n\
          Mined Rows: <code>{}</code>",
-        if connection_ok { "OK" } else { "FAILED" },
-        settings_count,
-        wallets_count,
-        mined_count,
+        if db.connection_ok() { "OK" } else { "FAILED" },
+        db.database_status(),
+        crate::infrastructure::admin_diagnostics::display_count(&db.settings_count),
+        crate::infrastructure::admin_diagnostics::display_count(&db.wallets_count),
+        crate::infrastructure::admin_diagnostics::display_count(&db.mined_count),
     );
-
     crate::send_logged!(bot, msg, text);
     Ok(())
 }
+
 pub async fn handle_interactive_settings(
     bot: Bot,
     chat_id: teloxide::types::ChatId,

@@ -198,7 +198,11 @@ async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    registry().with(fmt::layer()).with(filter).init();
+    registry()
+        .with(filter)
+        .with(fmt::layer())
+        .with(crate::infrastructure::recent_logs::layer())
+        .init();
 
     std::panic::set_hook(Box::new(|panic_info| {
         let location = panic_info

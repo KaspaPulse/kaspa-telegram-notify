@@ -247,3 +247,88 @@ async fn f02_stale_wallet_callback_cannot_retarget_after_list_changes() {
     assert!(resolve_wallet_token(&after, chat_id, &stale_a_token).is_none());
     assert_ne!(stale_a_token, wallet_callback_token(chat_id, wallet_b));
 }
+
+#[tokio::test]
+async fn f03_admin_diagnostics_fail_closed_on_schema_query_failure() {
+    let _guard = db_lock().lock().await;
+    let admin = admin_pool().await;
+    sqlx::query("DROP SCHEMA IF EXISTS f03_fault CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE SCHEMA f03_fault")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE f03_fault.user_wallets (wallet TEXT, chat_id BIGINT)")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE f03_fault.system_settings (key_name TEXT, value_data TEXT)")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("GRANT USAGE ON SCHEMA f03_fault TO kaspa_pulse_app")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("GRANT SELECT ON ALL TABLES IN SCHEMA f03_fault TO kaspa_pulse_app")
+        .execute(&admin)
+        .await
+        .unwrap();
+
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL is required");
+    let fault_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("SET search_path TO f03_fault")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+
+    let snapshot = kaspa_pulse::infrastructure::admin_diagnostics::collect(&fault_pool).await;
+    assert!(snapshot.connection_ok());
+    assert!(!snapshot.required_queries_ok());
+    assert_eq!(snapshot.database_status(), "DEGRADED");
+    assert!(snapshot.users_count.is_ok());
+    assert!(snapshot.wallets_count.is_ok());
+    assert!(snapshot.settings_count.is_ok());
+    assert!(snapshot.mined_count.is_err());
+    assert!(snapshot.last_alert.is_err());
+    assert_eq!(
+        kaspa_pulse::infrastructure::admin_diagnostics::display_count(&snapshot.mined_count),
+        "UNAVAILABLE"
+    );
+    assert_eq!(
+        kaspa_pulse::infrastructure::admin_diagnostics::display_last_alert(&snapshot.last_alert),
+        "UNAVAILABLE"
+    );
+
+    fault_pool.close().await;
+    sqlx::query("DROP SCHEMA f03_fault CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn f06_logs_use_bounded_production_tracing_buffer_instead_of_missing_files() {
+    let admin = include_str!("../src/presentation/telegram/handlers/admin.rs");
+    let main = include_str!("../src/main.rs");
+    let logs = include_str!("../src/infrastructure/recent_logs.rs");
+
+    assert!(main.contains("recent_logs::layer()"));
+    assert!(admin.contains("recent_logs::recent_lines(25)"));
+    assert!(!admin.contains("bot.log"));
+    assert!(!admin.contains("logs/bot.log"));
+    assert!(!admin.contains("target/debug/bot.log"));
+    assert!(logs.contains("VecDeque<String>"));
+    assert!(logs.contains("sanitize_for_log"));
+    assert!(logs.contains("while guard.len() > capacity"));
+}
