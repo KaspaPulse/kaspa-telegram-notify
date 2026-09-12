@@ -12,17 +12,64 @@ type TestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 async fn exercise_migrated_database(
     admin: &PgPool,
     app: &PgPool,
+    legacy_upgrade: bool,
 ) -> TestResult<Vec<(&'static str, bool)>> {
     let mut migrations = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     migrations.retain(|path| path.extension().is_some_and(|ext| ext == "sql"));
     migrations.sort();
+    let legacy_init = include_str!("../migrations/20260425233548_init.sql");
+    if legacy_upgrade {
+        // This published schema has a composite primary key, with no ID sequence.
+        sqlx::raw_sql(legacy_init).execute(admin).await?;
+        sqlx::raw_sql("ALTER TABLE mined_blocks ADD COLUMN first_seen BOOLEAN DEFAULT false; ALTER TABLE mined_blocks ADD COLUMN notified BOOLEAN DEFAULT false;")
+            .execute(admin).await?;
+    }
+    let mut upgrade = String::from("BEGIN; SET LOCAL search_path=public;\n");
+    upgrade.push_str(legacy_init);
     for migration in &migrations {
+        if legacy_upgrade
+            && migration
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("20260912_")
+        {
+            upgrade.push('\n');
+            upgrade.push_str(&std::fs::read_to_string(migration)?);
+            continue;
+        }
         // SQL comes only from reviewed, versioned repository migration files.
         sqlx::raw_sql(sqlx::AssertSqlSafe(std::fs::read_to_string(migration)?))
             .execute(admin)
             .await?;
+    }
+    if legacy_upgrade {
+        // Match the observed upgrade baseline and prove additive changes retain data.
+        sqlx::raw_sql("DROP TABLE chat_history; DROP TABLE knowledge_base; INSERT INTO mined_blocks(wallet,outpoint,amount,daa_score) VALUES ('kaspa:legacy-canary','legacy-canary-outpoint',77,7);")
+            .execute(admin).await?;
+        let sequence_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('public.mined_blocks_id_seq') IS NOT NULL")
+                .fetch_one(admin)
+                .await?;
+        if sequence_exists {
+            return Err("legacy fixture must not have an ID sequence".into());
+        }
+        upgrade.push_str("\nCOMMIT;");
+        // The actual deployment applies the published init plus the three contracts
+        // atomically; it must not replay the older destructive migrations.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(upgrade))
+            .execute(admin)
+            .await?;
+        let restored: bool = sqlx::query_scalar("SELECT to_regclass('public.chat_history') IS NOT NULL AND to_regclass('public.knowledge_base') IS NOT NULL AND to_regclass('public.mined_blocks_id_seq') IS NULL")
+            .fetch_one(admin).await?;
+        if !restored {
+            return Err(
+                "upgrade must restore required legacy tables without inventing an ID sequence"
+                    .into(),
+            );
+        }
     }
     // No fixture GRANT, runtime schema ensure, or CI preparation runs in this DB.
     let role: String = sqlx::query_scalar("SELECT current_user")
@@ -94,10 +141,16 @@ async fn exercise_migrated_database(
     let remaining: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM user_wallets) + (SELECT count(*) FROM wallet_seen_utxos) + (SELECT count(*) FROM pending_rewards) + (SELECT count(*) FROM mined_blocks) + (SELECT count(*) FROM wallet_alert_dedup)")
         .fetch_one(app).await?;
     println!(
-        "F12: {} versioned migrations; actual application role; no CI grants",
+        "F12/F13: {} versioned migrations; legacy_upgrade={legacy_upgrade}; actual application role; no CI grants",
         migrations.len()
     );
+    let legacy_canary: i64 = sqlx::query_scalar("SELECT count(*) FROM mined_blocks WHERE wallet='kaspa:legacy-canary' AND outpoint='legacy-canary-outpoint' AND amount=77 AND daa_score=7")
+        .fetch_one(admin).await?;
     Ok(vec![
+        (
+            "legacy data preserved",
+            legacy_canary == i64::from(legacy_upgrade),
+        ),
         ("persisted settings read/insert/update", maintenance),
         ("wallet subscription insert/update", wallet_count == 1),
         (
@@ -112,13 +165,14 @@ async fn exercise_migrated_database(
         ),
         (
             "forget-all deletes owned state",
-            deleted.wallets_deleted == 1 && deleted.orphan_wallets_cleaned == 1 && remaining == 0,
+            deleted.wallets_deleted == 1
+                && deleted.orphan_wallets_cleaned == 1
+                && remaining == i64::from(legacy_upgrade),
         ),
     ])
 }
 
-#[tokio::test]
-async fn f12_versioned_migrations_alone_enable_real_runtime_workflows() {
+async fn verify_migration_contract(legacy_upgrade: bool) {
     let admin_options = PgConnectOptions::from_str(
         &std::env::var("DATABASE_ADMIN_URL").expect("DATABASE_ADMIN_URL is required"),
     )
@@ -152,7 +206,7 @@ async fn f12_versioned_migrations_alone_enable_real_runtime_workflows() {
         .connect_with(app_options.database(&database))
         .await
         .unwrap();
-    let outcome = exercise_migrated_database(&admin, &app).await;
+    let outcome = exercise_migrated_database(&admin, &app, legacy_upgrade).await;
     // Database isolation keeps grants and data out of parallel test fixtures.
     // Close/drop before checking the outcome, including the expected RED path.
     app.close().await;
@@ -167,4 +221,14 @@ async fn f12_versioned_migrations_alone_enable_real_runtime_workflows() {
     for (operation, passed) in outcome.expect("migrations alone must support runtime operations") {
         assert!(passed, "runtime contract failed: {operation}");
     }
+}
+
+#[tokio::test]
+async fn f12_versioned_migrations_alone_enable_real_runtime_workflows() {
+    verify_migration_contract(false).await;
+}
+
+#[tokio::test]
+async fn f13_legacy_upgrade_without_id_sequence_preserves_real_runtime_workflows() {
+    verify_migration_contract(true).await;
 }

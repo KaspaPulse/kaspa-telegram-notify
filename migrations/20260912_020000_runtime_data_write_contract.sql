@@ -13,7 +13,11 @@ BEGIN
             public.mined_blocks,
             public.wallet_alert_dedup
         TO kaspa_pulse_app;
-        GRANT USAGE ON SEQUENCE public.mined_blocks_id_seq TO kaspa_pulse_app;
+        -- Legacy installations use (wallet, outpoint) and have no serial ID.
+        -- Fresh schemas allocate an ID and still require sequence USAGE.
+        IF to_regclass('public.mined_blocks_id_seq') IS NOT NULL THEN
+            GRANT USAGE ON SEQUENCE public.mined_blocks_id_seq TO kaspa_pulse_app;
+        END IF;
     END IF;
 END
 $$;
