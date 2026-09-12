@@ -365,3 +365,106 @@ fn f05_restart_is_explicitly_information_only() {
     assert!(!security.contains("Restart,"));
     assert!(!handlers.contains("SensitiveAction::Restart"));
 }
+
+#[tokio::test]
+async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db_error() {
+    let _guard = db_lock().lock().await;
+    let admin = admin_pool().await;
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL is required");
+
+    sqlx::query("DROP SCHEMA IF EXISTS f09_defaults CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE SCHEMA f09_defaults")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE f09_defaults.system_settings (key_name TEXT PRIMARY KEY, value_data TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())")
+        .execute(&admin).await.unwrap();
+    sqlx::query("GRANT USAGE ON SCHEMA f09_defaults TO kaspa_pulse_app")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("GRANT SELECT, INSERT, UPDATE ON f09_defaults.system_settings TO kaspa_pulse_app")
+        .execute(&admin)
+        .await
+        .unwrap();
+    let default_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("SET search_path TO f09_defaults")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    let default_repo = PostgresRepository::new(default_pool.clone());
+    let defaults = default_repo
+        .load_persisted_runtime_settings()
+        .await
+        .unwrap();
+    assert!(!defaults.memory_cleaner_enabled);
+    assert!(defaults.live_sync_enabled);
+    assert!(!defaults.maintenance_mode);
+    let inserted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM f09_defaults.system_settings")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    assert_eq!(inserted, 3);
+    default_pool.close().await;
+
+    sqlx::query("DROP SCHEMA IF EXISTS f09_fault CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("CREATE SCHEMA f09_fault")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("GRANT USAGE ON SCHEMA f09_fault TO kaspa_pulse_app")
+        .execute(&admin)
+        .await
+        .unwrap();
+    let fault_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("SET search_path TO f09_fault")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    let fault_repo = PostgresRepository::new(fault_pool.clone());
+    let error = fault_repo
+        .load_persisted_runtime_settings()
+        .await
+        .expect_err("missing settings schema must fail startup settings load");
+    assert!(matches!(
+        error,
+        kaspa_pulse::domain::errors::AppError::DatabaseError(_)
+    ));
+    fault_pool.close().await;
+
+    sqlx::query("DROP SCHEMA f09_defaults CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("DROP SCHEMA f09_fault CASCADE")
+        .execute(&admin)
+        .await
+        .unwrap();
+
+    let main = include_str!("../src/main.rs");
+    assert!(main.contains("load_persisted_runtime_settings()"));
+    assert!(main.contains("Failed to load required persisted runtime settings"));
+    assert!(!main.contains(".get_setting(\"MAINTENANCE_MODE\", \"false\")\n            .await\n            .unwrap_or_else"));
+}

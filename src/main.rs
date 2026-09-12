@@ -491,32 +491,24 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     {
-        let is_mem = db_repo
-            .get_setting("ENABLE_MEMORY_CLEANER", "false")
+        let persisted = db_repo
+            .load_persisted_runtime_settings()
             .await
-            .unwrap_or_else(|_| "false".to_string())
-            == "true";
-        app_context
-            .memory_cleaner_enabled
-            .store(is_mem, std::sync::atomic::Ordering::Relaxed);
-
-        let is_sync = db_repo
-            .get_setting("ENABLE_LIVE_SYNC", "true")
-            .await
-            .unwrap_or_else(|_| "true".to_string())
-            == "true";
-        app_context
-            .live_sync_enabled
-            .store(is_sync, std::sync::atomic::Ordering::Relaxed);
-
-        let is_maint = db_repo
-            .get_setting("MAINTENANCE_MODE", "false")
-            .await
-            .unwrap_or_else(|_| "false".to_string())
-            == "true";
-        app_context
-            .maintenance_mode
-            .store(is_maint, std::sync::atomic::Ordering::Relaxed);
+            .map_err(|error| {
+                anyhow::anyhow!("Failed to load required persisted runtime settings: {error}")
+            })?;
+        app_context.memory_cleaner_enabled.store(
+            persisted.memory_cleaner_enabled,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        app_context.live_sync_enabled.store(
+            persisted.live_sync_enabled,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        app_context.maintenance_mode.store(
+            persisted.maintenance_mode,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     crate::presentation::telegram::workers::utxo_monitor::start_utxo_monitor(
