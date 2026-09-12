@@ -36,7 +36,6 @@ fn callback_disables_keyboard(data: &str) -> bool {
             data,
             "do_pause"
                 | "do_resume"
-                | "do_restart"
                 | "do_cleanup_events"
                 | "do_mute_alerts"
                 | "do_unmute_alerts"
@@ -370,7 +369,7 @@ Each confirmed mining alert may include:
 • /cleanup_events - Clean old bot events.
 • /pause - Pause live monitoring.
 • /resume - Resume live monitoring.
-• /restart - Restart the service.
+• /restart_info - Explain the external supervisor restart procedure.
 
 🛡️ <b>Owner Buttons</b>
 • <b>Health</b> - Production health report.
@@ -387,7 +386,7 @@ Each confirmed mining alert may include:
 • <b>Cleanup Events</b> - Purge old event logs.
 • <b>Pause</b> - Pause monitoring.
 • <b>Resume</b> - Resume monitoring.
-• <b>Restart</b> - Restart service.
+• <b>Restart Info</b> - Explain how production restarts are controlled.
 
 ⚙️ <b>System Behavior</b>
 • Telegram commands are synced automatically at startup.
@@ -542,19 +541,12 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
 
                 admin::handle_alerts_status(bot, msg, app_context).await?;
             }
-            Command::Restart => {
+            Command::RestartInfo => {
                 if !is_admin {
                     crate::send_logged!(bot, msg, "⛔ Unauthorized.");
                     return Ok(());
                 }
-
-                crate::presentation::telegram::handlers::admin_confirm::send_command_confirmation(
-                    &bot,
-                    &app_context,
-                    identity,
-                    SensitiveAction::Restart,
-                )
-                .await?;
+                admin::handle_restart_info(bot, msg).await?;
             }
             Command::Stats => {
                 if !is_admin {
@@ -652,13 +644,6 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
                     return Ok(());
                 }
                 admin::handle_logs(bot, msg).await?;
-            }
-            Command::Broadcast(msg_text) => {
-                if !is_admin {
-                    crate::send_logged!(bot, msg, "⛔ Unauthorized.");
-                    return Ok(());
-                }
-                admin::handle_broadcast(bot, msg, msg_text).await?;
             }
             Command::Settings => {
                 if !is_admin {
@@ -908,7 +893,7 @@ pub async fn handle_callback(
 
     if matches!(
         data.as_str(),
-        "do_pause" | "do_resume" | "do_restart" | "do_cleanup_events"
+        "do_pause" | "do_resume" | "do_cleanup_events"
     ) {
         if !confirmed_sensitive_action {
             let _ = bot
@@ -954,7 +939,6 @@ pub async fn handle_callback(
                     "do_resume" => {
                         admin::handle_resume(bot.clone(), message, app_context.clone()).await
                     }
-                    "do_restart" => admin::handle_restart(bot.clone(), message).await,
                     "do_cleanup_events" => {
                         admin::handle_cleanup_events(bot.clone(), message, app_context.clone())
                             .await
@@ -1556,7 +1540,7 @@ pub async fn handle_callback(
         "cmd_alerts_status" => Some(Command::AlertsStatus),
         "cmd_pause" => Some(Command::Pause),
         "cmd_resume" => Some(Command::Resume),
-        "cmd_restart" => Some(Command::Restart),
+        "cmd_restart_info" => Some(Command::RestartInfo),
         "cmd_settings" => Some(Command::Settings),
         "cmd_db_diag" => Some(Command::DbDiag),
 
@@ -1728,7 +1712,7 @@ mod callback_execution_tests {
 
     #[test]
     fn state_changing_callbacks_disable_the_keyboard() {
-        assert!(callback_disables_keyboard("admin_do:restart:redacted"));
+        assert!(callback_disables_keyboard("admin_do:pause:redacted"));
         assert!(callback_disables_keyboard("do_forget_wallets"));
         assert!(callback_disables_keyboard(
             "wrd:0123456789abcdef0123456789abcdef"

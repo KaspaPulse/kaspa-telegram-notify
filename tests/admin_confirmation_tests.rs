@@ -14,10 +14,7 @@ fn sensitive_admin_callbacks_are_detected() {
         sensitive_action_from_callback("cmd_resume"),
         Some(SensitiveAction::Resume)
     );
-    assert_eq!(
-        sensitive_action_from_callback("cmd_restart"),
-        Some(SensitiveAction::Restart)
-    );
+    assert_eq!(sensitive_action_from_callback("cmd_restart_info"), None);
     assert_eq!(
         sensitive_action_from_callback("cmd_cleanup_events"),
         Some(SensitiveAction::CleanupEvents)

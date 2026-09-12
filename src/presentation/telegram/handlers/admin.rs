@@ -31,11 +31,11 @@ pub async fn handle_resume(
     Ok(())
 }
 
-pub async fn handle_restart(bot: Bot, msg: Message) -> anyhow::Result<()> {
+pub async fn handle_restart_info(bot: Bot, msg: Message) -> anyhow::Result<()> {
     crate::send_logged!(
         bot,
         msg,
-        "🔄 <b>Restart requested.</b>\nPlease restart the service from the host process manager."
+        "ℹ️ <b>Restart Information</b>\nKaspa Pulse does not restart its own process. Service restarts are intentionally controlled by the external production supervisor/deployment procedure."
     );
     Ok(())
 }
@@ -233,24 +233,6 @@ pub async fn handle_logs(bot: Bot, msg: Message) -> anyhow::Result<()> {
         msg,
         format!("📜 <b>Recent Service Logs</b>\n<pre>{}</pre>", safe)
     );
-    Ok(())
-}
-
-pub async fn handle_broadcast(bot: Bot, msg: Message, msg_text: String) -> anyhow::Result<()> {
-    if msg_text.trim().is_empty() {
-        crate::send_logged!(bot, msg, "⚠️ Usage: /broadcast message");
-        return Ok(());
-    }
-
-    crate::send_logged!(
-        bot,
-        msg,
-        format!(
-            "📣 <b>Broadcast prepared.</b>\nThis safe build does not mass-send automatically.\n\nMessage:\n{}",
-            msg_text
-        )
-    );
-
     Ok(())
 }
 

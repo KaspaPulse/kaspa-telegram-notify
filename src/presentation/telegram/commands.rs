@@ -70,10 +70,11 @@ pub enum Command {
         description = "Admin: Show alert delivery status."
     )]
     AlertsStatus,
-    #[command(description = "Admin: Safe restart of the bot binary.")]
-    Restart,
-    #[command(description = "Admin: Broadcast message to all users.")]
-    Broadcast(String),
+    #[command(
+        rename = "restart_info",
+        description = "Admin: Show external service restart instructions."
+    )]
+    RestartInfo,
     #[command(description = "Admin: Tail last 25 lines of bot.log.")]
     Logs,
     #[command(description = "Admin: Show recent bot event log.")]
@@ -125,8 +126,7 @@ impl Command {
                 | Self::MuteAlerts
                 | Self::UnmuteAlerts
                 | Self::AlertsStatus
-                | Self::Restart
-                | Self::Broadcast(_)
+                | Self::RestartInfo
                 | Self::Logs
                 | Self::Events
                 | Self::Errors
@@ -173,8 +173,7 @@ pub fn admin_bot_commands() -> Vec<teloxide::types::BotCommand> {
         teloxide::types::BotCommand::new("sys", "Admin: system diagnostics"),
         teloxide::types::BotCommand::new("pause", "Admin: pause monitoring"),
         teloxide::types::BotCommand::new("resume", "Admin: resume monitoring"),
-        teloxide::types::BotCommand::new("restart", "Admin: restart notice"),
-        teloxide::types::BotCommand::new("broadcast", "Admin: broadcast message"),
+        teloxide::types::BotCommand::new("restart_info", "Admin: show restart instructions"),
         teloxide::types::BotCommand::new("logs", "Admin: tail recent log lines"),
         teloxide::types::BotCommand::new("events", "Admin: show recent bot events"),
         teloxide::types::BotCommand::new("errors", "Admin: show recent error events"),

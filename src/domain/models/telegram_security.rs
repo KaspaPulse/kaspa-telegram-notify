@@ -40,7 +40,6 @@ pub enum PendingInputAction {
 pub enum SensitiveAction {
     Pause,
     Resume,
-    Restart,
     CleanupEvents,
     MuteAlerts,
     UnmuteAlerts,
@@ -56,7 +55,6 @@ impl SensitiveAction {
         match self {
             Self::Pause => "pause",
             Self::Resume => "resume",
-            Self::Restart => "restart",
             Self::CleanupEvents => "cleanup_events",
             Self::MuteAlerts => "mute_alerts",
             Self::UnmuteAlerts => "unmute_alerts",
@@ -72,7 +70,6 @@ impl SensitiveAction {
         match self {
             Self::Pause => "do_pause",
             Self::Resume => "do_resume",
-            Self::Restart => "do_restart",
             Self::CleanupEvents => "do_cleanup_events",
             Self::MuteAlerts => "do_mute_alerts",
             Self::UnmuteAlerts => "do_unmute_alerts",
@@ -92,7 +89,6 @@ impl SensitiveAction {
         match value {
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
-            "restart" => Some(Self::Restart),
             "cleanup_events" => Some(Self::CleanupEvents),
             "mute_alerts" => Some(Self::MuteAlerts),
             "unmute_alerts" => Some(Self::UnmuteAlerts),

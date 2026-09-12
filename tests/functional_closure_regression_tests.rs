@@ -332,3 +332,36 @@ fn f06_logs_use_bounded_production_tracing_buffer_instead_of_missing_files() {
     assert!(logs.contains("sanitize_for_log"));
     assert!(logs.contains("while guard.len() > capacity"));
 }
+
+#[test]
+fn f04_broadcast_is_not_advertised_or_partially_implemented() {
+    let commands = include_str!("../src/presentation/telegram/commands.rs");
+    let handlers = include_str!("../src/presentation/telegram/handlers/mod.rs");
+    let admin = include_str!("../src/presentation/telegram/handlers/admin.rs");
+
+    assert!(!commands.contains("Broadcast("));
+    assert!(!commands.contains("BotCommand::new(\"broadcast\""));
+    assert!(!handlers.contains("Command::Broadcast"));
+    assert!(!admin.contains("handle_broadcast"));
+    assert!(!admin.contains("Broadcast prepared"));
+}
+
+#[test]
+fn f05_restart_is_explicitly_information_only() {
+    let commands = include_str!("../src/presentation/telegram/commands.rs");
+    let handlers = include_str!("../src/presentation/telegram/handlers/mod.rs");
+    let menu = include_str!("../src/presentation/telegram/menus.rs");
+    let admin = include_str!("../src/presentation/telegram/handlers/admin.rs");
+    let security = include_str!("../src/domain/models/telegram_security.rs");
+
+    assert!(commands.contains("rename = \"restart_info\""));
+    assert!(commands.contains("show restart instructions"));
+    assert!(!commands.contains("BotCommand::new(\"restart\""));
+    assert!(menu.contains("Restart Info"));
+    assert!(menu.contains("cmd_restart_info"));
+    assert!(handlers.contains("Command::RestartInfo"));
+    assert!(handlers.contains("handle_restart_info"));
+    assert!(admin.contains("does not restart its own process"));
+    assert!(!security.contains("Restart,"));
+    assert!(!handlers.contains("SensitiveAction::Restart"));
+}

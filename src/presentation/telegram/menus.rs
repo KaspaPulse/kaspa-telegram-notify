@@ -52,7 +52,7 @@ impl TelegramMenus {
         ];
 
         let admin_row3 = vec![
-            InlineKeyboardButton::callback("🔄 Restart", "cmd_restart"),
+            InlineKeyboardButton::callback("ℹ️ Restart Info", "cmd_restart_info"),
             InlineKeyboardButton::callback("🗄️ DB", "cmd_db_diag"),
             InlineKeyboardButton::callback("📜 Events", "cmd_events"),
         ];

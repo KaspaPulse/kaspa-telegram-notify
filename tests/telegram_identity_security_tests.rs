@@ -33,7 +33,7 @@ fn every_admin_command_is_classified_as_admin_only() {
     assert!(Command::Health.is_admin_only());
     assert!(Command::Pause.is_admin_only());
     assert!(Command::Toggle("SYNC".to_string()).is_admin_only());
-    assert!(Command::Broadcast("test".to_string()).is_admin_only());
+    assert!(Command::RestartInfo.is_admin_only());
     assert!(!Command::Start.is_admin_only());
     assert!(!Command::Add("kaspa:test".to_string()).is_admin_only());
 }
