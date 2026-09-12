@@ -1,4 +1,6 @@
+use crate::domain::entities::WalletRemovalOutcome;
 use crate::wallet::wallet_use_cases::*;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
@@ -19,6 +21,43 @@ pub(super) fn log_wallet_data_error(
         error = %crate::utils::sanitize_for_log(&error.to_string()),
         "[DATABASE ERROR] Wallet data operation failed."
     );
+}
+
+const WALLET_CALLBACK_TOKEN_BYTES: usize = 16;
+
+pub fn wallet_callback_token(chat_id: i64, wallet: &str) -> String {
+    let digest = Sha256::digest(format!("wallet-callback-v1:{chat_id}:{wallet}").as_bytes());
+    digest[..WALLET_CALLBACK_TOKEN_BYTES]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub fn resolve_wallet_token<'a>(
+    wallets: &'a [String],
+    chat_id: i64,
+    token: &str,
+) -> Option<(usize, &'a str)> {
+    if token.len() != WALLET_CALLBACK_TOKEN_BYTES * 2
+        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+
+    wallets.iter().enumerate().find_map(|(index, wallet)| {
+        (wallet_callback_token(chat_id, wallet) == token).then_some((index, wallet.as_str()))
+    })
+}
+
+fn wallet_callback(prefix: &str, chat_id: i64, wallet: &str) -> String {
+    let short_prefix = match prefix {
+        "wallet_panel" => "wp",
+        "wallet_balance" => "wbal",
+        "wallet_blocks" => "wblk",
+        "wallet_miner" => "wmin",
+        other => other,
+    };
+    format!("{short_prefix}:{}", wallet_callback_token(chat_id, wallet))
 }
 
 pub async fn handle_add(
@@ -113,8 +152,15 @@ pub async fn handle_remove(
     }
 
     match wallet_mgt.remove_wallet(&clean_wallet, cid).await {
-        Ok(_) => {
+        Ok(WalletRemovalOutcome::Removed) => {
             crate::send_logged!(bot, msg, "🗑️ <b>Wallet Removed.</b>");
+        }
+        Ok(WalletRemovalOutcome::NotFound) => {
+            crate::send_logged!(
+                bot,
+                msg,
+                "ℹ️ <b>Wallet not tracked.</b>\nNo wallet was removed."
+            );
         }
         Err(e) => {
             crate::send_logged!(
@@ -156,7 +202,7 @@ pub async fn handle_list(
     }
 
     let text = wallet_list_text(&wallets);
-    let markup = wallet_buttons_markup(&wallets, "wallet_panel", true);
+    let markup = wallet_buttons_markup(&wallets, cid, "wallet_panel", true);
 
     let _ = crate::utils::send_logged_message(&bot, msg.chat.id, Some(msg.id), text, Some(markup))
         .await;
@@ -222,7 +268,7 @@ pub async fn handle_balance(
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     );
 
-    let markup = wallet_buttons_markup(&wallets, "wallet_balance", true);
+    let markup = wallet_buttons_markup(&wallets, cid, "wallet_balance", true);
 
     let _ = crate::utils::send_reply_or_edit_log(
         &bot,
@@ -242,7 +288,7 @@ pub async fn handle_wallet_panel(
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
     let wallets = match wallet_query.get_list(cid).await {
@@ -261,15 +307,8 @@ pub async fn handle_wallet_panel(
         }
     };
 
-    let Some(address) = wallets.get(index) else {
-        edit_text(
-            &bot,
-            chat_id,
-            message_id,
-            "⚠️ Wallet not found.".to_string(),
-            crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
-        )
-        .await;
+    let Some((index, address)) = resolve_wallet_token(&wallets, cid, wallet_token) else {
+        restore_stale_wallet_button(&bot, chat_id, message_id).await;
         return Ok(());
     };
 
@@ -283,7 +322,14 @@ pub async fn handle_wallet_panel(
         address
     );
 
-    edit_text(&bot, chat_id, message_id, text, wallet_panel_markup(index)).await;
+    edit_text(
+        &bot,
+        chat_id,
+        message_id,
+        text,
+        wallet_panel_markup(cid, address),
+    )
+    .await;
     Ok(())
 }
 
@@ -292,7 +338,7 @@ pub async fn handle_wallet_balance_detail(
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     wallet_query: Arc<WalletQueriesUseCase>,
     app_context: Arc<crate::domain::models::AppContext>,
 ) -> anyhow::Result<()> {
@@ -312,20 +358,16 @@ pub async fn handle_wallet_balance_detail(
         }
     };
 
-    let Some(detail) = details.get(index) else {
-        edit_text(
-            &bot,
-            chat_id,
-            message_id,
-            "⚠️ Wallet not found.".to_string(),
-            crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
-        )
-        .await;
+    let Some((index, detail)) = details
+        .iter()
+        .enumerate()
+        .find(|(_, detail)| wallet_callback_token(cid, &detail.address) == wallet_token)
+    else {
+        restore_stale_wallet_button(&bot, chat_id, message_id).await;
         return Ok(());
     };
 
     let kas_price = app_context.price_cache.read().await.0;
-
     let balance_kas = detail.balance_sompi as f64 / 1e8;
     let fiat_value = balance_kas * kas_price;
     let avg_utxo = if detail.utxos > 0 {
@@ -333,7 +375,6 @@ pub async fn handle_wallet_balance_detail(
     } else {
         0.0
     };
-
     let status = if detail.is_online {
         "Online 🟢"
     } else {
@@ -360,7 +401,14 @@ pub async fn handle_wallet_balance_detail(
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     );
 
-    edit_text(&bot, chat_id, message_id, text, wallet_panel_markup(index)).await;
+    edit_text(
+        &bot,
+        chat_id,
+        message_id,
+        text,
+        wallet_panel_markup(cid, &detail.address),
+    )
+    .await;
     Ok(())
 }
 
@@ -369,7 +417,7 @@ pub async fn handle_wallet_remove_confirm(
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
     let wallets = match wallet_query.get_list(cid).await {
@@ -388,15 +436,8 @@ pub async fn handle_wallet_remove_confirm(
         }
     };
 
-    let Some(address) = wallets.get(index) else {
-        edit_text(
-            &bot,
-            chat_id,
-            message_id,
-            "⚠️ Wallet not found.".to_string(),
-            crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
-        )
-        .await;
+    let Some((index, address)) = resolve_wallet_token(&wallets, cid, wallet_token) else {
+        restore_stale_wallet_button(&bot, chat_id, message_id).await;
         return Ok(());
     };
 
@@ -404,7 +445,7 @@ pub async fn handle_wallet_remove_confirm(
         "⚠️ <b>Confirm Remove Wallet {}</b>\n\
          ━━━━━━━━━━━━━━━━━━\n\
          <code>{}</code>\n\n\
-         Are you sure you want to remove this wallet?",
+         Are you sure you want to remove this exact wallet?",
         index + 1,
         address
     );
@@ -414,7 +455,7 @@ pub async fn handle_wallet_remove_confirm(
         chat_id,
         message_id,
         text,
-        confirm_remove_markup(index),
+        confirm_remove_markup(cid, address),
     )
     .await;
     Ok(())
@@ -458,24 +499,54 @@ async fn restore_wallet_removal_state(
     }
 }
 
+async fn restore_stale_wallet_button(
+    bot: &Bot,
+    chat_id: teloxide::types::ChatId,
+    message_id: teloxide::types::MessageId,
+) {
+    restore_wallet_removal_state(
+        bot,
+        chat_id,
+        message_id,
+        "⏳ <b>This wallet button is stale or no longer valid.</b>\nOpen Wallets again.",
+    )
+    .await;
+}
+
 pub async fn handle_wallet_remove_do(
     bot: Bot,
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     wallet_query: Arc<WalletQueriesUseCase>,
     wallet_mgt: Arc<WalletManagementUseCase>,
 ) -> anyhow::Result<()> {
     let wallets = wallet_query.get_list(cid).await?;
-
-    let Some(address) = wallets.get(index) else {
-        restore_wallet_removal_state(&bot, chat_id, message_id, "⚠️ <b>Wallet not found.</b>")
-            .await;
+    let Some((index, address)) = resolve_wallet_token(&wallets, cid, wallet_token) else {
+        restore_wallet_removal_state(
+            &bot,
+            chat_id,
+            message_id,
+            "⏳ <b>This wallet removal confirmation is stale.</b>\nNo wallet was removed.",
+        )
+        .await;
         return Ok(());
     };
 
-    wallet_mgt.remove_wallet(address, cid).await?;
+    match wallet_mgt.remove_wallet(address, cid).await? {
+        WalletRemovalOutcome::Removed => {}
+        WalletRemovalOutcome::NotFound => {
+            restore_wallet_removal_state(
+                &bot,
+                chat_id,
+                message_id,
+                "ℹ️ <b>Wallet was already absent.</b>\nNo additional wallet was removed.",
+            )
+            .await;
+            return Ok(());
+        }
+    }
 
     let text = format!(
         "🗑️ <b>Wallet Removed</b>\n\
@@ -483,14 +554,13 @@ pub async fn handle_wallet_remove_do(
          Wallet {} was removed.",
         index + 1
     );
-
     restore_wallet_removal_state(&bot, chat_id, message_id, text).await;
-
     Ok(())
 }
 
 pub fn wallet_buttons_markup(
     wallets: &[String],
+    chat_id: i64,
     callback_prefix: &str,
     include_main_menu: bool,
 ) -> InlineKeyboardMarkup {
@@ -504,7 +574,7 @@ pub fn wallet_buttons_markup(
                 index + 1,
                 crate::utils::format_short_wallet(wallet)
             ),
-            format!("{}_{}", callback_prefix, index),
+            wallet_callback(callback_prefix, chat_id, wallet),
         )]);
     }
 
@@ -518,15 +588,16 @@ pub fn wallet_buttons_markup(
     InlineKeyboardMarkup::new(rows)
 }
 
-pub fn wallet_panel_markup(index: usize) -> InlineKeyboardMarkup {
+pub fn wallet_panel_markup(chat_id: i64, wallet: &str) -> InlineKeyboardMarkup {
+    let token = wallet_callback_token(chat_id, wallet);
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("💰 Balance", format!("wallet_balance_{}", index)),
-            InlineKeyboardButton::callback("🧱 Blocks", format!("wallet_blocks_{}", index)),
+            InlineKeyboardButton::callback("💰 Balance", format!("wbal:{token}")),
+            InlineKeyboardButton::callback("🧱 Blocks", format!("wblk:{token}")),
         ],
         vec![
-            InlineKeyboardButton::callback("⛏️ Miner", format!("wallet_miner_{}", index)),
-            InlineKeyboardButton::callback("➖ Remove", format!("wallet_remove_confirm_{}", index)),
+            InlineKeyboardButton::callback("⛏️ Miner", format!("wmin:{token}")),
+            InlineKeyboardButton::callback("➖ Remove", format!("wrc:{token}")),
         ],
         vec![
             InlineKeyboardButton::callback("👛 All Wallets", "cmd_wallets"),
@@ -535,14 +606,12 @@ pub fn wallet_panel_markup(index: usize) -> InlineKeyboardMarkup {
     ])
 }
 
-fn confirm_remove_markup(index: usize) -> InlineKeyboardMarkup {
+fn confirm_remove_markup(chat_id: i64, wallet: &str) -> InlineKeyboardMarkup {
+    let token = wallet_callback_token(chat_id, wallet);
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback(
-                "✅ Yes, remove wallet",
-                format!("wallet_remove_do_{}", index),
-            ),
-            InlineKeyboardButton::callback("❌ Cancel", format!("wallet_panel_{}", index)),
+            InlineKeyboardButton::callback("✅ Yes, remove wallet", format!("wrd:{token}")),
+            InlineKeyboardButton::callback("❌ Cancel", format!("wp:{token}")),
         ],
         vec![InlineKeyboardButton::callback("🔙 Main Menu", "cmd_start")],
     ])

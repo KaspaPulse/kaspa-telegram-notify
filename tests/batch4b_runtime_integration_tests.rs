@@ -53,7 +53,7 @@ fn callback_ui_is_restored_and_database_failures_are_not_reported_as_success() {
         .expect("wallet remove handler missing");
     assert!(!remove_handler.contains("unwrap_or_default"));
     assert!(remove_handler.contains("wallet_query.get_list(cid).await?"));
-    assert!(remove_handler.contains("wallet_mgt.remove_wallet(address, cid).await?"));
+    assert!(remove_handler.contains("match wallet_mgt.remove_wallet(address, cid).await?"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn final_audit_followup_preserves_accurate_deletion_recovery() {
         .nth(1)
         .and_then(|source| source.split("pub fn wallet_buttons_markup").next())
         .expect("wallet remove handler missing");
-    assert!(remove_handler.contains("wallet_mgt.remove_wallet(address, cid).await?"));
+    assert!(remove_handler.contains("match wallet_mgt.remove_wallet(address, cid).await?"));
     assert!(remove_handler.contains("restore_wallet_removal_state"));
     assert!(!remove_handler.contains(".edit_message_text"));
 }

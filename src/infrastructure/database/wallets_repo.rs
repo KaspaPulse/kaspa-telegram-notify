@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::domain::entities::TrackedWallet;
+use crate::domain::entities::{TrackedWallet, UserDataDeletionSummary, WalletRemovalOutcome};
 use crate::domain::errors::AppError;
 
 use super::postgres_adapter::PostgresRepository;
@@ -113,18 +113,26 @@ impl PostgresRepository {
         Ok(())
     }
 
-    pub async fn remove_tracked_wallet(&self, address: &str, chat_id: i64) -> Result<(), AppError> {
-        sqlx::query!(
+    pub async fn remove_tracked_wallet(
+        &self,
+        address: &str,
+        chat_id: i64,
+    ) -> Result<WalletRemovalOutcome, AppError> {
+        let result = sqlx::query(
             "DELETE FROM user_wallets
              WHERE wallet = $1 AND chat_id = $2",
-            address,
-            chat_id
         )
+        .bind(address)
+        .bind(chat_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            WalletRemovalOutcome::Removed
+        } else {
+            WalletRemovalOutcome::NotFound
+        })
     }
 
     pub async fn remove_all_user_wallets(&self, chat_id: i64) -> Result<(), AppError> {
@@ -140,17 +148,141 @@ impl PostgresRepository {
         Ok(())
     }
 
-    pub async fn remove_all_user_data(&self, chat_id: i64) -> Result<(), AppError> {
-        sqlx::query!(
-            "DELETE FROM user_wallets
-             WHERE chat_id = $1",
-            chat_id
+    pub async fn remove_all_user_data(
+        &self,
+        chat_id: i64,
+        actor_user_id: u64,
+    ) -> Result<UserDataDeletionSummary, AppError> {
+        let actor_user_id = i64::try_from(actor_user_id).map_err(|_| {
+            AppError::Internal("Telegram actor id exceeds BIGINT range".to_string())
+        })?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        // Serialize user-scoped destructive operations with wallet-list mutations.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let wallets: Vec<String> = sqlx::query_scalar(
+            "SELECT wallet FROM user_wallets WHERE chat_id = $1 ORDER BY wallet FOR UPDATE",
         )
-        .execute(&self.pool)
+        .bind(chat_id)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-        Ok(())
+        let queue_rows_deleted =
+            sqlx::query("DELETE FROM telegram_delivery_queue WHERE chat_id = $1")
+                .bind(chat_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|e| AppError::DatabaseError(e.to_string()))?
+                .rows_affected();
+
+        let event_rows_deleted = sqlx::query("DELETE FROM bot_event_log WHERE chat_id = $1")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .rows_affected();
+
+        let chat_history_rows_deleted = sqlx::query("DELETE FROM chat_history WHERE chat_id = $1")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .rows_affected();
+
+        // Security audit history is retained, but direct Telegram identity linkage is removed.
+        let admin_audit_rows_anonymized = sqlx::query(
+            "UPDATE admin_audit_log
+             SET admin_actor_user_id = NULL, admin_chat_id = 0
+             WHERE admin_chat_id = $1 OR admin_actor_user_id = $2",
+        )
+        .bind(chat_id)
+        .bind(actor_user_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .rows_affected();
+
+        let wallets_deleted = sqlx::query("DELETE FROM user_wallets WHERE chat_id = $1")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .rows_affected();
+
+        let mut orphan_wallet_addresses = Vec::new();
+        for wallet in &wallets {
+            let still_tracked = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM user_wallets WHERE wallet = $1)",
+            )
+            .bind(wallet)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+            if still_tracked {
+                continue;
+            }
+
+            for statement in [
+                "DELETE FROM wallet_seen_utxos WHERE wallet = $1",
+                "DELETE FROM wallet_alert_dedup WHERE wallet = $1",
+                "DELETE FROM pending_rewards WHERE wallet = $1",
+                "DELETE FROM mined_blocks WHERE wallet = $1",
+            ] {
+                sqlx::query(statement)
+                    .bind(wallet)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            }
+            orphan_wallet_addresses.push(wallet.clone());
+        }
+
+        let residual_direct_links = sqlx::query_scalar::<_, i64>(
+            "SELECT
+                (SELECT COUNT(*) FROM user_wallets WHERE chat_id = $1)
+              + (SELECT COUNT(*) FROM telegram_delivery_queue WHERE chat_id = $1)
+              + (SELECT COUNT(*) FROM bot_event_log WHERE chat_id = $1)
+              + (SELECT COUNT(*) FROM chat_history WHERE chat_id = $1)
+              + (SELECT COUNT(*) FROM admin_audit_log
+                 WHERE admin_chat_id = $1 OR admin_actor_user_id = $2)",
+        )
+        .bind(chat_id)
+        .bind(actor_user_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        if residual_direct_links != 0 {
+            return Err(AppError::Internal(format!(
+                "User data deletion verification failed: {residual_direct_links} direct linkage rows remain"
+            )));
+        }
+
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok(UserDataDeletionSummary {
+            wallets_deleted,
+            event_rows_deleted,
+            chat_history_rows_deleted,
+            queue_rows_deleted,
+            admin_audit_rows_anonymized,
+            orphan_wallets_cleaned: orphan_wallet_addresses.len(),
+            orphan_wallet_addresses,
+        })
     }
 
     pub async fn get_all_tracked_wallets(&self) -> Result<Vec<TrackedWallet>, AppError> {

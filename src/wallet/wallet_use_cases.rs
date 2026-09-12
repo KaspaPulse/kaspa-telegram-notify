@@ -1,4 +1,4 @@
-use crate::domain::entities::{MinedBlock, TrackedWallet};
+use crate::domain::entities::{MinedBlock, TrackedWallet, WalletRemovalOutcome};
 use crate::domain::errors::AppError;
 use crate::domain::models::LiveBlockEvent;
 use crate::domain::models::{BotEventRecord, BotEventType, EventSeverity};
@@ -27,7 +27,11 @@ impl WalletManagementUseCase {
         self.db.add_tracked_wallet(wallet).await
     }
 
-    pub async fn remove_wallet(&self, address: &str, chat_id: i64) -> Result<(), AppError> {
+    pub async fn remove_wallet(
+        &self,
+        address: &str,
+        chat_id: i64,
+    ) -> Result<WalletRemovalOutcome, AppError> {
         self.db.remove_tracked_wallet(address, chat_id).await
     }
 }

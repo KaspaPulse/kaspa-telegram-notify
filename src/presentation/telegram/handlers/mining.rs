@@ -155,6 +155,7 @@ pub async fn handle_blocks(
 
     let markup = crate::presentation::telegram::handlers::wallet::wallet_buttons_markup(
         &wallets,
+        cid,
         "wallet_blocks",
         true,
     );
@@ -221,6 +222,7 @@ pub async fn handle_miner(
 
     let markup = crate::presentation::telegram::handlers::wallet::wallet_buttons_markup(
         &tracked,
+        cid,
         "wallet_miner",
         true,
     );
@@ -243,7 +245,7 @@ pub async fn handle_wallet_blocks_detail(
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     history_page: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
 ) -> anyhow::Result<()> {
@@ -263,13 +265,17 @@ pub async fn handle_wallet_blocks_detail(
         }
     };
 
-    let Some(detail) = details.get(index) else {
+    let Some((index, detail)) = details.iter().enumerate().find(|(_, detail)| {
+        crate::presentation::telegram::handlers::wallet::wallet_callback_token(cid, &detail.address)
+            == wallet_token
+    }) else {
         edit_text(
             &bot,
             chat_id,
             message_id,
-            "⚠️ Wallet not found.".to_string(),
-            crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
+            "⏳ <b>This wallet button is stale or no longer valid.</b>\nOpen Wallets again."
+                .to_string(),
+            crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
         )
         .await;
         return Ok(());
@@ -357,7 +363,7 @@ pub async fn handle_wallet_blocks_detail(
         chat_id,
         message_id,
         text,
-        blocks_history_markup(index, history_page, total_pages),
+        blocks_history_markup(cid, &detail.address, history_page, total_pages),
     )
     .await;
 
@@ -365,15 +371,18 @@ pub async fn handle_wallet_blocks_detail(
 }
 
 fn blocks_history_markup(
-    index: usize,
+    chat_id: i64,
+    wallet: &str,
     history_page: usize,
     total_pages: usize,
 ) -> teloxide::types::InlineKeyboardMarkup {
     use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
+    let token =
+        crate::presentation::telegram::handlers::wallet::wallet_callback_token(chat_id, wallet);
     let mut rows = vec![vec![InlineKeyboardButton::callback(
         "\u{1F504} Refresh",
-        format!("wallet_blocks_{}_{}", index, history_page),
+        format!("wblk:{token}:{history_page}"),
     )]];
 
     let mut page_nav = Vec::new();
@@ -381,14 +390,14 @@ fn blocks_history_markup(
     if history_page > 0 {
         page_nav.push(InlineKeyboardButton::callback(
             "\u{2B05}\u{FE0F} Previous",
-            format!("wallet_blocks_{}_{}", index, history_page - 1),
+            format!("wblk:{token}:{}", history_page - 1),
         ));
     }
 
     if history_page + 1 < total_pages {
         page_nav.push(InlineKeyboardButton::callback(
             "Next \u{27A1}\u{FE0F}",
-            format!("wallet_blocks_{}_{}", index, history_page + 1),
+            format!("wblk:{token}:{}", history_page + 1),
         ));
     }
 
@@ -397,7 +406,7 @@ fn blocks_history_markup(
     }
 
     rows.push(vec![
-        InlineKeyboardButton::callback("\u{1F45B} Wallet Panel", format!("wallet_panel_{}", index)),
+        InlineKeyboardButton::callback("\u{1F45B} Wallet Panel", format!("wp:{token}")),
         InlineKeyboardButton::callback("\u{2B05}\u{FE0F} Back", "cmd_blocks"),
     ]);
 
@@ -408,7 +417,7 @@ pub async fn handle_wallet_miner_detail(
     chat_id: teloxide::types::ChatId,
     message_id: teloxide::types::MessageId,
     cid: i64,
-    index: usize,
+    wallet_token: &str,
     wallet_query: Arc<WalletQueriesUseCase>,
     miner_stats: Arc<GetMinerStatsUseCase>,
 ) -> anyhow::Result<()> {
@@ -428,13 +437,20 @@ pub async fn handle_wallet_miner_detail(
         }
     };
 
-    let Some(wallet) = tracked.get(index) else {
+    let Some((index, wallet)) =
+        crate::presentation::telegram::handlers::wallet::resolve_wallet_token(
+            &tracked,
+            cid,
+            wallet_token,
+        )
+    else {
         edit_text(
             &bot,
             chat_id,
             message_id,
-            "⚠️ Wallet not found.".to_string(),
-            crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
+            "⏳ <b>This wallet button is stale or no longer valid.</b>\nOpen Wallets again."
+                .to_string(),
+            crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup(),
         )
         .await;
         return Ok(());
@@ -477,7 +493,7 @@ pub async fn handle_wallet_miner_detail(
         chat_id,
         message_id,
         text,
-        crate::presentation::telegram::handlers::wallet::wallet_panel_markup(index),
+        crate::presentation::telegram::handlers::wallet::wallet_panel_markup(cid, wallet),
     )
     .await;
 

@@ -223,6 +223,14 @@ pub fn cancel_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
         .remove(&identity.actor_chat_key());
 }
 
+pub fn clear_all_runtime_state_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
+    ctx.admin_confirmations.retain(|_, session| {
+        session.actor_user_id != identity.actor_user_id && session.chat_id != identity.chat_id
+    });
+    ctx.pending_input_sessions
+        .remove(&identity.actor_chat_key());
+}
+
 pub fn sensitive_action_from_toggle_flag(flag: &str) -> Option<SensitiveAction> {
     match flag.trim().to_uppercase().as_str() {
         "ENABLE_MEMORY_CLEANER" | "MEMORY" | "MEM" => Some(SensitiveAction::ToggleMemoryCleaner),
