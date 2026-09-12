@@ -1,14 +1,15 @@
-# Functional remediation closure — v1.2.6
+# Functional remediation closure — v1.2.7 candidate
 
 This report continues the existing F-01…F-10 remediation and the F-11 runtime privilege
-gap discovered during final artifact acceptance. It records the
+gap discovered during final artifact acceptance, plus the F-12 migrations-only
+contract discovered before production deployment. It records the
 completed source changes and the boundaries of their verification. It is
 not a new whole-application audit and does not claim every external workflow
 has been exercised against live services.
 
 The current candidate is the Git HEAD containing this report. Read its
 qualification with:
-`git notes --ref=refs/notes/functional-closure-v126 show HEAD`.
+`git notes --ref=refs/notes/runtime-contract-v127 show HEAD`.
 That note provides final counts, image ID, source revision, evidence hashes,
 runtime assertions and remaining publication steps. A missing note means
 final qualification is still incomplete.
@@ -62,6 +63,38 @@ The original artifact failure also exposed incomplete mock getMe/subscription
 responses. Those fixture corrections changed no application behavior and their
 initial failure evidence is retained.
 
+
+## F-12 — migrations-only runtime bootstrap (high severity)
+
+Feature/location: process startup and persisted owner settings; wallet tracking,
+mining/reward persistence, deduplication and data deletion repository workflows.
+Expected: a database prepared by documented versioned migrations supports the
+least-privilege runtime role without CI setup or ad-hoc grants.
+Actual: the exact v1.2.6 ARM64 binary starts on Ubuntu 24.04, then exits before
+readiness with permission denied on system_settings. The runtime-role privilege
+matrix also lacks writes for wallet and reward state. No production host was
+accessed or changed; v1.2.6 deployment is blocked despite its passed source/CI gates.
+
+Mechanism: migrations create these tables as admin but omit runtime grants. The
+CI preparation script separately supplied several DML grants, masking the gap.
+Related components: settings_repo.rs, wallets_repo.rs, pending_rewards_repo.rs,
+mined_blocks_repo.rs, migrations and scripts/ci-prepare-postgres.sh.
+Fix: add the explicit scoped runtime data-write migration; remove runtime DML
+from CI setup so only its test reset privileges remain; keep all runtime schema
+creation disabled. Existing published v1.2.6 history/assets remain unchanged.
+Evidence: f12-before.log is an actual application-role failure; f12-after.log
+passes with 21 migrations in a fresh independent DB and real repository calls.
+The test covers settings, wallet/UTXO/reward upserts, mined blocks, alert dedup,
+startup event writes and forget-all. It supplies no runtime GRANT statements.
+The unchanged merged ARM64 binary passes the schema-correction runtime proof
+after applying only the proposed migration. Its isolated mock may yield
+HTTP 200 / degraded with an inactive subscription; that state is recorded,
+not treated as evidence of healthy live integrations. Native ABI, runtime data
+flows, invalid-setting fail-closed and idle shutdown passed. This proof does not
+qualify a v1.2.7 production artifact; that must match the future merged SHA.
+Final candidate results and permission to publish are recorded in the
+refs/notes/runtime-contract-v127 note for actual HEAD, not inferred from history.
+
 ## Qualification and coverage limits
 
 Final source checks: formatting, environment boundary, locked all-target/all-feature
@@ -75,8 +108,9 @@ Only a PASS qualification note confirms completion of these gates.
 The runtime environment uses a separate synthetic database and Telegram/Kaspa
 mocks on an internal Docker network. It validates application request/response
 behavior; it does not prove Telegram's live infrastructure, real blockchain
-mining notifications, or live market-provider behavior. Real production
-verification has not been performed or authorized in this continuation.
+mining notifications, or live market-provider behavior. Production verification
+has not been performed. Deployment remains gated by corrected artifact
+qualification and the remaining publication authorization.
 Non-applicable website/browser/account/email surfaces were not invented for
 this Telegram bot.
 
@@ -86,7 +120,11 @@ remediation; the notice is not a strict-clippy/test failure.
 
 ## Git outcome
 
-All checkpoints stay on the existing branch and local mirror. No real GitHub
-push, PR, merge, tag/release or deployment is part of this continuation.
+The original checkpoints and worktree are preserved. The single real push
+published the v1.2.6 branch; PR #58 was merged as 71fb0aaf3acd2e519acb90f11e990efae5ab373c
+and the signed GitHub release was created. Production remains unchanged because
+F-12 blocked native artifact qualification. The v1.2.7 correction is developed
+on its own branch from that merged SHA and pushed only to the existing local
+mirror. A second real push requires the user exception documented in PROJECT_STATE.md.
 PROJECT_STATE.md contains the exact recovery commands and points to the
 commit-bound qualification note. Follow its NEXT ACTION.
