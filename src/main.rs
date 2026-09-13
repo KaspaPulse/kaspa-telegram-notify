@@ -192,6 +192,46 @@ fn install_rustls_crypto_provider() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn drive_dispatcher_until_shutdown<F>(
+    dispatch: F,
+    shutdown: teloxide::dispatching::ShutdownToken,
+    cancel_token: tokio_util::sync::CancellationToken,
+    drain_timeout: std::time::Duration,
+) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = ()>,
+{
+    tokio::pin!(dispatch);
+    tokio::select! {
+        signal = wait_for_shutdown_signal() => {
+            tracing::warn!("[SYSTEM] {} received. Starting graceful shutdown.", signal);
+            cancel_token.cancel();
+            crate::infrastructure::resilience::runtime::task_supervisor().begin_shutdown();
+            // Request stop, then keep polling dispatch so Teloxide can join its workers.
+            // Its DB-using handler futures are also owned by our task supervisor.
+            let _ = shutdown.shutdown();
+            // Drive worker shutdown concurrently: a stuck handler must be cancelled
+            // by its owner while the dispatcher is still able to join its receiver.
+            let workers = crate::infrastructure::resilience::runtime::drain_tracked_tasks(drain_timeout);
+            tokio::pin!(workers);
+            tokio::select! {
+                report = &mut workers => {
+                    let report = report?;
+                    tracing::info!(cancelled_tasks = ?report.cancelled, "[SYSTEM] Shutdown worker joins complete.");
+                    tokio::time::timeout(drain_timeout, &mut dispatch).await
+                        .map_err(|_| anyhow::anyhow!("Telegram dispatcher failed to join after its owned handlers stopped"))?;
+                }
+                _ = &mut dispatch => { workers.await?; }
+            }
+        }
+        _ = &mut dispatch => {
+            tracing::warn!("[SYSTEM] Dispatcher exited. Stopping background workers.");
+            cancel_token.cancel();
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     install_rustls_crypto_provider()?;
@@ -481,7 +521,9 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let cancel_token =
+        crate::infrastructure::resilience::runtime::task_supervisor().cancellation_token();
+    let drain_timeout = std::time::Duration::from_secs(startup.shutdown_drain_secs);
 
     let app_context = std::sync::Arc::new(crate::domain::models::AppContext::new(
         rpc_client_arc.clone(),
@@ -560,11 +602,11 @@ async fn main() -> anyhow::Result<()> {
         .branch(
             Update::filter_message()
                 .filter_command::<Command>()
-                .endpoint(handlers::handle_command),
+                .endpoint(handlers::lifecycle::handle_command),
         )
-        .branch(Update::filter_callback_query().endpoint(handlers::handle_callback))
+        .branch(Update::filter_callback_query().endpoint(handlers::lifecycle::handle_callback))
         .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
-        .branch(Update::filter_message().endpoint(handlers::handle_raw_message));
+        .branch(Update::filter_message().endpoint(handlers::lifecycle::handle_raw_message));
 
     let bot_use_cases = crate::presentation::telegram::handlers::BotUseCases {
         wallet_mgt: wallet_management_uc.clone(),
@@ -589,109 +631,136 @@ async fn main() -> anyhow::Result<()> {
         ])
         .build();
 
-    if startup.use_webhook {
-        info!("Running in WEBHOOK mode");
+    let dispatch_result = async {
+        if startup.use_webhook {
+            info!("Running in WEBHOOK mode");
 
-        let webhook = startup
-            .webhook
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("validated webhook configuration is missing"))?;
+            let webhook = startup
+                .webhook
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("validated webhook configuration is missing"))?;
 
-        crate::infrastructure::webhook_security::validate_webhook_runtime_settings(
-            &startup.app_env,
-            webhook.bind_ip,
-            &webhook.domain,
-            &webhook.secret_token,
-        )?;
+            crate::infrastructure::webhook_security::validate_webhook_runtime_settings(
+                &startup.app_env,
+                webhook.bind_ip,
+                &webhook.domain,
+                &webhook.secret_token,
+            )?;
 
-        let addr = SocketAddr::new(webhook.bind_ip, webhook.port);
-        let url = format!("https://{}/webhook", webhook.domain).parse()?;
-        let webhook_metadata = format!(
-            r#"{{"domain":"{}","bind":"{}","port":{}}}"#,
-            webhook.domain, webhook.bind_ip, webhook.port
-        );
+            let addr = SocketAddr::new(webhook.bind_ip, webhook.port);
+            let url = format!("https://{}/webhook", webhook.domain).parse()?;
+            let webhook_metadata = format!(
+                r#"{{"domain":"{}","bind":"{}","port":{}}}"#,
+                webhook.domain, webhook.bind_ip, webhook.port
+            );
 
-        let mut webhook_start_event =
-            BotEventRecord::new(BotEventType::WebhookStart, EventSeverity::Info);
-        webhook_start_event.status = Some("listening");
-        webhook_start_event.metadata_json = &webhook_metadata;
+            let mut webhook_start_event =
+                BotEventRecord::new(BotEventType::WebhookStart, EventSeverity::Info);
+            webhook_start_event.status = Some("listening");
+            webhook_start_event.metadata_json = &webhook_metadata;
 
-        if let Err(error) = db_repo.record_bot_event_record(webhook_start_event).await {
-            tracing::error!("[WEBHOOK] Failed to persist webhook start event: {}", error);
-        }
-
-        tracing::info!(
-            "[WEBHOOK] Listening on {}:{} for domain {}",
-            webhook.bind_ip,
-            webhook.port,
-            webhook.domain
-        );
-
-        let options = teloxide::update_listeners::webhooks::Options::new(addr, url)
-            .secret_token(webhook.secret_token.clone())
-            .max_connections(crate::infrastructure::webhook_security::webhook_max_connections());
-
-        let listener = teloxide::update_listeners::webhooks::axum(bot, options).await?;
-
-        tokio::select! {
-            signal = wait_for_shutdown_signal() => {
-                tracing::warn!("[SYSTEM] {} received. Starting graceful shutdown.", signal);
-                cancel_token.cancel();
+            if let Err(error) = db_repo.record_bot_event_record(webhook_start_event).await {
+                tracing::error!("[WEBHOOK] Failed to persist webhook start event: {}", error);
             }
-            _ = dispatcher.dispatch_with_listener(
-                listener,
-                LoggingErrorHandler::with_custom_text("Webhook Error"),
-            ) => {
-                tracing::warn!("[SYSTEM] Webhook dispatcher exited. Stopping background workers.");
-                cancel_token.cancel();
-            }
-        }
-    } else {
-        info!("Running in POLLING mode");
-        bot.delete_webhook().await?;
-        tokio::select! {
-            signal = wait_for_shutdown_signal() => {
-                tracing::warn!("[SYSTEM] {} received. Starting graceful shutdown.", signal);
-                cancel_token.cancel();
-            }
-            _ = dispatcher.dispatch() => {
-                tracing::warn!("[SYSTEM] Polling dispatcher exited. Stopping background workers.");
-                cancel_token.cancel();
-            }
+
+            tracing::info!(
+                "[WEBHOOK] Listening on {}:{} for domain {}",
+                webhook.bind_ip,
+                webhook.port,
+                webhook.domain
+            );
+
+            let options = teloxide::update_listeners::webhooks::Options::new(addr, url)
+                .secret_token(webhook.secret_token.clone())
+                .max_connections(
+                    crate::infrastructure::webhook_security::webhook_max_connections(),
+                );
+
+            let (mut listener, stop_flag, router) =
+                teloxide::update_listeners::webhooks::axum_to_router(bot, options).await?;
+            use teloxide::update_listeners::UpdateListener as _;
+            let listener_stop = listener.stop_token();
+            let tcp = tokio::net::TcpListener::bind(addr).await?;
+            let server_cancel = cancel_token.clone();
+            crate::infrastructure::resilience::runtime::spawn_resilient(
+                "telegram_webhook_server",
+                async move {
+                    let result = axum::serve(tcp, router)
+                        .with_graceful_shutdown(async move {
+                            tokio::select! {
+                                _ = server_cancel.cancelled() => {}
+                                _ = stop_flag => {}
+                            }
+                        })
+                        .await;
+                    listener_stop.stop();
+                    if let Err(error) = result {
+                        tracing::error!("[WEBHOOK] Server stopped with error: {}", error);
+                    }
+                },
+            );
+            let shutdown = dispatcher.shutdown_token();
+            drive_dispatcher_until_shutdown(
+                dispatcher.dispatch_with_listener(
+                    listener,
+                    LoggingErrorHandler::with_custom_text("Webhook Error"),
+                ),
+                shutdown,
+                cancel_token.clone(),
+                drain_timeout,
+            )
+            .await
+        } else {
+            info!("Running in POLLING mode");
+            bot.delete_webhook().await?;
+            let shutdown = dispatcher.shutdown_token();
+            drive_dispatcher_until_shutdown(
+                dispatcher.dispatch(),
+                shutdown,
+                cancel_token.clone(),
+                drain_timeout,
+            )
+            .await
         }
     }
+    .await;
 
+    crate::infrastructure::resilience::runtime::task_supervisor().begin_shutdown();
     cancel_token.cancel();
-
-    let mut shutdown_event = BotEventRecord::new(BotEventType::SystemShutdown, EventSeverity::Info);
-    shutdown_event.status = Some("ok");
-    shutdown_event.metadata_json = r#"{"reason":"graceful_shutdown"}"#;
-
-    if let Err(error) = db_repo.record_bot_event_record(shutdown_event).await {
-        tracing::error!("[SYSTEM] Failed to persist shutdown event: {}", error);
-    }
-
-    let shutdown_drain_secs = startup.shutdown_drain_secs;
-    let drain_timeout = std::time::Duration::from_secs(shutdown_drain_secs);
-
     tracing::info!(
         "[SYSTEM] Waiting up to {} seconds for tracked background workers to stop.",
-        shutdown_drain_secs
+        startup.shutdown_drain_secs
     );
+    tracing::info!(
+        tasks = ?crate::infrastructure::resilience::runtime::task_supervisor().active_tasks(),
+        "[SYSTEM] Owned tasks at shutdown."
+    );
+    let report =
+        crate::infrastructure::resilience::runtime::drain_tracked_tasks(drain_timeout).await?;
+    tracing::info!(cancelled_tasks = ?report.cancelled,
+        "[SYSTEM] All owned background workers and request tasks joined; database can now close.");
 
-    if crate::infrastructure::resilience::runtime::drain_tracked_tasks(drain_timeout).await {
-        tracing::info!("[SYSTEM] All tracked background workers stopped cleanly.");
+    let mut shutdown_event = BotEventRecord::new(BotEventType::SystemShutdown, EventSeverity::Info);
+    shutdown_event.status = Some(if dispatch_result.is_ok() {
+        "ok"
     } else {
-        tracing::warn!(
-            "[SYSTEM] Background worker drain timed out after {} seconds; closing database pool.",
-            shutdown_drain_secs
-        );
+        "dispatcher_error"
+    });
+    shutdown_event.metadata_json = r#"{"reason":"graceful_shutdown"}"#;
+    match tokio::time::timeout(
+        drain_timeout,
+        db_repo.record_bot_event_record(shutdown_event),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!("[SYSTEM] Failed to persist shutdown event: {}", error),
+        Err(error) => tracing::error!("[SYSTEM] Shutdown event persistence timed out: {}", error),
     }
 
     pool.close().await;
     tracing::info!("[SYSTEM] Database connections closed safely.");
-
-    Ok(())
+    dispatch_result
 }
 
 #[cfg(test)]

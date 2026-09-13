@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod admin_confirm;
+pub mod lifecycle;
 pub mod mining;
 pub mod network;
 pub mod raw_message;

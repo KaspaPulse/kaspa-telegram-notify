@@ -155,7 +155,7 @@ pub fn spawn_price_monitor(ctx: AppContext, token: CancellationToken) -> Result<
 }
 pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
     crate::infrastructure::resilience::runtime::spawn_resilient(
-        "system_background_task",
+        "node_connectivity_monitor",
         async move {
             let mut failed_attempts = 0;
             let mut is_disconnected = false;
@@ -248,7 +248,7 @@ pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
 
 pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
     crate::infrastructure::resilience::runtime::spawn_resilient(
-        "system_background_task",
+        "runtime_memory_cleaner",
         async move {
             loop {
                 tokio::select! {

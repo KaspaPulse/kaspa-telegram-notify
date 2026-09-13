@@ -208,7 +208,7 @@ fn reward_confirmation_gate_must_run_before_dag_analysis() {
     let before_join_set = extract_between(
         &source,
         "let utxos = self.node.get_utxos(wallet_address).await?",
-        "let mut join_set = tokio::task::JoinSet::new();",
+        "let mut join_set =",
     );
 
     assert!(
