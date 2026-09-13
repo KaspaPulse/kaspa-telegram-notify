@@ -55,3 +55,11 @@ If production verification exposes a defect, capture the minimum evidence on `dn
 This boundary is mandatory even when a task has broad authorization. Authorization to deploy does not convert `dns` into a development host.
 
 If another document or prior conversation conflicts with this file on the `kas`/`dns` execution boundary, this policy governs until it is deliberately changed through protected `main`.
+
+## Interruption-safe continuity — owner baseline v2
+
+Read and apply [the interruption-safe execution supplement](docs/continuity/INTERRUPTION_SAFE_EXECUTION.md), subordinate to this repository contract.
+Use [repository adoption](docs/continuity/REPOSITORY_ADOPTION.md), [resume procedure](docs/continuity/RESUME.md) and [checkpoint template](docs/continuity/CHECKPOINT_TEMPLATE.md) with the existing canonical ledger.
+Persist material-operation intent before execution; verify and record outcomes immediately afterward. Recover unknown outcomes before retrying.
+Preserve local work, active task ownership, project-specific hosts, authorization limits and valid source-bound evidence.
+Validate NEXT ACTION, then continue authorized work rather than merely summarize. This policy grants no push, release or production authority.
