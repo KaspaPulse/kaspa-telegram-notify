@@ -60,6 +60,13 @@ fn wallet_callback(prefix: &str, chat_id: i64, wallet: &str) -> String {
     format!("{short_prefix}:{}", wallet_callback_token(chat_id, wallet))
 }
 
+/// Whether the wallet addition completed, rather than merely sending a rejection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletAddOutcome {
+    Added,
+    Rejected,
+}
+
 pub async fn handle_add(
     bot: Bot,
     msg: Message,
@@ -67,17 +74,17 @@ pub async fn handle_add(
     actor_user_id: u64,
     wallet: String,
     wallet_mgt: Arc<WalletManagementUseCase>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<WalletAddOutcome> {
     let clean_wallet = crate::utils::normalize_wallet_input(&wallet);
 
     if crate::utils::is_add_wallet_rate_limited(actor_user_id) {
         crate::send_logged!(bot, msg, crate::utils::rate_limit_message());
-        return Ok(());
+        return Ok(WalletAddOutcome::Rejected);
     }
 
     if let Err(reason) = crate::utils::validate_wallet_address_size(&clean_wallet) {
         crate::send_logged!(bot, msg, format!("🚫 <b>Wallet rejected.</b>\n{}", reason));
-        return Ok(());
+        return Ok(WalletAddOutcome::Rejected);
     }
     if clean_wallet.is_empty() {
         crate::send_logged!(
@@ -85,7 +92,7 @@ pub async fn handle_add(
             msg,
             "⚠️ <b>Usage:</b> /add <code>kaspa:your_wallet_address</code>"
         );
-        return Ok(());
+        return Ok(WalletAddOutcome::Rejected);
     }
 
     if let Err(reason) = crate::utils::validate_wallet_security(&clean_wallet) {
@@ -97,7 +104,7 @@ pub async fn handle_add(
                 crate::utils::html_escape(&reason)
             )
         );
-        return Ok(());
+        return Ok(WalletAddOutcome::Rejected);
     }
 
     match wallet_mgt.add_wallet(&clean_wallet, cid).await {
@@ -110,6 +117,7 @@ pub async fn handle_add(
                     crate::utils::html_escape(&clean_wallet)
                 )
             );
+            Ok(WalletAddOutcome::Added)
         }
         Err(e) => {
             crate::send_logged!(
@@ -120,10 +128,9 @@ pub async fn handle_add(
                     crate::utils::html_escape(&e.to_string())
                 )
             );
+            Ok(WalletAddOutcome::Rejected)
         }
     }
-
-    Ok(())
 }
 
 pub async fn handle_remove(

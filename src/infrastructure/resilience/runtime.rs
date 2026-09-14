@@ -106,6 +106,25 @@ struct TaskRegistry {
     tasks: Vec<TaskRecord>,
 }
 
+// A drain future can be cancelled by its caller. Keep every remaining monitor
+// recoverable until it is joined; dropping a JoinHandle alone would detach it.
+struct DrainOwnership<'a> {
+    registry: &'a std::sync::Mutex<TaskRegistry>,
+    tasks: Vec<TaskRecord>,
+}
+
+impl Drop for DrainOwnership<'_> {
+    fn drop(&mut self) {
+        if !self.tasks.is_empty() {
+            self.registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .tasks
+                .append(&mut self.tasks);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ShutdownReport {
     pub cancelled: Vec<TaskSnapshot>,
@@ -227,37 +246,44 @@ impl TaskSupervisor {
     pub async fn shutdown(&self, duration: Duration) -> Result<ShutdownReport, ShutdownError> {
         let _shutdown = self.shutdown_lock.lock().await;
         self.begin_shutdown();
-        let mut tasks = std::mem::take(
-            &mut self
-                .registry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .tasks,
-        );
+        let mut owned = DrainOwnership {
+            registry: &self.registry,
+            tasks: std::mem::take(
+                &mut self
+                    .registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .tasks,
+            ),
+        };
         let mut report = ShutdownReport::default();
-        if timeout(duration, join_workers(&mut tasks)).await.is_err() {
-            report.cancelled = tasks
+        if timeout(duration, join_workers(&mut owned.tasks))
+            .await
+            .is_err()
+        {
+            report.cancelled = owned
+                .tasks
                 .iter()
                 .filter(|t| !t.monitor.is_finished())
                 .map(TaskRecord::snapshot)
                 .collect();
             tracing::warn!(remaining = ?report.cancelled,
                 "[SHUTDOWN DEADLINE] Cancelling owned tasks; database remains open until joins complete.");
-            for task in &tasks {
+            for task in &owned.tasks {
                 task.abort.abort();
             }
-            if timeout(duration, join_workers(&mut tasks)).await.is_err() {
-                let remaining = tasks
+            if timeout(duration, join_workers(&mut owned.tasks))
+                .await
+                .is_err()
+            {
+                let remaining = owned
+                    .tasks
                     .iter()
                     .filter(|t| !t.monitor.is_finished())
                     .map(TaskRecord::snapshot)
                     .collect::<Vec<_>>();
                 tracing::error!(remaining = ?remaining,
                     "[SHUTDOWN BLOCKED] Tasks still alive after cancellation; database close refused.");
-                self.registry
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .tasks = tasks;
                 return Err(ShutdownError { remaining });
             }
         }
@@ -347,5 +373,69 @@ mod tests {
     fn invalid_user_agent_returns_error_without_panicking() {
         let result = build_http_client_with_user_agent("invalid\nuser-agent");
         assert!(matches!(result, Err(AppError::ApiError(_))));
+    }
+}
+
+#[cfg(test)]
+mod ownership_gap_regression_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn interrupted_drain_retains_ownership_for_retry() {
+        let owner = TaskSupervisor::default();
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let task = owner
+            .spawn("audit_owned_waiter", async move {
+                let _ = wait.await;
+            })
+            .unwrap();
+        let interrupted = timeout(
+            Duration::from_millis(1),
+            owner.shutdown(Duration::from_secs(1)),
+        )
+        .await;
+        let after_cancel = owner.active_tasks();
+        let retry = timeout(
+            Duration::from_millis(1),
+            owner.shutdown(Duration::from_secs(1)),
+        )
+        .await;
+        // Release the synthetic in-memory waiter before asserting, even on the red source.
+        release.send(()).unwrap();
+        task.join().await.unwrap();
+        owner.shutdown(Duration::from_secs(1)).await.unwrap();
+        assert!(interrupted.is_err());
+        assert_eq!(
+            after_cancel.len(),
+            1,
+            "Dropping shutdown detached a still-live owned task"
+        );
+        assert!(
+            retry.is_err(),
+            "Retry falsely succeeded while the original worker was alive"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn normal_drain_remains_idempotent_and_rejects_new_work() {
+        let owner = TaskSupervisor::default();
+        let token = owner.cancellation_token();
+        let worker = owner
+            .spawn("cooperative_waiter", async move {
+                token.cancelled().await;
+            })
+            .unwrap();
+        owner.shutdown(Duration::from_secs(1)).await.unwrap();
+        worker.join().await.unwrap();
+        assert!(owner.active_tasks().is_empty());
+        assert!(owner.spawn("must_not_run", async {}).is_none());
+        assert!(
+            owner
+                .shutdown(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .cancelled
+                .is_empty()
+        );
     }
 }

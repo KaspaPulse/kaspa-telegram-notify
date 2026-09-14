@@ -190,7 +190,6 @@ pub fn start_utxo_monitor(
                             alert_key: &event.alert_key,
                             message_html: &message,
                             chat_ids: &chat_ids,
-                            wallet_masked: Some(&wallet_masked),
                             txid_masked: Some(&txid_masked),
                             block_hash_masked: block_masked.as_deref(),
                             amount_kas: Some(event.amount_kas),
@@ -237,6 +236,10 @@ pub fn start_utxo_monitor(
                                     wallet_masked,
                                     recipients
                                 );
+                            }
+                            Ok(AlertOutboxOutcome::NoCurrentRecipients) => {
+                                info!(wallet = %wallet_masked,
+                                    "[STALE ALERT SKIPPED] Original recipients no longer subscribe; no outbox state was written.");
                             }
                             Ok(AlertOutboxOutcome::Duplicate) => {
                                 info!(

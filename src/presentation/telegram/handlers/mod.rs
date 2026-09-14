@@ -6,7 +6,7 @@ pub mod network;
 pub mod raw_message;
 pub mod wallet;
 
-use crate::domain::models::{PendingInputAction, SensitiveAction};
+use crate::domain::models::{PendingInputAction, PendingInputSession, SensitiveAction};
 use crate::infrastructure::database::postgres_adapter::PostgresRepository;
 use crate::network::stats_use_cases::{
     GetMarketStatsUseCase, GetMinerStatsUseCase, NetworkStatsUseCase,
@@ -27,6 +27,75 @@ pub struct BotUseCases {
     pub market_stats: Arc<GetMarketStatsUseCase>,
     pub miner_stats: Arc<GetMinerStatsUseCase>,
     pub dag_uc: Arc<crate::network::analyze_dag::AnalyzeDagUseCase>,
+}
+
+/// Ordinary-user actions that are safe while maintenance mode is active.
+/// Admin authorization is evaluated separately and keeps its existing behavior.
+fn maintenance_allows_command(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Start
+            | Command::Help
+            | Command::Remove(_)
+            | Command::List
+            | Command::Blocks
+            | Command::Donate
+            | Command::ForgetWallets
+            | Command::ForgetAll
+            | Command::Forget
+            | Command::HideMenu
+    )
+}
+
+fn maintenance_allows_callback(data: &str) -> bool {
+    if matches!(
+        data,
+        "cmd_ignore"
+            | "cancel_action"
+            | "confirm_forget_wallets"
+            | "confirm_forget_all"
+            | "do_forget_wallets"
+            | "do_forget_all"
+            | "cmd_wallets"
+            | "cmd_remove_wallets"
+            | "cmd_start"
+            | "cmd_help"
+            | "cmd_list"
+            | "cmd_blocks"
+            | "refresh_blocks"
+            | "cmd_donate"
+    ) {
+        return true;
+    }
+
+    if [
+        "rm_wallet_",
+        "wallet_panel_",
+        "wallet_balance_",
+        "wallet_blocks_",
+        "wallet_miner_",
+        "wallet_remove_confirm_",
+        "wallet_remove_do_",
+        "wp:",
+        "wblk:",
+        "wrc:",
+        "wrd:",
+    ]
+    .iter()
+    .any(|prefix| data.starts_with(prefix))
+    {
+        return true;
+    }
+
+    data.strip_prefix("admin_do:")
+        .and_then(|remainder| remainder.split(':').next())
+        .and_then(SensitiveAction::parse)
+        .is_some_and(|action| {
+            matches!(
+                action,
+                SensitiveAction::ClearWallets | SensitiveAction::ForgetAll
+            )
+        })
 }
 
 fn callback_disables_keyboard(data: &str) -> bool {
@@ -240,12 +309,12 @@ pub fn handle_command(
             return Ok(());
         }
 
-        if app_context.maintenance_mode.load(Ordering::Relaxed) && !is_admin {
+        if app_context.maintenance_mode.load(Ordering::Relaxed)
+            && !is_admin
+            && !maintenance_allows_command(&cmd)
+        {
             let _ = bot
-                .send_message(
-                    chat_id,
-                    "🚧 <b>Maintenance Mode</b>\nThe bot is currently under maintenance.",
-                )
+                .send_message(chat_id, raw_message::MAINTENANCE_MESSAGE)
                 .parse_mode(ParseMode::Html)
                 .await;
             return Ok(());
@@ -451,7 +520,7 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
             }
 
             Command::Add(wallet) => {
-                wallet::handle_add(bot, msg, cid, actor_user_id, wallet, ucs.wallet_mgt).await?
+                wallet::handle_add(bot, msg, cid, actor_user_id, wallet, ucs.wallet_mgt).await?;
             }
             Command::Remove(wallet) => {
                 wallet::handle_remove(bot, msg, cid, wallet, ucs.wallet_mgt).await?
@@ -727,6 +796,18 @@ pub async fn handle_callback(
 
     let callback_is_admin =
         identity.is_private_admin(app_context.admin_user_id, app_context.admin_chat_id);
+
+    if app_context.maintenance_mode.load(Ordering::Relaxed)
+        && !callback_is_admin
+        && !maintenance_allows_callback(&data)
+    {
+        let _ = bot
+            .answer_callback_query(q.id.clone())
+            .text("Maintenance Mode: this action is temporarily unavailable.")
+            .await;
+        restore_safe_callback_menu(&bot, &q, false, raw_message::MAINTENANCE_MESSAGE).await;
+        return Ok(());
+    }
 
     if !callback_is_admin && crate::utils::is_callback_rate_limited(identity.actor_user_id) {
         let _ = bot
@@ -1221,9 +1302,13 @@ pub async fn handle_callback(
             .await;
 
         if let Some(msg) = q.message {
-            app_context
-                .pending_input_sessions
-                .insert(identity.actor_chat_key(), PendingInputAction::AddWallet);
+            app_context.pending_input_sessions.insert(
+                identity.actor_chat_key(),
+                PendingInputSession {
+                    action: PendingInputAction::AddWallet,
+                    message_id: msg.id().0,
+                },
+            );
 
             let text = "➕ <b>Add Wallet</b>\nPlease send your Kaspa wallet address now.\n\nExample:\n<code>kaspa:qq...</code>";
 
@@ -1722,7 +1807,11 @@ pub async fn handle_block_user(
 
 #[cfg(test)]
 mod callback_execution_tests {
-    use super::{CallbackRecoveryMenu, callback_disables_keyboard, callback_recovery_menu};
+    use super::{
+        CallbackRecoveryMenu, callback_disables_keyboard, callback_recovery_menu,
+        maintenance_allows_callback, maintenance_allows_command,
+    };
+    use crate::presentation::telegram::commands::Command;
 
     #[test]
     fn state_changing_callbacks_disable_the_keyboard() {
@@ -1740,6 +1829,157 @@ mod callback_execution_tests {
         assert!(!callback_disables_keyboard(
             "wp:0123456789abcdef0123456789abcdef"
         ));
+    }
+
+    #[test]
+    fn maintenance_command_contract_allows_help_local_reads_and_deletion() {
+        for command in [
+            Command::Start,
+            Command::Help,
+            Command::Remove("kaspa:test".to_string()),
+            Command::List,
+            Command::Blocks,
+            Command::Donate,
+            Command::ForgetWallets,
+            Command::ForgetAll,
+            Command::Forget,
+            Command::HideMenu,
+        ] {
+            assert!(maintenance_allows_command(&command), "{command:?}");
+        }
+
+        for command in [
+            Command::Add("kaspa:test".to_string()),
+            Command::Balance,
+            Command::Miner,
+            Command::Network,
+            Command::Dag,
+            Command::Price,
+            Command::Market,
+            Command::Supply,
+            Command::Fees,
+        ] {
+            assert!(!maintenance_allows_command(&command), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn maintenance_callback_contract_blocks_add_external_and_edit_actions() {
+        for data in [
+            "cmd_add_wallet",
+            "cmd_balance",
+            "wbal:0123456789abcdef0123456789abcdef",
+            "cmd_miner",
+            "wmin:0123456789abcdef0123456789abcdef",
+            "cmd_network",
+            "cmd_dag",
+            "cmd_market",
+            "cmd_supply",
+            "cmd_fees",
+            "btn_toggle_ENABLE_LIVE_SYNC",
+        ] {
+            assert!(!maintenance_allows_callback(data), "{data}");
+        }
+    }
+
+    #[test]
+    fn maintenance_callback_contract_allows_reads_deletion_privacy_and_cancel() {
+        for data in [
+            "cmd_ignore",
+            "cancel_action",
+            "cmd_start",
+            "cmd_help",
+            "cmd_wallets",
+            "cmd_list",
+            "cmd_blocks",
+            "refresh_blocks",
+            "cmd_donate",
+            "cmd_remove_wallets",
+            "confirm_forget_wallets",
+            "confirm_forget_all",
+            "do_forget_wallets",
+            "do_forget_all",
+            "wp:0123456789abcdef0123456789abcdef",
+            "wblk:0123456789abcdef0123456789abcdef:0",
+            "wrc:0123456789abcdef0123456789abcdef",
+            "wrd:0123456789abcdef0123456789abcdef",
+            "admin_do:clear_wallets:00000000000000000000000000000000",
+            "admin_do:forget_all:00000000000000000000000000000000",
+        ] {
+            assert!(maintenance_allows_callback(data), "{data}");
+        }
+    }
+
+    #[tokio::test]
+    async fn my_chat_member_handler_accepts_synthetic_update_without_external_io() {
+        let update: teloxide::types::Update = serde_json::from_str(
+            r#"{
+                "update_id": 1,
+                "my_chat_member": {
+                    "chat": {"id": 1001, "first_name": "Synthetic", "type": "private"},
+                    "from": {"id": 2001, "is_bot": false, "first_name": "Tester"},
+                    "date": 1644677726,
+                    "old_chat_member": {
+                        "user": {"id": 3001, "is_bot": true, "first_name": "AuditBot"},
+                        "status": "member"
+                    },
+                    "new_chat_member": {
+                        "user": {"id": 3001, "is_bot": true, "first_name": "AuditBot"},
+                        "status": "kicked",
+                        "until_date": 0
+                    }
+                }
+            }"#,
+        )
+        .expect("synthetic my_chat_member update must parse");
+        let teloxide::types::UpdateKind::MyChatMember(member) = update.kind else {
+            panic!("expected my_chat_member update");
+        };
+
+        super::handle_block_user(teloxide::Bot::new("1234567890:TEST_TOKEN"), member)
+            .await
+            .expect("no-op membership handler must accept the event");
+    }
+
+    #[tokio::test]
+    async fn my_chat_member_filter_dispatches_to_application_handler() {
+        use teloxide::dispatching::UpdateFilterExt;
+
+        let update: teloxide::types::Update = serde_json::from_str(
+            r#"{
+                "update_id": 2,
+                "my_chat_member": {
+                    "chat": {"id": 1002, "first_name": "Synthetic", "type": "private"},
+                    "from": {"id": 2002, "is_bot": false, "first_name": "Tester"},
+                    "date": 1644677726,
+                    "old_chat_member": {
+                        "user": {"id": 3002, "is_bot": true, "first_name": "AuditBot"},
+                        "status": "member"
+                    },
+                    "new_chat_member": {
+                        "user": {"id": 3002, "is_bot": true, "first_name": "AuditBot"},
+                        "status": "kicked",
+                        "until_date": 0
+                    }
+                }
+            }"#,
+        )
+        .expect("synthetic my_chat_member update must parse");
+
+        let handler = teloxide::dptree::entry().branch(
+            teloxide::types::Update::filter_my_chat_member().endpoint(super::handle_block_user),
+        );
+        let result = handler
+            .dispatch(teloxide::dptree::deps![
+                update,
+                teloxide::Bot::new("1234567890:TEST_TOKEN")
+            ])
+            .await;
+
+        assert!(
+            result.is_break(),
+            "my_chat_member must reach the registered handler"
+        );
     }
 
     #[test]

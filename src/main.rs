@@ -17,7 +17,7 @@ use dotenvy::dotenv;
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use teloxide::dptree;
@@ -80,12 +80,18 @@ async fn record_pending_panic_marker(
     db_repo: &Arc<PostgresRepository>,
 ) -> Result<(), crate::domain::errors::AppError> {
     let marker_path = panic_event_marker_path();
+    record_pending_panic_marker_at(db_repo, &marker_path).await
+}
 
+async fn record_pending_panic_marker_at(
+    db_repo: &Arc<PostgresRepository>,
+    marker_path: &Path,
+) -> Result<(), crate::domain::errors::AppError> {
     if !marker_path.exists() {
         return Ok(());
     }
 
-    let marker_content = match fs::read_to_string(&marker_path) {
+    let marker_content = match fs::read_to_string(marker_path) {
         Ok(content) => content,
         Err(e) => {
             tracing::error!(
@@ -131,7 +137,7 @@ async fn record_pending_panic_marker(
         )
         .await?;
 
-    if let Err(e) = fs::remove_file(&marker_path) {
+    if let Err(e) = fs::remove_file(marker_path) {
         tracing::warn!(
             "[PANIC_EVENT] Failed to remove pending panic marker at {:?}: {}",
             marker_path,
@@ -287,10 +293,14 @@ async fn main() -> anyhow::Result<()> {
         startup.verbose_logs
     );
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(startup.db_max_connections)
-        .connect(&startup.database_url)
-        .await?;
+    let cancel_token =
+        crate::infrastructure::resilience::runtime::task_supervisor().cancellation_token();
+    let pool = crate::infrastructure::database::runtime_pool_options(
+        startup.db_max_connections,
+        cancel_token.clone(),
+    )
+    .connect(&startup.database_url)
+    .await?;
 
     let db_repo = Arc::new(PostgresRepository::new(pool.clone()));
 
@@ -521,8 +531,6 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let cancel_token =
-        crate::infrastructure::resilience::runtime::task_supervisor().cancellation_token();
     let drain_timeout = std::time::Duration::from_secs(startup.shutdown_drain_secs);
 
     let app_context = std::sync::Arc::new(crate::domain::models::AppContext::new(
@@ -770,5 +778,103 @@ mod rustls_startup_tests {
         super::install_rustls_crypto_provider().expect("Rustls provider must install");
         let _ = rustls::ClientConfig::builder();
         assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
+}
+
+#[cfg(test)]
+mod panic_marker_recovery_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn marker_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kaspa-pulse-{label}-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
+
+    #[tokio::test]
+    async fn recovered_panic_marker_is_persisted_before_file_removal() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL is required for panic marker recovery test");
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .expect("isolated PostgreSQL must be reachable");
+        let repo = Arc::new(PostgresRepository::new(pool.clone()));
+        let path = marker_path("panic-recovery");
+        let message = format!("synthetic-panic-recovery-{}", std::process::id());
+        fs::write(
+            &path,
+            serde_json::json!({
+                "event_type": "PANIC_EVENT",
+                "status": "pending_recovery",
+                "location": "synthetic:test",
+                "message": message,
+            })
+            .to_string(),
+        )
+        .expect("synthetic marker must be writable");
+
+        record_pending_panic_marker_at(&repo, &path)
+            .await
+            .expect("panic marker recovery must succeed");
+        assert!(
+            !path.exists(),
+            "marker must be removed only after persistence"
+        );
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM bot_event_log \
+             WHERE event_type = 'PANIC_EVENT' \
+               AND status = 'recovered_after_restart' \
+               AND error_message = $1",
+        )
+        .bind(&message)
+        .fetch_one(&pool)
+        .await
+        .expect("recovered panic event must be queryable");
+        assert_eq!(count, 1);
+
+        sqlx::query(
+            "DELETE FROM bot_event_log \
+             WHERE event_type = 'PANIC_EVENT' \
+               AND status = 'recovered_after_restart' \
+               AND error_message = $1",
+        )
+        .bind(&message)
+        .execute(&pool)
+        .await
+        .expect("synthetic panic event cleanup must succeed");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_panic_event_persistence_keeps_marker_for_next_restart() {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://panic_test@127.0.0.1:1/panic_test?sslmode=disable")
+            .expect("unavailable test endpoint URL must parse");
+        let repo = Arc::new(PostgresRepository::new(pool.clone()));
+        let path = marker_path("panic-db-failure");
+        fs::write(&path, r#"{"message":"synthetic persistence failure"}"#)
+            .expect("synthetic marker must be writable");
+
+        let result = record_pending_panic_marker_at(&repo, &path).await;
+        assert!(result.is_err());
+        assert!(
+            path.exists(),
+            "failed persistence must retain marker for retry"
+        );
+
+        fs::remove_file(&path).expect("test-owned marker cleanup must succeed");
+        pool.close().await;
     }
 }

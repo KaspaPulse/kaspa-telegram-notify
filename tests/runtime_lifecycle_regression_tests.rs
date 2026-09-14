@@ -1,11 +1,13 @@
+use kaspa_pulse::infrastructure::database::runtime_pool_options;
 use kaspa_pulse::infrastructure::resilience::runtime::{TaskSupervisor, task_stage};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 async fn pool() -> sqlx::PgPool {
     PgPoolOptions::new()
@@ -137,6 +139,109 @@ async fn shutdown_during_actual_sql_query_cancels_and_releases_connection() {
         .unwrap();
     assert_eq!(pool.size(), 0);
     assert_eq!(*events.lock().unwrap(), vec!["worker_stopped"]);
+}
+
+#[tokio::test]
+async fn runtime_pool_policy_closes_cancelled_lock_wait_without_waiting_for_unlock() {
+    let database_url =
+        std::env::var("DATABASE_URL").expect("isolated development PostgreSQL required");
+    let shutdown = CancellationToken::new();
+    let runtime_pool = runtime_pool_options(1, shutdown.clone())
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let observer = pool().await;
+    let mut blocker = observer.acquire().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    let lock_key = 9_612_000_i64 + i64::from(std::process::id());
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(lock_key)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let worker_pool = runtime_pool.clone();
+    let (pid_tx, pid_rx) = oneshot::channel();
+    let waiter = tokio::spawn(async move {
+        let mut connection = worker_pool.acquire().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *connection)
+            .await
+            .unwrap();
+        pid_tx.send(pid).unwrap();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *connection)
+            .await
+    });
+    let waiter_pid = pid_rx.await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT $2 = ANY(pg_blocking_pids($1))")
+                .bind(waiter_pid)
+                .bind(blocker_pid)
+                .fetch_one(&observer)
+                .await
+                .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("runtime connection must enter a real PostgreSQL lock wait");
+
+    shutdown.cancel();
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+
+    let close_started = Instant::now();
+    tokio::time::timeout(Duration::from_secs(1), runtime_pool.close())
+        .await
+        .expect("shutdown pool policy must not wait for the server lock to be released");
+    assert!(close_started.elapsed() < Duration::from_secs(1));
+    assert_eq!(runtime_pool.size(), 0);
+
+    let backend_close_started = Instant::now();
+    let backend_closed_while_lock_held = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let backend_exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = $1)")
+                    .bind(waiter_pid)
+                    .fetch_one(&observer)
+                    .await
+                    .unwrap();
+            if !backend_exists {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .is_ok();
+    eprintln!(
+        "runtime pool close={}ms; postgres backend disappearance={}ms; blocker still held",
+        close_started.elapsed().as_millis(),
+        backend_close_started.elapsed().as_millis()
+    );
+    assert!(
+        backend_closed_while_lock_held,
+        "cancelled runtime connection remained server-side while blocker was still held"
+    );
+
+    let unlocked: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
+        .bind(lock_key)
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    assert!(unlocked);
+    drop(blocker);
+    observer.close().await;
 }
 
 #[tokio::test]

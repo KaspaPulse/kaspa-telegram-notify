@@ -36,6 +36,13 @@ pub enum PendingInputAction {
     AddWallet,
 }
 
+/// In-memory prompt identity; cancellation must target the prompt that created it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingInputSession {
+    pub action: PendingInputAction,
+    pub message_id: i32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SensitiveAction {
     Pause,

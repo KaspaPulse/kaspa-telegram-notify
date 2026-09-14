@@ -56,6 +56,11 @@ impl PostgresRepository {
         confirmations: u64,
         required_confirmations: u64,
     ) -> Result<(), AppError> {
+        let Some(mut transaction) =
+            super::wallets_repo::begin_tracked_wallet_write(&self.pool, wallet).await?
+        else {
+            return Ok(());
+        };
         sqlx::query(
             r#"
             INSERT INTO pending_rewards (
@@ -94,10 +99,14 @@ impl PostgresRepository {
         .bind(virtual_daa_score as i64)
         .bind(confirmations as i64)
         .bind(required_confirmations as i64)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
