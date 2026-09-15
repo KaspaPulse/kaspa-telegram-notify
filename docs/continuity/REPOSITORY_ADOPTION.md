@@ -33,3 +33,9 @@ upgrade and must never be generalized to v1.2.10 candidate shutdowns.
 For the completed closeout task, `NEXT_ACTION=NONE_FOR_THIS_TASK` and
 `PRODUCTION_ACTION_REQUIRED=NO`. Any future Production action requires a new material
 regression or new owner authorization and must begin by reconciling actual state.
+
+Canonical v1.2.10 closeout identity:
+- deployment attempt: `20260915T164255.225210Z-1422640`
+- deployment attempt SHA-256: `c64b6a79e310683421b95d0fbf5b3cd6f9f8d5ccb02996e41a8b4ef273066b58`
+- final evidence manifest SHA-256: `9010b3403c0a26e628d14a433459e2a7615a502e17a0ecae111724bde8ac7ef2`
+- Production action after this documentation publication: none.
