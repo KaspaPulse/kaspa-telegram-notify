@@ -208,7 +208,7 @@ fn reward_confirmation_gate_must_run_before_dag_analysis() {
     let before_join_set = extract_between(
         &source,
         "let utxos = self.node.get_utxos(wallet_address).await?",
-        "let mut join_set = tokio::task::JoinSet::new();",
+        "let mut join_set =",
     );
 
     assert!(
@@ -843,7 +843,9 @@ fn initial_price_refresh_must_share_runtime_failure_state() {
     let system = read_source("src/infrastructure/external_services/system.rs");
 
     assert!(!system.contains("let _ = update_price_cache(&client, &ctx).await"));
-    assert!(system.contains("let initial_result = update_price_cache(&client, &ctx).await"));
+    assert!(system.contains("let Some(initial_result)"));
+    assert!(system.contains("run_until_cancelled("));
+    assert!(system.contains("update_price_cache(&client, &ctx),"));
     assert!(system.contains("apply_price_refresh_result(\n            initial_result,"));
     assert!(system.matches("apply_price_refresh_result(").count() >= 3);
 }

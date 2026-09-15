@@ -230,31 +230,50 @@ async fn fetch_fee_estimate() -> Result<serde_json::Value, String> {
     .await
 }
 
+// Missing/malformed provider values are not estimates; never synthesize live fees.
+fn required_fee_rate(bucket: Option<&serde_json::Value>, name: &str) -> Result<f64, String> {
+    bucket
+        .and_then(|bucket| bucket.get("feerate"))
+        .and_then(serde_json::Value::as_f64)
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+        .ok_or_else(|| format!("Fee estimate {name} must contain a finite positive feerate"))
+}
+
+fn fee_estimate_message(json: &serde_json::Value, timestamp: &str) -> Result<String, String> {
+    let priority = required_fee_rate(json.get("priorityBucket"), "priorityBucket")?;
+    let first_bucket = |key| {
+        json.get(key)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|buckets| buckets.first())
+    };
+    let normal = required_fee_rate(first_bucket("normalBuckets"), "normalBuckets[0]")?;
+    let low = required_fee_rate(first_bucket("lowBuckets"), "lowBuckets[0]")?;
+
+    let text = format!(
+        "⛽ <b>Network Fee Market</b>\n\
+         ━━━━━━━━━━━━━━━━━━\n\
+         🚀 <b>Priority:</b> <code>{:.2} sompi/gram</code>\n\
+         ⚡ <b>Normal:</b> <code>{:.2} sompi/gram</code>\n\
+         🐢 <b>Low:</b> <code>{:.2} sompi/gram</code>\n\n\
+         <i>* Standard transaction size is ~3000 mass.</i>\n\n\
+         ⏱️ <code>{}</code>",
+        priority, normal, low, timestamp
+    );
+
+    Ok(text)
+}
+
 pub async fn handle_fees(bot: Bot, msg: Message) -> anyhow::Result<()> {
-    match fetch_fee_estimate().await {
-        Ok(json) => {
-            let normal = json["normalBuckets"][0]["feerate"].as_f64().unwrap_or(1.0);
-            let priority = json["priorityBucket"]["feerate"]
-                .as_f64()
-                .unwrap_or(normal * 1.5);
-            let low = json["lowBuckets"][0]["feerate"]
-                .as_f64()
-                .unwrap_or(normal * 0.5);
-
-            let text = format!(
-                "⛽ <b>Network Fee Market</b>\n\
-                 ━━━━━━━━━━━━━━━━━━\n\
-                 🚀 <b>Priority:</b> <code>{:.2} sompi/gram</code>\n\
-                 ⚡ <b>Normal:</b> <code>{:.2} sompi/gram</code>\n\
-                 🐢 <b>Low:</b> <code>{:.2} sompi/gram</code>\n\n\
-                 <i>* Standard transaction size is ~3000 mass.</i>\n\n\
-                 ⏱️ <code>{}</code>",
-                priority,
-                normal,
-                low,
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-            );
-
+    let estimate = fetch_fee_estimate().await.and_then(|json| {
+        fee_estimate_message(
+            &json,
+            &chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+        )
+    });
+    match estimate {
+        Ok(text) => {
             let markup = crate::utils::refresh_markup("refresh_fees");
             let _ = crate::utils::send_reply_or_edit_log(
                 &bot,
@@ -271,7 +290,7 @@ pub async fn handle_fees(bot: Bot, msg: Message) -> anyhow::Result<()> {
                 error = %crate::utils::sanitize_for_log(&error),
                 "[NETWORK FEES] Kaspa.org fee estimate request failed."
             );
-            crate::send_logged!(bot, msg, "⚠️ Kaspa.org API unreachable.");
+            crate::send_logged!(bot, msg, "⚠️ Fee estimates are temporarily unavailable.");
         }
     }
 
@@ -434,4 +453,152 @@ fn format_number(value: f64) -> String {
     }
 
     out.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod fee_estimate_regression_tests {
+    use super::fee_estimate_message;
+    use serde_json::{Value, json};
+
+    const TIME: &str = "2026-09-14 00:00:00 UTC";
+    const POINTERS: [&str; 3] = [
+        "/priorityBucket/feerate",
+        "/normalBuckets/0/feerate",
+        "/lowBuckets/0/feerate",
+    ];
+
+    fn valid_estimate() -> Value {
+        json!({
+            "priorityBucket": {"feerate": 4.25},
+            "normalBuckets": [{"feerate": 2.5}],
+            "lowBuckets": [{"feerate": 1.25}],
+        })
+    }
+
+    #[test]
+    fn missing_estimate_is_not_rendered_as_live_fees() {
+        for input in [json!({}), Value::Null, json!([]), json!(true)] {
+            let result = fee_estimate_message(&input, TIME);
+            assert!(
+                result.is_err(),
+                "missing provider data rendered as live fees: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_missing_bucket_or_rate_is_rejected() {
+        for key in ["priorityBucket", "normalBuckets", "lowBuckets"] {
+            let mut input = valid_estimate();
+            input.as_object_mut().unwrap().remove(key);
+            assert!(fee_estimate_message(&input, TIME).is_err(), "missing {key}");
+        }
+        for pointer in POINTERS {
+            let mut input = valid_estimate();
+            *input.pointer_mut(pointer).unwrap() = Value::Null;
+            assert!(
+                fee_estimate_message(&input, TIME).is_err(),
+                "missing rate {pointer}"
+            );
+        }
+        for key in ["normalBuckets", "lowBuckets"] {
+            let mut input = valid_estimate();
+            input[key] = json!([]);
+            assert!(fee_estimate_message(&input, TIME).is_err(), "empty {key}");
+        }
+    }
+
+    #[test]
+    fn wrong_rate_types_are_rejected_not_defaulted() {
+        for pointer in POINTERS {
+            for value in [
+                json!("2.0"),
+                json!("NaN"),
+                json!(true),
+                json!([]),
+                json!({}),
+            ] {
+                let mut input = valid_estimate();
+                *input.pointer_mut(pointer).unwrap() = value;
+                assert!(
+                    fee_estimate_message(&input, TIME).is_err(),
+                    "invalid {pointer}: {input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_positive_rates_are_rejected() {
+        for pointer in POINTERS {
+            for value in [-1.0, 0.0, -0.0] {
+                let mut input = valid_estimate();
+                *input.pointer_mut(pointer).unwrap() = json!(value);
+                assert!(
+                    fee_estimate_message(&input, TIME).is_err(),
+                    "invalid {pointer}: {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn valid_provider_values_keep_existing_message_format() {
+        let rendered = fee_estimate_message(&valid_estimate(), TIME).unwrap();
+        assert_eq!(
+            rendered,
+            concat!(
+                "⛽ <b>Network Fee Market</b>\n",
+                "━━━━━━━━━━━━━━━━━━\n",
+                "🚀 <b>Priority:</b> <code>4.25 sompi/gram</code>\n",
+                "⚡ <b>Normal:</b> <code>2.50 sompi/gram</code>\n",
+                "🐢 <b>Low:</b> <code>1.25 sompi/gram</code>\n\n",
+                "<i>* Standard transaction size is ~3000 mass.</i>\n\n",
+                "⏱️ <code>2026-09-14 00:00:00 UTC</code>"
+            )
+        );
+    }
+
+    #[test]
+    fn additional_buckets_and_provider_metadata_do_not_change_first_values() {
+        let mut input = valid_estimate();
+        input["normalBuckets"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"feerate": 1.75}));
+        input["lowBuckets"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"feerate": 1.0}));
+        input["priorityBucket"]["estimatedSeconds"] = json!(0.5);
+        input["providerMetadata"] = json!({"synthetic": true});
+        assert_eq!(
+            fee_estimate_message(&input, TIME),
+            fee_estimate_message(&valid_estimate(), TIME)
+        );
+    }
+
+    #[test]
+    fn bucket_lists_must_be_arrays_not_numeric_key_objects() {
+        for key in ["normalBuckets", "lowBuckets"] {
+            let mut input = valid_estimate();
+            input[key] = json!({"0": {"feerate": 2.0}});
+            assert!(fee_estimate_message(&input, TIME).is_err());
+        }
+    }
+
+    #[test]
+    fn equal_positive_buckets_are_preserved() {
+        let mut input = valid_estimate();
+        for pointer in POINTERS {
+            *input.pointer_mut(pointer).unwrap() = json!(1.0);
+        }
+        assert_eq!(
+            fee_estimate_message(&input, TIME)
+                .unwrap()
+                .matches("1.00 sompi/gram")
+                .count(),
+            3
+        );
+    }
 }

@@ -1,5 +1,7 @@
 use crate::domain::errors::AppError;
-use sqlx::{PgPool, Row};
+use rand::TryRng;
+use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::collections::BTreeSet;
 
 const DEFAULT_MAX_DELIVERY_ATTEMPTS: i32 = 5;
@@ -7,6 +9,7 @@ const DEFAULT_MAX_DELIVERY_ATTEMPTS: i32 = 5;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct QueuedTelegramMessage {
     pub id: i64,
+    pub claim_token: String,
     pub chat_id: i64,
     pub message_html: String,
     pub wallet_masked: Option<String>,
@@ -33,6 +36,7 @@ pub enum AlertOutboxOutcome {
     Enqueued { recipients: usize },
     Reconciled { recipients: usize },
     Duplicate,
+    NoCurrentRecipients,
     Suppressed { recipients: usize },
 }
 
@@ -42,7 +46,6 @@ pub struct AlertOutboxRequest<'a> {
     pub alert_key: &'a str,
     pub message_html: &'a str,
     pub chat_ids: &'a [i64],
-    pub wallet_masked: Option<&'a str>,
     pub txid_masked: Option<&'a str>,
     pub block_hash_masked: Option<&'a str>,
     pub amount_kas: Option<f64>,
@@ -83,6 +86,31 @@ pub fn worker_id() -> String {
         .unwrap_or_else(|_| "unknown-host".to_string());
 
     format!("{}:{}", host, std::process::id())
+}
+
+const DELIVERY_WALLET_TOKEN_BYTES: usize = 16;
+const DELIVERY_WALLET_ID_PREFIX: &str = "v2";
+
+fn delivery_wallet_token(wallet: &str) -> String {
+    let digest = Sha256::digest(format!("delivery-wallet-v1:{wallet}").as_bytes());
+    digest[..DELIVERY_WALLET_TOKEN_BYTES]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn delivery_wallet_identity(wallet: &str) -> String {
+    format!(
+        "{DELIVERY_WALLET_ID_PREFIX}:{}",
+        delivery_wallet_token(wallet)
+    )
+}
+
+fn delivery_wallet_token_from_identity(identity: &str) -> Option<&str> {
+    let token = identity.strip_prefix("v2:")?;
+    (token.len() == DELIVERY_WALLET_TOKEN_BYTES * 2
+        && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(token)
 }
 
 #[allow(dead_code)]
@@ -144,10 +172,29 @@ pub async fn commit_alert_outbox(
         ));
     }
 
-    let mut transaction = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let Some(mut transaction) =
+        super::database::wallets_repo::begin_tracked_wallet_write(pool, request.wallet).await?
+    else {
+        return Ok(AlertOutboxOutcome::NoCurrentRecipients);
+    };
+    // Intersect the original event recipients with current subscriptions while
+    // holding the same wallet lock as subscription mutation and privacy deletion.
+    let requested: Vec<i64> = recipients.into_iter().collect();
+    let recipients: Vec<i64> = sqlx::query_scalar(
+        "SELECT chat_id FROM user_wallets WHERE wallet = $1 AND chat_id = ANY($2) ORDER BY chat_id",
+    )
+    .bind(request.wallet)
+    .bind(&requested)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    if recipients.is_empty() {
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        return Ok(AlertOutboxOutcome::NoCurrentRecipients);
+    }
 
     let delivery_setting = sqlx::query_scalar::<_, String>(
         "SELECT value_data FROM system_settings WHERE key_name = $1",
@@ -206,6 +253,7 @@ pub async fn commit_alert_outbox(
         });
     }
 
+    let wallet_identity = delivery_wallet_identity(request.wallet);
     let mut inserted_rows = 0usize;
 
     for chat_id in &recipients {
@@ -219,7 +267,7 @@ pub async fn commit_alert_outbox(
         )
         .bind(*chat_id)
         .bind(request.message_html)
-        .bind(request.wallet_masked)
+        .bind(&wallet_identity)
         .bind(request.txid_masked)
         .bind(request.block_hash_masked)
         .bind(request.amount_kas)
@@ -255,7 +303,16 @@ pub async fn fetch_pending_batch(
     limit: i64,
 ) -> Result<Vec<QueuedTelegramMessage>, AppError> {
     let limit = limit.clamp(1, 100);
-    let locked_by = worker_id();
+    // A new claim must differ even when the same process reclaims an expired lease.
+    let mut nonce = [0u8; 16];
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut nonce)
+        .map_err(|error| {
+            AppError::Internal(format!(
+                "Failed to generate delivery claim identity: {error}"
+            ))
+        })?;
+    let locked_by = format!("{}:{:032x}", worker_id(), u128::from_le_bytes(nonce));
 
     sqlx::query_as::<_, QueuedTelegramMessage>(
         "WITH picked AS (
@@ -284,6 +341,7 @@ pub async fn fetch_pending_batch(
          WHERE q.id = picked.id
          RETURNING
             q.id,
+            q.locked_by AS claim_token,
             q.chat_id,
             q.message_html,
             q.wallet_masked,
@@ -301,7 +359,236 @@ pub async fn fetch_pending_batch(
     .map_err(|e| AppError::DatabaseError(e.to_string()))
 }
 
-pub async fn mark_sent(pool: &PgPool, id: i64) -> Result<(), AppError> {
+#[allow(dead_code)]
+pub async fn delivery_claim_is_current(
+    pool: &PgPool,
+    id: i64,
+    claim_token: &str,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM telegram_delivery_queue
+            WHERE id = $1
+              AND status = 'processing'
+              AND locked_by = $2
+        )",
+    )
+    .bind(id)
+    .bind(claim_token)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| AppError::DatabaseError(error.to_string()))
+}
+
+pub struct DeliveryClaimGuard<'a> {
+    transaction: Transaction<'a, Postgres>,
+    id: i64,
+    claim_token: String,
+}
+
+impl DeliveryClaimGuard<'_> {
+    #[allow(dead_code)]
+    pub async fn mark_sent(mut self) -> Result<(), AppError> {
+        let result = sqlx::query(
+            "UPDATE telegram_delivery_queue
+             SET status = 'sent',
+                 attempts = attempts + 1,
+                 locked_at = NULL,
+                 locked_by = NULL,
+                 updated_at = NOW()
+             WHERE id = $1 AND status = 'processing' AND locked_by = $2",
+        )
+        .bind(self.id)
+        .bind(&self.claim_token)
+        .execute(&mut *self.transaction)
+        .await
+        .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+        if result.rows_affected() != 1 {
+            return Err(AppError::NotFound(format!(
+                "Active delivery claim for queue message {}",
+                self.id
+            )));
+        }
+
+        self.transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::DatabaseError(error.to_string()))
+    }
+
+    #[allow(dead_code)]
+    pub async fn mark_failed(mut self, error: &str) -> Result<(), AppError> {
+        let safe_error = crate::utils::sanitize_event_text_for_storage(error);
+        let attempts: i32 = sqlx::query_scalar(
+            "SELECT attempts FROM telegram_delivery_queue
+             WHERE id = $1 AND status = 'processing' AND locked_by = $2",
+        )
+        .bind(self.id)
+        .bind(&self.claim_token)
+        .fetch_optional(&mut *self.transaction)
+        .await
+        .map_err(|database_error| AppError::DatabaseError(database_error.to_string()))?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "Active delivery claim for queue message {}",
+                self.id
+            ))
+        })?;
+
+        let delay = retry_delay_seconds(attempts, error);
+        let max_attempts = max_delivery_attempts();
+        let result = sqlx::query(
+            "UPDATE telegram_delivery_queue
+             SET status = CASE WHEN attempts + 1 >= $4 THEN 'failed' ELSE 'pending' END,
+                 attempts = attempts + 1,
+                 last_error = $2,
+                 locked_at = NULL,
+                 locked_by = NULL,
+                 next_attempt_at = NOW() + ($3::TEXT || ' seconds')::INTERVAL,
+                 updated_at = NOW()
+             WHERE id = $1 AND status = 'processing' AND locked_by = $5",
+        )
+        .bind(self.id)
+        .bind(safe_error)
+        .bind(delay)
+        .bind(max_attempts)
+        .bind(&self.claim_token)
+        .execute(&mut *self.transaction)
+        .await
+        .map_err(|database_error| AppError::DatabaseError(database_error.to_string()))?;
+
+        if result.rows_affected() != 1 {
+            return Err(AppError::NotFound(format!(
+                "Active delivery claim for queue message {}",
+                self.id
+            )));
+        }
+
+        self.transaction
+            .commit()
+            .await
+            .map_err(|database_error| AppError::DatabaseError(database_error.to_string()))
+    }
+}
+
+pub async fn acquire_delivery_claim_guard<'a>(
+    pool: &'a PgPool,
+    id: i64,
+    claim_token: &str,
+) -> Result<Option<DeliveryClaimGuard<'a>>, AppError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+    let initial: Option<(i64,)> = sqlx::query_as(
+        "SELECT chat_id FROM telegram_delivery_queue
+         WHERE id = $1 AND status = 'processing' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(claim_token)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+    let Some((chat_id,)) = initial else {
+        transaction
+            .rollback()
+            .await
+            .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+        return Ok(None);
+    };
+
+    // Serialize the final authorization-to-send boundary with user subscription
+    // mutation and privacy deletion. This lock is scoped to one Telegram chat.
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(chat_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+    let current: Option<(Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT wallet_masked, created_at FROM telegram_delivery_queue
+         WHERE id = $1 AND status = 'processing' AND locked_by = $2
+         FOR UPDATE",
+    )
+    .bind(id)
+    .bind(claim_token)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+    let Some((wallet_identity, queue_created_at)) = current else {
+        transaction
+            .rollback()
+            .await
+            .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+        return Ok(None);
+    };
+
+    let expected_wallet_token = wallet_identity
+        .as_deref()
+        .and_then(delivery_wallet_token_from_identity)
+        .map(str::to_owned);
+
+    let active_subscription = if let Some(expected_wallet_token) = expected_wallet_token.as_deref()
+    {
+        let subscriptions: Vec<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT wallet, created_at FROM user_wallets WHERE chat_id = $1 ORDER BY wallet",
+        )
+        .bind(chat_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+
+        subscriptions.iter().any(|(wallet, created_at)| {
+            *created_at <= queue_created_at
+                && delivery_wallet_token(wallet) == expected_wallet_token
+        })
+    } else {
+        false
+    };
+
+    if !active_subscription {
+        let reason = if expected_wallet_token.is_some() {
+            "delivery revoked: wallet subscription is absent or newer than this queued event"
+        } else {
+            "delivery revoked: queue row lacks verifiable wallet identity"
+        };
+        let safe_reason = crate::utils::sanitize_event_text_for_storage(reason);
+        sqlx::query(
+            "UPDATE telegram_delivery_queue
+             SET status = 'suppressed',
+                 last_error = $3,
+                 locked_at = NULL,
+                 locked_by = NULL,
+                 updated_at = NOW()
+             WHERE id = $1 AND status = 'processing' AND locked_by = $2",
+        )
+        .bind(id)
+        .bind(claim_token)
+        .bind(safe_reason)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::DatabaseError(error.to_string()))?;
+        return Ok(None);
+    }
+
+    Ok(Some(DeliveryClaimGuard {
+        transaction,
+        id,
+        claim_token: claim_token.to_owned(),
+    }))
+}
+
+#[allow(dead_code)] // retained for queue characterization/integration tests
+pub async fn mark_sent(pool: &PgPool, id: i64, claim_token: &str) -> Result<(), AppError> {
     let result = sqlx::query(
         "UPDATE telegram_delivery_queue
          SET status = 'sent',
@@ -309,16 +596,17 @@ pub async fn mark_sent(pool: &PgPool, id: i64) -> Result<(), AppError> {
              locked_at = NULL,
              locked_by = NULL,
              updated_at = NOW()
-         WHERE id = $1",
+         WHERE id = $1 AND status = 'processing' AND locked_by = $2",
     )
     .bind(id)
+    .bind(claim_token)
     .execute(pool)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if result.rows_affected() != 1 {
         return Err(AppError::NotFound(format!(
-            "Telegram delivery queue message {id}"
+            "Active delivery claim for queue message {id}"
         )));
     }
 
@@ -353,16 +641,23 @@ pub fn retry_delay_seconds(attempts_before_increment: i32, error: &str) -> i64 {
     }
 }
 
-pub async fn mark_failed(pool: &PgPool, id: i64, error: &str) -> Result<(), AppError> {
+#[allow(dead_code)] // retained for queue characterization/integration tests
+pub async fn mark_failed(
+    pool: &PgPool,
+    id: i64,
+    claim_token: &str,
+    error: &str,
+) -> Result<(), AppError> {
     let safe_error = crate::utils::sanitize_event_text_for_storage(error);
 
     let attempts: i32 =
-        sqlx::query_scalar("SELECT attempts FROM telegram_delivery_queue WHERE id = $1")
+        sqlx::query_scalar("SELECT attempts FROM telegram_delivery_queue WHERE id = $1 AND status = 'processing' AND locked_by = $2")
             .bind(id)
+            .bind(claim_token)
             .fetch_optional(pool)
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?
-            .ok_or_else(|| AppError::NotFound(format!("Telegram delivery queue message {id}")))?;
+            .ok_or_else(|| AppError::NotFound(format!("Active delivery claim for queue message {id}")))?;
 
     let delay = retry_delay_seconds(attempts, error);
     let max_attempts = max_delivery_attempts();
@@ -376,19 +671,20 @@ pub async fn mark_failed(pool: &PgPool, id: i64, error: &str) -> Result<(), AppE
              locked_by = NULL,
              next_attempt_at = NOW() + ($3::TEXT || ' seconds')::INTERVAL,
              updated_at = NOW()
-         WHERE id = $1",
+         WHERE id = $1 AND status = 'processing' AND locked_by = $5",
     )
     .bind(id)
     .bind(safe_error)
     .bind(delay)
     .bind(max_attempts)
+    .bind(claim_token)
     .execute(pool)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if result.rows_affected() != 1 {
         return Err(AppError::NotFound(format!(
-            "Telegram delivery queue message {id}"
+            "Active delivery claim for queue message {id}"
         )));
     }
 

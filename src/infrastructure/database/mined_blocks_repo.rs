@@ -5,6 +5,12 @@ use super::postgres_adapter::PostgresRepository;
 
 impl PostgresRepository {
     pub async fn record_mined_block(&self, block: MinedBlock) -> Result<(), AppError> {
+        let Some(mut transaction) =
+            super::wallets_repo::begin_tracked_wallet_write(&self.pool, &block.wallet_address)
+                .await?
+        else {
+            return Ok(());
+        };
         sqlx::query!(
             "INSERT INTO mined_blocks (wallet, outpoint, amount, daa_score)
              VALUES ($1, $2, $3, $4)
@@ -14,10 +20,14 @@ impl PostgresRepository {
             block.amount,
             block.daa_score as i64
         )
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 

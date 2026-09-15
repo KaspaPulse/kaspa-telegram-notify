@@ -312,7 +312,7 @@ async fn mark_sent_finishes_the_processing_row_and_clears_its_lock() {
         .expect("queue claim should succeed");
     let message_id = batch[0].id;
 
-    mark_sent(&pool, message_id)
+    mark_sent(&pool, message_id, &batch[0].claim_token)
         .await
         .expect("mark_sent should succeed");
 
@@ -361,12 +361,14 @@ async fn repeated_delivery_failures_back_off_then_become_terminal() {
     let mut batch = fetch_pending_batch(&pool, 10)
         .await
         .expect("initial queue claim should succeed");
-    let message_id = batch.remove(0).id;
+    let mut item = batch.remove(0);
+    let message_id = item.id;
 
     for attempt in 1..=5 {
         mark_failed(
             &pool,
             message_id,
+            &item.claim_token,
             "Too Many Requests: retry_after 42 for kaspa:stage3b-sensitive-wallet-000001",
         )
         .await
@@ -422,6 +424,7 @@ async fn repeated_delivery_failures_back_off_then_become_terminal() {
                 .expect("retry claim should succeed");
             assert_eq!(reclaimed.len(), 1);
             assert_eq!(reclaimed[0].id, message_id);
+            item = reclaimed.into_iter().next().unwrap();
         } else {
             assert_eq!(status, "failed");
         }
@@ -479,4 +482,114 @@ async fn enqueue_returns_database_error_when_the_queue_database_is_unavailable()
     let result = enqueue_message(&pool, next_chat_id(), "stage3b outage").await;
 
     assert!(matches!(result, Err(AppError::DatabaseError(_))));
+}
+
+#[tokio::test]
+async fn stale_claim_cannot_revert_a_successfully_sent_message() {
+    let _guard = database_test_lock().lock().await;
+    let pool = test_pool().await;
+    reset_characterization_tables(&pool).await;
+    enqueue_message(&pool, next_chat_id(), "synthetic claim test")
+        .await
+        .unwrap();
+    let first = fetch_pending_batch(&pool, 1).await.unwrap().remove(0);
+    sqlx::query(
+        "UPDATE telegram_delivery_queue SET locked_at=NOW()-INTERVAL '121 seconds' WHERE id=$1",
+    )
+    .bind(first.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let current = fetch_pending_batch(&pool, 1).await.unwrap().remove(0);
+    mark_sent(&pool, current.id, &current.claim_token)
+        .await
+        .unwrap();
+    let stale = mark_failed(
+        &pool,
+        first.id,
+        &first.claim_token,
+        "late synthetic failure",
+    )
+    .await;
+    let state: (String, i32) =
+        sqlx::query_as("SELECT status,attempts FROM telegram_delivery_queue WHERE id=$1")
+            .bind(first.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    println!("stale failure result={stale:?}; final queue state={state:?}");
+    assert_eq!(
+        state,
+        ("sent".into(), 1),
+        "late failure changed the current owner's committed result"
+    );
+    assert!(stale.is_err());
+}
+
+#[tokio::test]
+async fn stale_claim_cannot_complete_a_newer_active_attempt() {
+    let _guard = database_test_lock().lock().await;
+    let pool = test_pool().await;
+    reset_characterization_tables(&pool).await;
+    enqueue_message(&pool, next_chat_id(), "synthetic active claim test")
+        .await
+        .unwrap();
+    let first = fetch_pending_batch(&pool, 1).await.unwrap().remove(0);
+    sqlx::query(
+        "UPDATE telegram_delivery_queue SET locked_at=NOW()-INTERVAL '121 seconds' WHERE id=$1",
+    )
+    .bind(first.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let current = fetch_pending_batch(&pool, 1).await.unwrap().remove(0);
+    let stale = mark_sent(&pool, first.id, &first.claim_token).await;
+    let state: (String, i32, Option<String>) =
+        sqlx::query_as("SELECT status,attempts,locked_by FROM telegram_delivery_queue WHERE id=$1")
+            .bind(first.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    println!(
+        "stale success result={stale:?}; status={} attempts={}",
+        state.0, state.1
+    );
+    assert_eq!(
+        state,
+        ("processing".into(), 0, Some(current.claim_token.clone())),
+        "stale attempt claimed success for newer work"
+    );
+    assert!(stale.is_err());
+    assert_ne!(
+        first.claim_token, current.claim_token,
+        "reclaim must have a new attempt identity even in same process"
+    );
+    mark_sent(&pool, current.id, &current.claim_token)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn completed_claim_is_single_use_without_incrementing_attempts_twice() {
+    let _guard = database_test_lock().lock().await;
+    let pool = test_pool().await;
+    reset_characterization_tables(&pool).await;
+    enqueue_message(&pool, next_chat_id(), "synthetic single-use claim")
+        .await
+        .unwrap();
+    let item = fetch_pending_batch(&pool, 1).await.unwrap().remove(0);
+    mark_sent(&pool, item.id, &item.claim_token).await.unwrap();
+    assert!(mark_sent(&pool, item.id, &item.claim_token).await.is_err());
+    assert!(
+        mark_failed(&pool, item.id, &item.claim_token, "late")
+            .await
+            .is_err()
+    );
+    let state: (String, i32) =
+        sqlx::query_as("SELECT status,attempts FROM telegram_delivery_queue WHERE id=$1")
+            .bind(item.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(state, ("sent".into(), 1));
 }

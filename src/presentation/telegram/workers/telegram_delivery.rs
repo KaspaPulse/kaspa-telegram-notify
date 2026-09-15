@@ -99,6 +99,32 @@ async fn deliver_pending_batch(bot: &Bot, pool: &PgPool) {
         };
 
     for item in batch {
+        let claim =
+            match crate::infrastructure::telegram_delivery_queue::acquire_delivery_claim_guard(
+                pool,
+                item.id,
+                &item.claim_token,
+            )
+            .await
+            {
+                Ok(Some(claim)) => claim,
+                Ok(None) => {
+                    info!(
+                        "[DELIVERY QUEUE] Skipping stale, revoked, or unsubscribed delivery claim id={} chat={}",
+                        item.id, item.chat_id
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    crate::infrastructure::metrics::inc_db_errors();
+                    error!(
+                        "[DELIVERY QUEUE] Refusing to send id {} because durable claim authorization failed: {}",
+                        item.id, error
+                    );
+                    continue;
+                }
+            };
+
         crate::utils::log_multiline(
             &format!("📤 [BOT QUEUE OUT] Chat: {}", item.chat_id),
             &item.message_html,
@@ -119,26 +145,26 @@ async fn deliver_pending_batch(bot: &Bot, pool: &PgPool) {
 
         match send_result {
             Ok(_) => {
-                crate::infrastructure::metrics::inc_alerts_delivered();
                 let delivered_at = Utc::now();
                 let latency_ms = delivered_at
                     .signed_duration_since(item.created_at)
                     .num_milliseconds()
                     .max(0) as u64;
+
+                if let Err(error) = claim.mark_sent().await {
+                    crate::infrastructure::metrics::inc_db_errors();
+                    error!(
+                        "[DELIVERY QUEUE] Telegram accepted id {} but durable sent acknowledgement failed: {}",
+                        item.id, error
+                    );
+                    continue;
+                }
+
+                crate::infrastructure::metrics::inc_alerts_delivered();
                 crate::infrastructure::observability::observe_delivery_latency(latency_ms);
                 crate::infrastructure::observability::mark_telegram_delivery(
                     delivered_at.timestamp().max(0) as u64,
                 );
-
-                if let Err(error) =
-                    crate::infrastructure::telegram_delivery_queue::mark_sent(pool, item.id).await
-                {
-                    crate::infrastructure::metrics::inc_db_errors();
-                    error!(
-                        "[DELIVERY QUEUE] Failed to mark sent id {}: {}",
-                        item.id, error
-                    );
-                }
 
                 info!(
                     "✅ [QUEUED ALERT DELIVERED] id={} | chat={} | wallet={} | txid={} | block={} | amount_kas={} | daa_score={}",
@@ -168,14 +194,7 @@ async fn deliver_pending_batch(bot: &Bot, pool: &PgPool) {
                     );
                 }
 
-                if let Err(database_error) =
-                    crate::infrastructure::telegram_delivery_queue::mark_failed(
-                        pool,
-                        item.id,
-                        &error_text,
-                    )
-                    .await
-                {
+                if let Err(database_error) = claim.mark_failed(&error_text).await {
                     crate::infrastructure::metrics::inc_db_errors();
                     error!(
                         "[DELIVERY QUEUE] Failed to mark failed id {}: {}",

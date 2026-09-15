@@ -1,4 +1,7 @@
-use crate::domain::models::{AppContext, ConfirmationSession, RequestIdentity, SensitiveAction};
+use crate::domain::models::{
+    ActorChatKey, AppContext, ConfirmationSession, PendingInputSession, RequestIdentity,
+    SensitiveAction,
+};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rand::TryRng;
@@ -210,6 +213,15 @@ pub fn cleanup_expired(ctx: &Arc<AppContext>) {
         .retain(|_, session| session.expires_at_unix_secs > now);
 }
 
+fn cancel_pending_for_identity(
+    sessions: &DashMap<ActorChatKey, PendingInputSession>,
+    identity: RequestIdentity,
+) {
+    sessions.remove_if(&identity.actor_chat_key(), |_, session| {
+        session.message_id == identity.message_id
+    });
+}
+
 pub fn cancel_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
     ctx.admin_confirmations.retain(|_, session| {
         !(session.actor_user_id == identity.actor_user_id
@@ -217,8 +229,7 @@ pub fn cancel_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
             && session.message_id == identity.message_id)
     });
 
-    ctx.pending_input_sessions
-        .remove(&identity.actor_chat_key());
+    cancel_pending_for_identity(&ctx.pending_input_sessions, identity);
 }
 
 pub fn clear_all_runtime_state_for_identity(ctx: &Arc<AppContext>, identity: RequestIdentity) {
@@ -524,5 +535,66 @@ mod tests {
             .is_err()
         );
         assert_eq!(confirmations.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod cancellation_gap_regression_tests {
+    use super::*;
+    use crate::domain::models::PendingInputAction;
+
+    fn identity(message_id: i32) -> RequestIdentity {
+        RequestIdentity {
+            actor_user_id: 1001,
+            chat_id: 1001,
+            message_id,
+            is_private: true,
+        }
+    }
+
+    #[test]
+    fn stale_cancel_cannot_consume_a_newer_prompt() {
+        let sessions = DashMap::new();
+        let current = identity(20);
+        sessions.insert(
+            current.actor_chat_key(),
+            PendingInputSession {
+                action: PendingInputAction::AddWallet,
+                message_id: current.message_id,
+            },
+        );
+        cancel_pending_for_identity(&sessions, identity(10));
+        assert!(
+            sessions.contains_key(&current.actor_chat_key()),
+            "Cancel from message 10 removed the newer prompt from message 20"
+        );
+    }
+
+    #[test]
+    fn cancel_for_current_prompt_removes_only_its_actor_and_chat() {
+        let sessions = DashMap::new();
+        let current = identity(20);
+        let other_actor = RequestIdentity {
+            actor_user_id: 1002,
+            ..current
+        };
+        let other_chat = RequestIdentity {
+            chat_id: 1002,
+            ..current
+        };
+        for who in [current, other_actor, other_chat] {
+            sessions.insert(
+                who.actor_chat_key(),
+                PendingInputSession {
+                    action: PendingInputAction::AddWallet,
+                    message_id: 20,
+                },
+            );
+        }
+        cancel_pending_for_identity(&sessions, current);
+        cancel_pending_for_identity(&sessions, current);
+        assert!(!sessions.contains_key(&current.actor_chat_key()));
+        assert!(sessions.contains_key(&other_actor.actor_chat_key()));
+        assert!(sessions.contains_key(&other_chat.actor_chat_key()));
     }
 }
