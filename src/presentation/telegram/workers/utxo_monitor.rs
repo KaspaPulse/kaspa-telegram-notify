@@ -84,6 +84,7 @@ pub fn start_utxo_monitor(
         );
 
         loop {
+            crate::infrastructure::resilience::runtime::task_stage("waiting_scan_trigger");
             let Some(trigger) = schedule.next_trigger(&token).await else {
                 info!("[WORKER] UTXO monitor shutdown requested.");
                 break;
@@ -100,6 +101,8 @@ pub fn start_utxo_monitor(
             crate::infrastructure::observability::record_scan_trigger(trigger);
             tracing::debug!("[WORKER] UTXO scan triggered by {}.", trigger.as_str());
 
+            crate::infrastructure::resilience::runtime::task_stage("rpc_node_health");
+
             match node.get_node_health().await {
                 Ok((true, _)) => {
                     crate::infrastructure::observability::set_node_connected(true);
@@ -109,6 +112,8 @@ pub fn start_utxo_monitor(
                     continue;
                 }
             }
+
+            crate::infrastructure::resilience::runtime::task_stage("db_tracked_wallets");
 
             let wallets = match db.get_all_tracked_wallets().await {
                 Ok(wallets) => wallets,
@@ -124,7 +129,8 @@ pub fn start_utxo_monitor(
             }
 
             let recipients_by_wallet = group_wallet_subscribers(wallets);
-            let mut join_set = tokio::task::JoinSet::new();
+            let mut join_set =
+                crate::infrastructure::resilience::runtime::OwnedTaskSet::new("utxo_wallet_scan");
 
             for (wallet_address, chat_ids) in recipients_by_wallet {
                 let semaphore = semaphore.clone();
@@ -184,7 +190,6 @@ pub fn start_utxo_monitor(
                             alert_key: &event.alert_key,
                             message_html: &message,
                             chat_ids: &chat_ids,
-                            wallet_masked: Some(&wallet_masked),
                             txid_masked: Some(&txid_masked),
                             block_hash_masked: block_masked.as_deref(),
                             amount_kas: Some(event.amount_kas),
@@ -231,6 +236,10 @@ pub fn start_utxo_monitor(
                                     wallet_masked,
                                     recipients
                                 );
+                            }
+                            Ok(AlertOutboxOutcome::NoCurrentRecipients) => {
+                                info!(wallet = %wallet_masked,
+                                    "[STALE ALERT SKIPPED] Original recipients no longer subscribe; no outbox state was written.");
                             }
                             Ok(AlertOutboxOutcome::Duplicate) => {
                                 info!(
@@ -330,6 +339,7 @@ pub fn start_utxo_monitor(
             }
 
             let mut wallet_scan_outcomes = Vec::new();
+            crate::infrastructure::resilience::runtime::task_stage("joining_wallet_scans");
             while let Some(result) = join_set.join_next().await {
                 match result {
                     Ok(succeeded) => wallet_scan_outcomes.push(succeeded),

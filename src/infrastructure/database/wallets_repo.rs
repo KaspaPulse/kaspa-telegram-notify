@@ -8,7 +8,7 @@ use super::postgres_adapter::PostgresRepository;
 // The two-int advisory namespace is separate from the one-BIGINT per-chat locks.
 // Lock actual hash keys in order: even a hash collision cannot invert lock order
 // when two chats forget overlapping sets of wallets concurrently.
-async fn lock_wallet_mutations(
+pub(crate) async fn lock_wallet_mutations(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     wallets: &[String],
 ) -> Result<(), AppError> {
@@ -28,6 +28,35 @@ async fn lock_wallet_mutations(
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     }
     Ok(())
+}
+
+/// Runtime persistence and privacy deletion share wallet ownership. The lock is
+/// held only across database operations, never across provider/network waits.
+pub(crate) async fn begin_tracked_wallet_write<'a>(
+    pool: &'a sqlx::PgPool,
+    wallet: &str,
+) -> Result<Option<sqlx::Transaction<'a, sqlx::Postgres>>, AppError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    lock_wallet_mutations(&mut transaction, &[wallet.to_owned()]).await?;
+    let tracked: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_wallets WHERE wallet = $1)")
+            .bind(wallet)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    if !tracked {
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        tracing::debug!(wallet = %crate::utils::format_short_wallet(wallet),
+            "[STALE WALLET WRITE SKIPPED] No current subscriber; deleted state is not recreated.");
+        return Ok(None);
+    }
+    Ok(Some(transaction))
 }
 
 impl PostgresRepository {
@@ -146,16 +175,27 @@ impl PostgresRepository {
         address: &str,
         chat_id: i64,
     ) -> Result<WalletRemovalOutcome, AppError> {
-        let result = sqlx::query(
-            "DELETE FROM user_wallets
-             WHERE wallet = $1 AND chat_id = $2",
-        )
-        .bind(address)
-        .bind(chat_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        lock_wallet_mutations(&mut transaction, &[address.to_owned()]).await?;
+        let result = sqlx::query("DELETE FROM user_wallets WHERE wallet = $1 AND chat_id = $2")
+            .bind(address)
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(if result.rows_affected() == 1 {
             WalletRemovalOutcome::Removed
         } else {
@@ -164,15 +204,36 @@ impl PostgresRepository {
     }
 
     pub async fn remove_all_user_wallets(&self, chat_id: i64) -> Result<(), AppError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(chat_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        let wallets: Vec<String> = sqlx::query_scalar(
+            "SELECT wallet FROM user_wallets WHERE chat_id = $1 ORDER BY wallet",
+        )
+        .bind(chat_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        lock_wallet_mutations(&mut transaction, &wallets).await?;
         sqlx::query!(
             "DELETE FROM user_wallets
              WHERE chat_id = $1",
             chat_id
         )
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -379,6 +440,12 @@ impl PostgresRepository {
         wallet: &str,
         outpoints: &[String],
     ) -> Result<(), AppError> {
+        if outpoints.is_empty() {
+            return Ok(());
+        }
+        let Some(mut transaction) = begin_tracked_wallet_write(&self.pool, wallet).await? else {
+            return Ok(());
+        };
         for outpoint in outpoints {
             sqlx::query(
                 "INSERT INTO wallet_seen_utxos (wallet, outpoint)
@@ -388,11 +455,15 @@ impl PostgresRepository {
             )
             .bind(wallet)
             .bind(outpoint)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         }
 
+        transaction
+            .commit()
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 

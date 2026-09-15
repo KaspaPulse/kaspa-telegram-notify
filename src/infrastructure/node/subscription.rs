@@ -188,6 +188,15 @@ impl SubscriptionLifecycle {
             || self.state != SubscriptionState::Active
             || self.registration_generation != Some(self.connection_generation)
     }
+
+    fn should_recover_registration(self, connected: bool) -> bool {
+        connected
+            && self.mode.requires_subscription()
+            && matches!(
+                self.state,
+                SubscriptionState::Disconnected | SubscriptionState::Degraded
+            )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -458,8 +467,9 @@ impl SubscriptionRuntimeBackend for KaspaSubscriptionRuntimeBackend {
                     }
                 }
                 _ = retry_timer.tick() => {
-                    if self.client.is_connected()
-                        && lifecycle.snapshot().state == SubscriptionState::Degraded
+                    if lifecycle
+                        .snapshot()
+                        .should_recover_registration(self.client.is_connected())
                     {
                         handle_connected(
                             &self.client,
@@ -664,6 +674,24 @@ mod tests {
         assert_eq!(lifecycle.on_connected(), ConnectionTransition::Disabled);
         assert_eq!(lifecycle.snapshot().state, SubscriptionState::Disabled);
         assert!(lifecycle.should_poll_fallback());
+    }
+
+    #[test]
+    fn disconnected_subscription_recovers_when_rpc_is_already_connected() {
+        let lifecycle = SubscriptionLifecycleHandle::new(MonitoringMode::SubscriptionPreferred);
+
+        assert!(lifecycle.snapshot().should_recover_registration(true));
+        assert!(!lifecycle.snapshot().should_recover_registration(false));
+
+        lifecycle.on_connected();
+        lifecycle.on_registration_succeeded();
+        assert!(!lifecycle.snapshot().should_recover_registration(true));
+
+        lifecycle.on_disconnected();
+        assert!(lifecycle.snapshot().should_recover_registration(true));
+
+        let polling = SubscriptionLifecycleHandle::new(MonitoringMode::PollingOnly);
+        assert!(!polling.snapshot().should_recover_registration(true));
     }
 
     struct FakeRuntimeBackend {

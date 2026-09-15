@@ -289,11 +289,24 @@ pub struct WalletUtxoScanResult {
     pub completed_without_errors: bool,
 }
 
+#[derive(Default)]
+struct WalletUtxoCache {
+    wallets: DashMap<String, Arc<tokio::sync::Mutex<HashSet<String>>>>,
+}
+
+impl WalletUtxoCache {
+    async fn lock(&self, wallet: &str) -> tokio::sync::OwnedMutexGuard<HashSet<String>> {
+        // Drop the synchronous shard guard before awaiting wallet ownership.
+        let wallet_state = self.wallets.entry(wallet.to_string()).or_default().clone();
+        wallet_state.lock_owned().await
+    }
+}
+
 pub struct UtxoMonitorService {
     node: Arc<KaspaRpcAdapter>,
     db: Arc<PostgresRepository>,
     analyzer: Arc<AnalyzeDagUseCase>,
-    known_utxos: DashMap<String, HashSet<String>>,
+    known_utxos: WalletUtxoCache,
 }
 
 impl UtxoMonitorService {
@@ -306,7 +319,7 @@ impl UtxoMonitorService {
             node,
             db,
             analyzer,
-            known_utxos: DashMap::new(),
+            known_utxos: WalletUtxoCache::default(),
         }
     }
 
@@ -314,6 +327,7 @@ impl UtxoMonitorService {
         &self,
         wallet_address: &str,
     ) -> Result<WalletUtxoScanResult, AppError> {
+        crate::infrastructure::resilience::runtime::task_stage("rpc_get_utxos");
         let utxos = self.node.get_utxos(wallet_address).await?;
 
         let min_reward_confirmations = std::env::var("MIN_REWARD_CONFIRMATIONS")
@@ -328,6 +342,8 @@ impl UtxoMonitorService {
         let mut current_outpoints = HashSet::new();
         let mut current_outpoints_vec = Vec::new();
         let mut new_rewards = Vec::new();
+
+        crate::infrastructure::resilience::runtime::task_stage("db_get_seen_utxos");
 
         let mut known_db = match self.db.get_seen_utxos(wallet_address).await {
             Ok(value) => value,
@@ -354,10 +370,9 @@ impl UtxoMonitorService {
                 return Err(e);
             }
         };
-        let mut known_mem = self
-            .known_utxos
-            .entry(wallet_address.to_string())
-            .or_default();
+        crate::infrastructure::resilience::runtime::task_stage("wallet_cache_lock");
+        let mut known_mem = self.known_utxos.lock(wallet_address).await;
+        crate::infrastructure::resilience::runtime::task_stage("reward_state_db_work");
 
         if known_mem.is_empty() && !known_db.is_empty() {
             for outpoint in &known_db {
@@ -480,6 +495,7 @@ impl UtxoMonitorService {
 
         known_mem.retain(|outpoint| current_outpoints.contains(outpoint));
 
+        crate::infrastructure::resilience::runtime::task_stage("db_upsert_seen_utxos");
         if let Err(e) = self
             .db
             .upsert_seen_utxos(wallet_address, &current_outpoints_vec)
@@ -500,6 +516,7 @@ impl UtxoMonitorService {
             tracing::error!("[DATABASE ERROR] Failed to persist seen UTXOs: {}", e);
         }
 
+        crate::infrastructure::resilience::runtime::task_stage("db_prune_seen_utxos");
         if let Err(e) = self
             .db
             .prune_seen_utxos(wallet_address, &current_outpoints_vec)
@@ -516,7 +533,8 @@ impl UtxoMonitorService {
             });
         }
 
-        let mut join_set = tokio::task::JoinSet::new();
+        let mut join_set =
+            crate::infrastructure::resilience::runtime::OwnedTaskSet::new("utxo_reward_analysis");
 
         for utxo in new_rewards {
             let analyzer = self.analyzer.clone();
@@ -669,5 +687,105 @@ impl UtxoMonitorService {
             events: sorted_events.into_iter().map(|(_, event)| event).collect(),
             completed_without_errors,
         })
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    };
+    use std::time::Duration;
+
+    // The owner runs on a separate runtime so the pre-fix starvation can be
+    // released and all test threads joined without killing a process.
+    #[test]
+    fn utxo_cache_contention_does_not_starve_runtime_health_or_cancellation() {
+        let cache = Arc::new(WalletUtxoCache::default());
+        for n in 0..512 {
+            cache
+                .wallets
+                .entry(format!("synthetic_wallet_{n}"))
+                .or_default();
+        }
+        let owner_key = "synthetic_wallet_0".to_string();
+        let collisions = {
+            let _held = cache.wallets.get_mut(&owner_key).unwrap();
+            (1..512)
+                .map(|n| format!("synthetic_wallet_{n}"))
+                .filter(|key| cache.wallets.try_get(key).is_locked())
+                .take(2)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            collisions.len(),
+            2,
+            "fixture must exercise the same DashMap shard"
+        );
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let owner_cache = cache.clone();
+        let owner = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let _held = owner_cache.lock(&owner_key).await;
+                    held_tx.send(()).unwrap();
+                    let _ = release_rx.await;
+                });
+        });
+        held_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let attempted = Arc::new(AtomicUsize::new(0));
+        let (probe_tx, probe_rx) = tokio::sync::oneshot::channel();
+        let (healthy_tx, healthy_rx) = mpsc::channel();
+        let attempts = attempted.clone();
+        let runtime = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let health = tokio::spawn(async move {
+                        let _ = probe_rx.await;
+                        healthy_tx.send(()).unwrap();
+                    });
+                    let mut scans = Vec::new();
+                    for key in collisions {
+                        let cache = cache.clone();
+                        let attempts = attempts.clone();
+                        scans.push(tokio::spawn(async move {
+                            attempts.fetch_add(1, Ordering::SeqCst);
+                            let _wallet_state = cache.lock(&key).await;
+                        }));
+                    }
+                    for scan in scans {
+                        scan.await.unwrap();
+                    }
+                    health.await.unwrap();
+                });
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while attempted.load(Ordering::SeqCst) != 2 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(attempted.load(Ordering::SeqCst), 2);
+        probe_tx.send(()).unwrap();
+        let responsive = healthy_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+        eprintln!(
+            "cache ownership: owner=awaiting independent release; contenders=2 distinct wallets/same shard; health_responsive={responsive}"
+        );
+        release_tx.send(()).unwrap();
+        owner.join().unwrap();
+        runtime.join().unwrap();
+        assert!(
+            responsive,
+            "UTXO cache lock blocked both Tokio workers and the health/cancellation executor"
+        );
     }
 }

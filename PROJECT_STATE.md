@@ -1,93 +1,95 @@
-# Project State — legacy upgrade correction v1.2.8
+# Project State — v1.2.10 Production verified stable
 
-Repository: KaspaPulse/kaspa-telegram-notify only. AGENTS.md remains authoritative.
-All development, Git, builds and tests run on kas; dns is production only.
-Worktree: /home/kas/kaspa-telegram-legacy-upgrade-v128-20260912
-Branch: fix/legacy-mined-blocks-upgrade-v1.2.8-20260912
-Base: c2f271bbb229facd84b64e2a14dd72f0c4338272 (protected main, PR #59).
-AGENTS.override.md was absent. No PLANS.md was needed/read.
-Always verify actual HEAD, working tree and local mirror before resuming.
+Repository: KaspaPulse/kaspa-telegram-notify
+Development host: kas
+Production host: dns
+AGENTS.md host boundary remains authoritative.
 
-## Reconciled state
+## Reference release state
 
-PR #58 published v1.2.6; PR #59 published v1.2.7 after the user authorized
-the corrective push and deployment. The v1.2.7 merged source and ARM64 artifact
-passed their recorded gates on a fresh database. They did not prove the legacy
-production upgrade.
+PRODUCTION_VERSION=1.2.10
+PRODUCTION_SHA=631d64c5e11a8d05a072288aec6441e2308e4008
+PRODUCTION_BINARY_SHA256=053cf6920285a6e6b8822f6f4d0869be296213e3f8872ab9e9f2b6be550066fd
+PRODUCTION_STATUS=VERIFIED_STABLE
+CURRENT_RELEASE=v1.2.10
+SCHEMA_COMPATIBILITY_REMEDIATION=COMPLETE
+V1_2_9_ARTIFACT=RETIRED_NOT_REUSABLE
 
-The user ran the prepared administrative deployment at 2026-09-12T17:49:06Z.
-PostgreSQL exited 3 in the atomic migration transaction, before service stop or
-executable replacement. The original script did not preserve psql output.
-Read-only verification found the same PID 2790969, zero restarts, health ok,
-readiness ready, connected node/subscription, and zero application DB errors.
-Production remained v1.2.3 at a23d337cbd3dd84944228e4c23ac30cfc9b38237.
-The absent legacy tables were still absent after the failed transaction.
+The canonical successful Production attempt is
+`20260915T164255.225210Z-1422640`, started at
+`2026-09-15T16:42:56.083990+00:00`, with status `DEPLOYED_VERIFIED`.
+Rollback was not required and was not performed for the successful attempt.
 
-Both production backups are preserved. The administrative backup has 36249837
-bytes and SHA-256 b03ed56354bbc1295197afbe06f09e757b252089de91db2cdad85c6e77c79ae8.
-Do not rerun the original deploy-v127.py: its migration is incompatible and its
-fixed backup filename already exists.
+## Final Production contracts
 
-## F-13 correction and proof
+Service is active/running with health `ok`, readiness `ready`, node connected,
+subscription active and Telegram `PASS_GETME`. Final read-only verification found
+zero fatal, DB, timeout, panic, worker and missing-created_at runtime errors.
 
-Production mined_blocks uses (wallet, outpoint) and has no ID column or sequence.
-The v1.2.7 migration granted USAGE on mined_blocks_id_seq unconditionally.
-A PostgreSQL 18 regression reproduced SQLSTATE 42P01 at that exact GRANT.
-The correction grants USAGE only when the sequence exists. Fresh schemas still
-receive the grant; legacy schemas need no sequence or primary-key change.
-The migration is corrected forward in a new commit; published commits, tags and
-packages remain unchanged. Application Rust logic and dependency versions do not
-change.
+`public.user_wallets.created_at` exists as `timestamp with time zone`, is NOT NULL,
+has default `now()`, has zero NULL rows and preserves all five legacy rows.
+`legacy_last_active_mismatch_rows=0`. The delivery-claim guard DB path passes.
 
-Fresh and legacy migrations-only regressions both pass. The legacy case builds
-the published old schema and its old migrations before seeding a preservation
-canary, removes the two absent legacy tables, then atomically applies only the
-published init and three September contracts. It exercises the actual application
-role and checks canary retention, restored chat_history and no unnecessary ID
-sequence. Never replay historical destructive migrations on production.
+## Closed incident facts
 
-The revised operational template preserves complete command output in private
-attempt-specific records and creates a fresh backup filename for every attempt.
-Five checks passed against isolated PostgreSQL 18: backup retention, valid
-archives, verbose SQLSTATE/error capture, rollback/data retention and refusal of
-an unqualified template. The template requires the qualified merged SHA and
-artifact hashes before deployment.
+The v1.2.9 Production failure `column "created_at" does not exist` is fixed in v1.2.10.
+`CREATED_AT_CONTRACT=PASS`, `DELIVERY_CLAIM_GUARD=PASS`, `NEW_DB_ERRORS=0`.
 
-## NEXT ACTION
+The known v1.2.3 shutdown-order defect was accepted only as a tightly fingerprinted,
+PID/time-scoped baseline exception for the one-way upgrade. It is not a general policy
+and MUST NOT be applied to v1.2.10 or later candidate shutdowns. The v1.2.10 candidate
+shutdown contract passed cleanly with all owned tasks joined before DB close and no
+forced kill.
 
-Read the actual HEAD note: git notes --ref=refs/notes/legacy-upgrade-v128 show HEAD.
-Finish only incomplete local gates; never repeat passed work or active builds.
-A LOCAL_COMPLETE note records the exact candidate, results and artifact.
+A rendered/output view attributed `created_at_exists=false` to `migration.after`.
+Canonical deployment JSON proves that false belongs only to pre-migration snapshots;
+`migration.after`, `schema_after_migration_before_candidate` and `schema_final` are true.
+This is a non-Production reporting/field-attribution artifact only. Do not redeploy for it.
 
-No third real push has occurred. Preserve the two earlier published releases and
-their history. Any publication must follow the user's authorization and the
-established one-final-push workflow: fully qualify locally, push from kas, protected
-PR/CI, squash merge, then build and qualify the exact merged SHA on kas.
-Deploy only that approved artifact with a fresh backup and the four selected SQL
-files; retain or restore the healthy v1.2.3 baseline on failure.
+## Durable closeout evidence
 
-RDC on dns blocks sudo and unprivileged systemd management is not authorized.
-Do not bypass that control. Administrative deployment requires an authorized
-operator session. Deployment approval already exists; connector access is a
-separate limitation, not a reason to ask again for the same approval.
+Evidence directory:
+`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_V1_2_10_FINAL_PRODUCTION_CLOSEOUT_20260915`
 
-## Evidence and preservation
+The evidence manifest records the canonical deploy-attempt path/hash, DB backup hash,
+migration/operator/deployed-binary hashes, final schema/runtime verification,
+observation receipts and rollback identity.
 
-Current evidence:
-/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_LEGACY_UPGRADE_V128_20260912/
-Contains production-failure.json, red/green logs, operator-tests.json and
-deploy-v128.template.py. Preserve operational script text/results in the local
-Git note. No secrets or database dumps enter Git.
+NEXT_ACTION=NONE_FOR_THIS_TASK
+PRODUCTION_ACTION_REQUIRED=NO
+Do not restart, redeploy, roll back, rerun the migration, mutate SQL/schema or replace
+the binary unless a new material Production regression is independently established.
 
-Prior publication-state.json is reconciled under:
-/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_V127_PUBLICATION_20260912/
-The original v1.2.7 worktree stays at 972859fa8c8ccedefc4c4d6eb06e3386ce283165;
-the merged detached worktree stays at c2f271bbb229facd84b64e2a14dd72f0c4338272.
-The v1.2.6 worktree and eleven checkpoints remain preserved.
+## Published closeout identity and verification matrix
 
-Local mirror: /home/kas/kaspa-telegram-dev/local-git/kaspa-telegram-notify.git
-origin fetch: https://github.com/KaspaPulse/kaspa-telegram-notify.git
-origin push: local-first-push-disabled://KaspaPulse/kaspa-telegram-notify.git
-Use FIX → TEST → VERIFY → REVIEW → LOCAL COMMIT → CONTINUE.
-Development PG: kp-f12-dev-pg, loopback 55436; never use production data.
-Reuse the existing internal Telegram TLS and Kaspa fixtures for artifact checks.
+CANONICAL_DEPLOY_ATTEMPT_ID=20260915T164255.225210Z-1422640
+CANONICAL_DEPLOY_ATTEMPT_SHA256=c64b6a79e310683421b95d0fbf5b3cd6f9f8d5ccb02996e41a8b4ef273066b58
+FINAL_EVIDENCE_MANIFEST_SHA256=9010b3403c0a26e628d14a433459e2a7615a502e17a0ecae111724bde8ac7ef2
+
+V1_2_9_SCHEMA_DEFECT=FIXED_IN_V1_2_10
+CREATED_AT_CONTRACT=PASS
+DELIVERY_CLAIM_GUARD=PASS
+HEALTH=PASS
+READINESS=PASS
+DB_CONNECTIVITY=PASS
+NODE_CONNECTIVITY=PASS
+SUBSCRIPTION_ACTIVE=YES
+TELEGRAM_CONNECTIVITY=PASS
+NEW_DB_ERRORS=0
+RECENT_FATAL_ERRORS=0
+RECENT_TIMEOUT_ERRORS=0
+RECENT_PANICS=0
+RECENT_WORKER_ERRORS=0
+GRACEFUL_SHUTDOWN=PASS_CLEAN
+FORCED_KILL_USED=NO
+POST_DEPLOY_OBSERVATION=PASS
+ROLLBACK_READY=YES
+ROLLBACK_USED=NO
+
+MIGRATION_BEFORE_CREATED_AT_EXISTS=false
+MIGRATION_AFTER_CREATED_AT_EXISTS=true
+SCHEMA_FINAL_CREATED_AT_EXISTS=true
+MIGRATION_AFTER_FIELD_STALE_REPORTING_ARTIFACT=YES
+EVIDENCE_REPORTING_DEFECT_FOUND=YES_NON_PRODUCTION_FIELD_ATTRIBUTION_ONLY
+CANONICAL_JSON_SERIALIZATION_DEFECT=NO
+PRODUCTION_SCHEMA_DEFECT=NO

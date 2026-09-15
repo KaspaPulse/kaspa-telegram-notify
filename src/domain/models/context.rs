@@ -1,4 +1,4 @@
-use super::telegram_security::{ActorChatKey, ConfirmationSession, PendingInputAction};
+use super::telegram_security::{ActorChatKey, ConfirmationSession, PendingInputSession};
 use dashmap::DashMap;
 use kaspa_wrpc_client::KaspaRpcClient;
 use sqlx::PgPool;
@@ -28,7 +28,7 @@ pub struct AppContext {
     pub state: Arc<DashMap<String, Vec<i64>>>,
     pub utxo_state: Arc<DashMap<String, HashSet<i64>>>,
     pub admin_confirmations: Arc<DashMap<String, ConfirmationSession>>,
-    pub pending_input_sessions: Arc<DashMap<ActorChatKey, PendingInputAction>>,
+    pub pending_input_sessions: Arc<DashMap<ActorChatKey, PendingInputSession>>,
     pub price_cache: Arc<RwLock<(f64, f64)>>,
     pub rate_limiter: Arc<RateLimiterStub>,
 }
