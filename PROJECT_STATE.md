@@ -1,58 +1,95 @@
-# Project State — fourth corrective batch, LOCAL ONLY
+# Project State — v1.2.10 Production verified stable
 
-Repository: KaspaPulse/kaspa-telegram-notify. AGENTS.md host boundary applies.
-Development/Git/build/test/evidence work runs only on kas. No dns contact in this batch.
-Authorization: owner approved ONE fourth corrective batch on 2026-09-13, local only.
-No push (including checkpoint pushes), PR, tag, release, deployment or Production change.
-Never run deploy-v127.py or deploy-v128.py. No fifth corrective batch is authorized.
+Repository: KaspaPulse/kaspa-telegram-notify
+Development host: kas
+Production host: dns
+AGENTS.md host boundary remains authoritative.
 
-## Reconciled actual state
+## Reference release state
 
-Starting branch: fix/legacy-mined-blocks-upgrade-v1.2.8-20260912
-Starting HEAD: e01c1eb7bf97d073ef0f33b74dc058967a849b66, clean.
-Exact failed published source: b3cbf74714530372cca6534a80e92786c96b6d98.
-Both source trees: 8fb41527c728b8bdb1c3eed41bb1af762c23e9f8.
-Preserved old worktrees/checkpoints; no history rewrite or remote changes.
-Current local branch: fix/runtime-lifecycle-local-20260913
-Current worktree: /home/kas/kaspa-telegram-runtime-lifecycle-local-20260913
-Always inspect actual HEAD/status before continuing; do not assume this text is current.
-Local mirror: /home/kas/kaspa-telegram-dev/local-git/kaspa-telegram-notify.git
-origin push remains local-first-push-disabled://KaspaPulse/kaspa-telegram-notify.git.
-The fourth-batch checkpoint must remain unpushed.
+PRODUCTION_VERSION=1.2.10
+PRODUCTION_SHA=631d64c5e11a8d05a072288aec6441e2308e4008
+PRODUCTION_BINARY_SHA256=053cf6920285a6e6b8822f6f4d0869be296213e3f8872ab9e9f2b6be550066fd
+PRODUCTION_STATUS=VERIFIED_STABLE
+CURRENT_RELEASE=v1.2.10
+SCHEMA_COMPATIBILITY_REMEDIATION=COMPLETE
+V1_2_9_ARTIFACT=RETIRED_NOT_REUSABLE
 
-## Incident truth and limits
+The canonical successful Production attempt is
+`20260915T164255.225210Z-1422640`, started at
+`2026-09-15T16:42:56.083990+00:00`, with status `DEPLOYED_VERIFIED`.
+Rollback was not required and was not performed for the successful attempt.
 
-The earlier PROJECT_STATE publication instructions are stale. PR #60 was merged and
-v1.2.8 was published. Its Production restart gate failed and rollback was independently
-verified. Last Production evidence (2026-09-13T03:37:39Z) is healthy v1.2.3 at
- a23d337cbd3dd84944228e4c23ac30cfc9b38237. This batch must not contact Production.
-The four selected migrations succeeded; legacy mined_blocks still has no ID sequence.
-Migrations, operator scripts, backups and prior incident evidence are preserved unchanged.
+## Final Production contracts
 
-Finding A: HTTP verification timed out after the second process had become ready.
-The exact endpoint and live blocking stack were not recorded. A cache shard lock held
-across async DB/RPC waits can starve Tokio; an isolated regression reproduced this path.
-Do not claim that the historical Production TimeoutError is thereby conclusively explained.
-Finding B: 3-second drain expiry unconditionally led to pool.close while UTXO was alive.
-A real PostgreSQL regression reproduced PoolClosed independently of cache contention.
-The causal relationship between the two Production observations remains NOT_PROVEN.
+Service is active/running with health `ok`, readiness `ready`, node connected,
+subscription active and Telegram `PASS_GETME`. Final read-only verification found
+zero fatal, DB, timeout, panic, worker and missing-created_at runtime errors.
 
-## Narrow changes under qualification
+`public.user_wallets.created_at` exists as `timestamp with time zone`, is NOT NULL,
+has default `now()`, has zero NULL rows and preserves all five legacy rows.
+`legacy_last_active_mismatch_rows=0`. The delivery-claim guard DB path passes.
 
-Async per-wallet cache ownership drops DashMap shard guards before awaiting.
-Named task ownership covers top-level workers, wallet/reward children and Telegram DB
-handlers. Shutdown rejects new work, grants the existing grace interval, diagnoses and
-aborts survivors, joins them, then permits DB close. Requests and webhook serving are
-owned through stop/join; no timeout setting, migration or deployment check is weakened.
+## Closed incident facts
 
-## Evidence and NEXT ACTION
+The v1.2.9 Production failure `column "created_at" does not exist` is fixed in v1.2.10.
+`CREATED_AT_CONTRACT=PASS`, `DELIVERY_CLAIM_GUARD=PASS`, `NEW_DB_ERRORS=0`.
 
-Evidence: /home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_LIFECYCLE_BATCH4_LOCAL_20260913
-Red cache regression: exit 101; health executor starved, all threads released/joined without kill.
-Red PostgreSQL regression: exit 101; worker_result=PoolClosed after drain expiry.
-Focused tests passed, including 10 lifecycle cycles. Affected library/runtime tests and
-strict clippy passed. The final dispatcher coordination adjustment also passed
-strict clippy and its shutdown contract tests.
-NEXT ACTION: qualify the local checkpoint as a running artifact through isolated
-restart/shutdown cycles, then record the final evidence. No push or Production action. Historical A may remain blocked
-if existing evidence cannot establish its exact blocking path. Do not restart the audit.
+The known v1.2.3 shutdown-order defect was accepted only as a tightly fingerprinted,
+PID/time-scoped baseline exception for the one-way upgrade. It is not a general policy
+and MUST NOT be applied to v1.2.10 or later candidate shutdowns. The v1.2.10 candidate
+shutdown contract passed cleanly with all owned tasks joined before DB close and no
+forced kill.
+
+A rendered/output view attributed `created_at_exists=false` to `migration.after`.
+Canonical deployment JSON proves that false belongs only to pre-migration snapshots;
+`migration.after`, `schema_after_migration_before_candidate` and `schema_final` are true.
+This is a non-Production reporting/field-attribution artifact only. Do not redeploy for it.
+
+## Durable closeout evidence
+
+Evidence directory:
+`/home/kas/kaspa-telegram-dev/evidence/KASPA_TELEGRAM_V1_2_10_FINAL_PRODUCTION_CLOSEOUT_20260915`
+
+The evidence manifest records the canonical deploy-attempt path/hash, DB backup hash,
+migration/operator/deployed-binary hashes, final schema/runtime verification,
+observation receipts and rollback identity.
+
+NEXT_ACTION=NONE_FOR_THIS_TASK
+PRODUCTION_ACTION_REQUIRED=NO
+Do not restart, redeploy, roll back, rerun the migration, mutate SQL/schema or replace
+the binary unless a new material Production regression is independently established.
+
+## Published closeout identity and verification matrix
+
+CANONICAL_DEPLOY_ATTEMPT_ID=20260915T164255.225210Z-1422640
+CANONICAL_DEPLOY_ATTEMPT_SHA256=c64b6a79e310683421b95d0fbf5b3cd6f9f8d5ccb02996e41a8b4ef273066b58
+FINAL_EVIDENCE_MANIFEST_SHA256=9010b3403c0a26e628d14a433459e2a7615a502e17a0ecae111724bde8ac7ef2
+
+V1_2_9_SCHEMA_DEFECT=FIXED_IN_V1_2_10
+CREATED_AT_CONTRACT=PASS
+DELIVERY_CLAIM_GUARD=PASS
+HEALTH=PASS
+READINESS=PASS
+DB_CONNECTIVITY=PASS
+NODE_CONNECTIVITY=PASS
+SUBSCRIPTION_ACTIVE=YES
+TELEGRAM_CONNECTIVITY=PASS
+NEW_DB_ERRORS=0
+RECENT_FATAL_ERRORS=0
+RECENT_TIMEOUT_ERRORS=0
+RECENT_PANICS=0
+RECENT_WORKER_ERRORS=0
+GRACEFUL_SHUTDOWN=PASS_CLEAN
+FORCED_KILL_USED=NO
+POST_DEPLOY_OBSERVATION=PASS
+ROLLBACK_READY=YES
+ROLLBACK_USED=NO
+
+MIGRATION_BEFORE_CREATED_AT_EXISTS=false
+MIGRATION_AFTER_CREATED_AT_EXISTS=true
+SCHEMA_FINAL_CREATED_AT_EXISTS=true
+MIGRATION_AFTER_FIELD_STALE_REPORTING_ARTIFACT=YES
+EVIDENCE_REPORTING_DEFECT_FOUND=YES_NON_PRODUCTION_FIELD_ATTRIBUTION_ONLY
+CANONICAL_JSON_SERIALIZATION_DEFECT=NO
+PRODUCTION_SCHEMA_DEFECT=NO
