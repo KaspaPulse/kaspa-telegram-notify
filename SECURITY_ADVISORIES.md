@@ -26,7 +26,7 @@ cargo test --locked --all-targets --all-features
 
 The security workflow also runs the SHA-pinned official OSV Scanner reusable workflow against `Cargo.lock` and applies only the reviewed, time-bounded entries in `osv-scanner.toml`.
 
-Last automated review: **2026-09-10**
+Last automated review: **2026-09-15**
 
 ---
 
@@ -36,9 +36,20 @@ OpenSSF Scorecard currently groups eight RustSec records in this dependency grap
 
 Seven of the eight records are RustSec `INFO Unmaintained` notices: `RUSTSEC-2025-0052`, `RUSTSEC-2024-0375`, `RUSTSEC-2024-0388`, `RUSTSEC-2024-0384`, `RUSTSEC-2024-0436`, `RUSTSEC-2024-0370`, and `RUSTSEC-2026-0173`. `RUSTSEC-2021-0145` is `INFO Unsound`, affects `atty` on Windows, has no patched release, and is retained only through an upstream/transitive path. Production container validation remains Linux-based.
 
-After dependency-path review, these eight records are encoded in `osv-scanner.toml` as narrow advisory-ID exceptions expiring on **2026-09-22**. CI rejects expired, undocumented, duplicate, malformed, or excessively long-lived OSV exceptions. This is not a blanket package/ecosystem override: new advisories remain scannable, and `cargo audit` plus `cargo deny` remain independent security controls.
+After dependency-path review, these eight records are encoded in `osv-scanner.toml` as narrow advisory-ID exceptions expiring on **2026-10-15**. CI rejects expired, undocumented, duplicate, malformed, or excessively long-lived OSV exceptions. This is not a blanket package/ecosystem override: new advisories remain scannable, and `cargo audit` plus `cargo deny` remain independent security controls.
 
 The purpose of these OSV exceptions is to encode the reviewed non-actionability of specific upstream/transitive findings while preserving an automatic expiry and re-review requirement; they must not be used to hide a locally actionable vulnerability.
+
+### 2026-09-15 independent re-review
+
+- An unfiltered `cargo audit` executed outside repository configuration against the exact `Cargo.lock` reports **0 vulnerabilities** and the same eight informational RustSec records: seven `unmaintained` and one `unsound` (`RUSTSEC-2021-0145`).
+- `cargo deny check advisories` remains PASS independently of `osv-scanner.toml`.
+- `rusty-kaspa v2.0.1` at `cfafeb4c093fa37a303f1b9f19c58f986b870ce3` is still the newest stable upstream release/tag; upstream `master` is newer but is not a stable release and is not adopted as an unreviewed production dependency.
+- `teloxide 0.17.0`, `aquamarine 0.6.0`, and `proc-macro-error2 2.0.1` remain the newest published versions. Exact-main Rust 1.98.1 CI continues to report `proc-macro-error2 2.0.1` as future-incompatible, so the issue remains actively tracked rather than silently accepted.
+- The exact dependency paths were rechecked with `cargo tree -i`; none of the eight advisories is introduced directly by Kaspa Pulse and no compatible stable update currently removes the affected path.
+- All eight OSV exceptions therefore remain advisory-ID-specific and are renewed only through **2026-10-15** (30 days). New advisories, packages, and ecosystems remain unignored.
+
+Next mandatory re-review: **on or before 2026-10-15**, and earlier if Rust, rusty-kaspa, Teloxide/Aquamarine, or the relevant workflow/Kaspa dependencies change.
 
 ---
 
@@ -56,7 +67,7 @@ Action: keep `cargo audit`/`cargo deny` enabled and remove the exception when up
 
 Status: temporary build-time transitive exception.
 
-The current resolved graph includes `aquamarine` → `proc-macro-error2`. Rust 1.97.1 also reports this crate in its future-incompatibility output. Kaspa Pulse does not depend on it directly.
+The current resolved graph includes `aquamarine` → `proc-macro-error2`. Exact-main Rust 1.98.1 CI still reports this crate in its future-incompatibility output. Kaspa Pulse does not depend on it directly.
 
 Action: track upstream replacement/removal and delete the exception when a safe path exists. Re-evaluate immediately if the advisory changes from maintenance/future compatibility to an exploitable vulnerability.
 
@@ -94,11 +105,11 @@ Action: track `rusty-kaspa` updates and remove the exception once upstream no lo
 
 ### RUSTSEC-2024-0375 and RUSTSEC-2021-0145 — `atty`
 
-Status: `RUSTSEC-2024-0375` remains a managed upstream/transitive exception; `RUSTSEC-2021-0145` no longer requires a Cargo audit/deny ignore as of 2026-09-10.
+Status: both advisories remain visible in an independent unfiltered `cargo audit` of the exact lockfile; neither is a direct application dependency.
 
-Kaspa Pulse does not directly depend on `atty`. The current locked graph still contains `atty`, but Cargo security gates no longer match `RUSTSEC-2021-0145` on the validated Linux path. The OSV exception remains separately time-bounded until OSV proves it is no longer required.
+The resolved path is `atty 0.2.14` → `hexplay 0.3.0` → pinned Kaspa/workflow crates. `RUSTSEC-2021-0145` is Windows-specific unsoundness with no patched `atty` release; Production validation is Linux-based. The repository-configured Cargo gates remain independent from the OSV exception list and do not convert this informational finding into a clean claim.
 
-Action: keep the remaining `RUSTSEC-2024-0375` exception under review and remove the OSV-specific `RUSTSEC-2021-0145` exception only after an OSV scan passes without it.
+Action: keep both advisory-ID-specific OSV exceptions time-bounded and remove them immediately when the upstream path disappears or a compatible patched path becomes available.
 
 ### RUSTSEC-2024-0436 — `paste`
 
@@ -138,7 +149,7 @@ Approved Git source:
 https://github.com/kaspanet/rusty-kaspa
 ```
 
-The current Kaspa SDK dependencies are pinned to exact version `2.0.1` and immutable revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`, which is the commit resolved from reviewed tag `v2.0.1`. As re-verified on 2026-09-11, `v2.0.1` is the newest stable `rusty-kaspa` tag; the automated updater refuses silent tag drift and requires manual review if an existing tag resolves to a different commit.
+The current Kaspa SDK dependencies are pinned to exact version `2.0.1` and immutable revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`, which is the commit resolved from reviewed tag `v2.0.1`. As re-verified on 2026-09-15, `v2.0.1` is the newest stable `rusty-kaspa` release/tag; upstream `master` is newer but is not a reviewed stable release and is not substituted for the immutable production dependency pin; the automated updater refuses silent tag drift and requires manual review if an existing tag resolves to a different commit.
 
 ---
 
