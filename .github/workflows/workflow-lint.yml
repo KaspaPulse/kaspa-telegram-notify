@@ -5,10 +5,14 @@ on:
     branches: [main, dev]
     paths:
       - ".github/workflows/**"
+      - "scripts/filter-scorecard-sarif.py"
+      - "tests/scorecard_sarif_filter_contract_tests.py"
   push:
     branches: [main, dev]
     paths:
       - ".github/workflows/**"
+      - "scripts/filter-scorecard-sarif.py"
+      - "tests/scorecard_sarif_filter_contract_tests.py"
   workflow_dispatch:
 
 permissions:
@@ -49,3 +53,6 @@ jobs:
 
       - name: Lint GitHub Actions workflows
         run: actionlint -color
+
+      - name: Test Scorecard SARIF policy filter
+        run: python3 tests/scorecard_sarif_filter_contract_tests.py
