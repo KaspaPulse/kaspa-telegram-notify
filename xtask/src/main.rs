@@ -1,4 +1,5 @@
 mod operations;
+mod opqual;
 mod process;
 mod sbom;
 mod security;
@@ -40,6 +41,10 @@ enum Command {
     Dependencies {
         #[command(subcommand)]
         command: DependenciesCommand,
+    },
+    Opqual {
+        #[command(subcommand)]
+        command: OpqualCommand,
     },
 }
 
@@ -98,6 +103,23 @@ enum MaintenanceCommand {
         confirm: String,
         #[arg(long, default_value_t = false)]
         push: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum OpqualCommand {
+    DryRun {
+        #[arg(long, default_value = "target/release/kaspa-pulse")]
+        binary: PathBuf,
+    },
+    Run {
+        #[arg(long, default_value = "target/release/kaspa-pulse")]
+        binary: PathBuf,
+    },
+    Resume {
+        run_id: String,
+        #[arg(long, default_value = "target/release/kaspa-pulse")]
+        binary: PathBuf,
     },
 }
 
@@ -167,6 +189,15 @@ fn main() -> Result<()> {
         Command::Maintenance { command } => match command {
             MaintenanceCommand::CleanHistory { confirm, push } => {
                 operations::clean_history(&confirm, push)
+            }
+        },
+        Command::Opqual { command } => match command {
+            OpqualCommand::DryRun { binary } => {
+                opqual::execute(opqual::Mode::DryRun, &binary, None)
+            }
+            OpqualCommand::Run { binary } => opqual::execute(opqual::Mode::Run, &binary, None),
+            OpqualCommand::Resume { run_id, binary } => {
+                opqual::execute(opqual::Mode::Resume, &binary, Some(&run_id))
             }
         },
         Command::Dependencies { command } => match command {

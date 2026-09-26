@@ -62,5 +62,5 @@ strip = true
 panic = "abort"
 
 [workspace]
-members = ["xtask"]
+members = ["xtask", "opqual-fixture"]
 resolver = "3"
