@@ -309,11 +309,9 @@ if (Get-Command cargo-deny -ErrorAction SilentlyContinue) {
     $allGood = $false
 }
 
-if (Test-Path "scripts/security-check.ps1") {
-    if (-not (Run-AllowFail "project security-check.ps1" {
-        pwsh -NoProfile -File "scripts/security-check.ps1"
-    })) { $allGood = $false }
-}
+if (-not (Run-AllowFail "project Rust security pipeline" {
+    cargo xtask security pipeline
+})) { $allGood = $false }
 
 Step "Show final diff" {
     git status --short --branch

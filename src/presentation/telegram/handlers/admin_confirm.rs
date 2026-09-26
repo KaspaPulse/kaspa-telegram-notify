@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
-const CONFIRM_TTL_SECS: u64 = 60;
+const ADMIN_CONFIRM_TTL_SECS: u64 = 60;
 const NONCE_BYTES: usize = 16;
 
 impl SensitiveAction {
@@ -116,7 +116,7 @@ fn register_confirmation(
                 chat_id: identity.chat_id,
                 message_id: identity.message_id,
                 action,
-                expires_at_unix_secs: now_unix_secs().saturating_add(CONFIRM_TTL_SECS),
+                expires_at_unix_secs: now_unix_secs().saturating_add(ADMIN_CONFIRM_TTL_SECS),
             });
             Ok(())
         }
@@ -146,7 +146,7 @@ pub fn confirmation_text(action: SensitiveAction) -> String {
         "⚠️ <b>Confirmation Required</b>\n━━━━━━━━━━━━━━━━━━\n<b>Action:</b> <code>{}</code>\n<b>Risk:</b> {}\n\nThis confirmation expires in <code>{}</code> seconds and can be used only once.",
         action.label(),
         action.risk_text(),
-        CONFIRM_TTL_SECS
+        ADMIN_CONFIRM_TTL_SECS
     )
 }
 

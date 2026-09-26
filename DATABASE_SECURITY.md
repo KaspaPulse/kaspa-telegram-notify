@@ -19,19 +19,19 @@
 
 Run:
 
-    powershell -ExecutionPolicy Bypass -File scripts\db-backup.ps1
+    cargo xtask database backup
 
 ## Restore
 
 Run:
 
-    powershell -ExecutionPolicy Bypass -File scripts\db-restore.ps1 -BackupFile backups\db\YOUR_FILE.dump
+    cargo xtask database restore backups/db/YOUR_FILE.dump
 
 ## Migrations
 
 Run:
 
-    powershell -ExecutionPolicy Bypass -File scripts\db-migrate.ps1
+    cargo xtask database migrate
 
 ## Retention helper
 

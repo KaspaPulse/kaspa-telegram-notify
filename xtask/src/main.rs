@@ -1,3 +1,5 @@
+mod operations;
+mod process;
 mod sbom;
 mod security;
 
@@ -22,6 +24,18 @@ enum Command {
         #[command(subcommand)]
         command: SbomCommand,
     },
+    Database {
+        #[command(subcommand)]
+        command: DatabaseCommand,
+    },
+    Ci {
+        #[command(subcommand)]
+        command: CiCommand,
+    },
+    Maintenance {
+        #[command(subcommand)]
+        command: MaintenanceCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -43,6 +57,10 @@ enum SecurityCommand {
     },
     ActionPins,
     NonRustExec,
+    SecretScan,
+    RustHardening,
+    AdminWebhookHardening,
+    Pipeline,
 }
 
 #[derive(Debug, Subcommand)]
@@ -53,6 +71,28 @@ enum SbomCommand {
         version: String,
         #[arg(long)]
         target: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DatabaseCommand {
+    Backup,
+    Migrate,
+    Restore { backup_file: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+enum CiCommand {
+    PreparePostgres,
+}
+
+#[derive(Debug, Subcommand)]
+enum MaintenanceCommand {
+    CleanHistory {
+        #[arg(long)]
+        confirm: String,
+        #[arg(long, default_value_t = false)]
+        push: bool,
     },
 }
 
@@ -71,6 +111,10 @@ fn main() -> Result<()> {
             }
             SecurityCommand::ActionPins => security::action_pins("."),
             SecurityCommand::NonRustExec => security::non_rust_exec("."),
+            SecurityCommand::SecretScan => operations::secret_scan(),
+            SecurityCommand::RustHardening => operations::rust_hardening(),
+            SecurityCommand::AdminWebhookHardening => operations::admin_webhook_hardening(),
+            SecurityCommand::Pipeline => operations::security_pipeline(),
         },
         Command::Sbom { command } => match command {
             SbomCommand::Finalize {
@@ -78,6 +122,19 @@ fn main() -> Result<()> {
                 version,
                 target,
             } => sbom::finalize(&path, &version, &target),
+        },
+        Command::Database { command } => match command {
+            DatabaseCommand::Backup => operations::db_backup(),
+            DatabaseCommand::Migrate => operations::db_migrate(),
+            DatabaseCommand::Restore { backup_file } => operations::db_restore(&backup_file),
+        },
+        Command::Ci { command } => match command {
+            CiCommand::PreparePostgres => operations::ci_prepare_postgres(),
+        },
+        Command::Maintenance { command } => match command {
+            MaintenanceCommand::CleanHistory { confirm, push } => {
+                operations::clean_history(&confirm, push)
+            }
         },
     }
 }

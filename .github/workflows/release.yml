@@ -8,7 +8,7 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
-      - "scripts/finalize-cyclonedx.py"
+      - "xtask/src/sbom.rs"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -87,7 +87,7 @@ jobs:
             --target "$TARGET" \
             --override-filename "$sbom_prefix" \
             --verbose
-          python3 scripts/finalize-cyclonedx.py \
+          cargo xtask sbom finalize \
             "$sbom" \
             --version "$VERSION" \
             --target "$TARGET"
@@ -160,7 +160,7 @@ jobs:
             --target "$TARGET" \
             --override-filename "$sbom_prefix" \
             --verbose
-          python3 scripts/finalize-cyclonedx.py \
+          cargo xtask sbom finalize \
             "$sbom" \
             --version "$VERSION" \
             --target "$TARGET"
