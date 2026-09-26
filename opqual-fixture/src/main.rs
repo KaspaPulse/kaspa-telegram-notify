@@ -46,6 +46,12 @@ struct Cli {
     url: Option<String>,
     #[arg(long)]
     ca: Option<PathBuf>,
+    #[arg(long, default_value = "GET")]
+    method: String,
+    #[arg(long, default_value = "")]
+    body: String,
+    #[arg(long)]
+    header: Vec<String>,
 }
 
 fn unix_seconds() -> f64 {
@@ -748,6 +754,19 @@ fn probe(cli: &Cli) -> Result<()> {
         .rsplit_once(':')
         .and_then(|(h, p)| p.parse::<u16>().ok().map(|p| (h, p)))
         .unwrap_or((authority, if scheme == "https" { 443 } else { 80 }));
+    let mut headers = String::new();
+    for h in &cli.header {
+        ensure!(!h.contains(['\r', '\n']), "probe header contains newline");
+        headers.push_str(h);
+        headers.push_str("\r\n");
+    }
+    let body = cli.body.as_bytes();
+    let request = format!(
+        "{} {path} HTTP/1.1\r\nHost: {host}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        cli.method.to_ascii_uppercase(),
+        headers,
+        body.len()
+    );
     let tcp = TcpStream::connect((host, port)).with_context(|| format!("connect {host}:{port}"))?;
     tcp.set_read_timeout(Some(Duration::from_secs(5)))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -770,20 +789,16 @@ fn probe(cli: &Cli) -> Result<()> {
             .context("invalid TLS server name")?;
         let conn = ClientConnection::new(cfg, server_name)?;
         let mut io = StreamOwned::new(conn, tcp);
-        write!(
-            io,
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-        )?;
+        io.write_all(request.as_bytes())?;
+        io.write_all(body)?;
         io.flush()?;
         let mut out = Vec::new();
         io.read_to_end(&mut out)?;
         print_probe(&out)
     } else if scheme == "http" {
         let mut io = tcp;
-        write!(
-            io,
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-        )?;
+        io.write_all(request.as_bytes())?;
+        io.write_all(body)?;
         io.flush()?;
         let mut out = Vec::new();
         io.read_to_end(&mut out)?;

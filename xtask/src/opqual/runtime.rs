@@ -192,7 +192,7 @@ fn ensure_certificates(ctx: &ContextState) -> Result<()> {
     )?;
     Ok(())
 }
-fn start_fixture(
+pub(super) fn start_fixture(
     ctx: &ContextState,
     name: &str,
     purpose: &str,
@@ -255,7 +255,7 @@ fn start_fixture(
     run("sudo", a)?;
     Ok(())
 }
-fn probe(ctx: &ContextState, url: &str, tls: bool) -> Result<String> {
+pub(super) fn probe(ctx: &ContextState, url: &str, tls: bool) -> Result<String> {
     let fixture = ctx.fixture_binary.to_str().context("fixture path")?;
     let mut a = vec![
         "-n",
@@ -833,6 +833,20 @@ SELECT
 
 pub(super) fn restart(ctx: &ContextState) -> Result<()> {
     ctx.require_phase("verify_shutdown")?;
+    if ctx.state_is("phase.restart", "VERIFIED")? {
+        ensure!(
+            container_exists(APP_CONTAINER)?
+                && docker_inspect(APP_CONTAINER, "{{.State.Running}}")? == "true"
+                && ctx.state_is("exec01.clean_restart", "true")?,
+            "restart receipt exists but current side effects disagree; reconcile before replay"
+        );
+        ctx.record(
+            "RESUME:restart",
+            "VERIFIED",
+            "restart receipt and current side effects agree; skipped replay",
+        )?;
+        return Ok(());
+    }
     ctx.record(
         "RESTART",
         "PLANNED",

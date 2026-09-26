@@ -37,16 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python3 - <<'PY'
-          import re
-          import tomllib
-          with open("Cargo.toml", "rb") as handle:
-              version = tomllib.load(handle)["package"]["version"]
-          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version):
-              raise SystemExit(f"invalid package version: {version}")
-          print(version)
-          PY
-          )"
+          version="$(cargo run --quiet --locked -p xtask -- package-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Validated Cargo package version ${version}"
 

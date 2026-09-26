@@ -212,6 +212,14 @@ Do not expose operational endpoints or the bot service directly to the public in
 
 ---
 
+## Rust-native operational qualification
+
+The isolated EXEC-01 and scenario qualification harness is implemented in Rust under `xtask/src/opqual/` with the local Rust fixture binary in `opqual-fixture/`. The scenario matrix is data-only at `opqual/scenario-map.csv`; no first-party Bash or Python operational harness remains.
+
+Build the candidate and fixture, then use `cargo run --locked -p xtask -- opqual ...`. See [docs/OPERATIONAL_QUALIFICATION.md](docs/OPERATIONAL_QUALIFICATION.md) for dry-run, material-run, crash-safe resume, cleanup, and evidence semantics.
+
+---
+
 ## Quality and supply chain
 
 Pull requests that change the Rust application run the core quality gate:

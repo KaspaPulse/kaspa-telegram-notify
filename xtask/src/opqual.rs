@@ -1,4 +1,7 @@
+mod cleanup;
+mod evidence;
 mod runtime;
+mod scenarios;
 
 use anyhow::{Context, Result, bail, ensure};
 use chrono::Utc;
@@ -193,15 +196,24 @@ pub fn execute(mode: Mode, binary: &Path, resume_id: Option<&str>) -> Result<()>
         println!("OPQUAL_DRY_RUN=PASS run_id={}", ctx.run_id);
         return Ok(());
     }
-    provision(&ctx)?;
-    migrate(&ctx)?;
-    runtime::fixtures(&ctx)?;
-    runtime::start_app(&ctx)?;
-    runtime::create_lock(&ctx)?;
-    runtime::exec01(&ctx)?;
-    runtime::restart(&ctx)?;
+    let lifecycle = (|| -> Result<()> {
+        provision(&ctx)?;
+        migrate(&ctx)?;
+        runtime::fixtures(&ctx)?;
+        runtime::start_app(&ctx)?;
+        runtime::create_lock(&ctx)?;
+        runtime::exec01(&ctx)?;
+        runtime::restart(&ctx)?;
+        scenarios::execute(&ctx)?;
+        Ok(())
+    })();
+    let cleanup_result = cleanup::execute(&ctx);
+    let evidence_result = evidence::collect(&ctx);
+    lifecycle?;
+    cleanup_result?;
+    evidence_result?;
     println!(
-        "OPQUAL_EXEC01_READY run_id={} source={} binary_sha256={} fixture_sha256={}",
+        "OPQUAL_COMPLETE run_id={} source={} binary_sha256={} fixture_sha256={}",
         ctx.run_id, ctx.source_head, ctx.binary_sha256, ctx.fixture_sha256
     );
     Ok(())

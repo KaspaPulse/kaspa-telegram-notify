@@ -5,9 +5,9 @@ mod sbom;
 mod security;
 mod updater;
 
-use anyhow::Result;
+use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 #[derive(Debug, Parser)]
 #[command(name = "xtask", about = "Kaspa Pulse repository-native Rust tooling")]
@@ -46,6 +46,7 @@ enum Command {
         #[command(subcommand)]
         command: OpqualCommand,
     },
+    PackageVersion,
 }
 
 #[derive(Debug, Subcommand)]
@@ -211,5 +212,25 @@ fn main() -> Result<()> {
                 RustyKaspaCommand::Publish { base_branch } => updater::publish(&base_branch),
             },
         },
+        Command::PackageVersion => package_version(),
     }
+}
+
+fn package_version() -> Result<()> {
+    let cargo: toml::Value = fs::read_to_string("Cargo.toml")?
+        .parse()
+        .context("failed to parse Cargo.toml")?;
+    let version = cargo
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .and_then(|package| package.get("version"))
+        .and_then(toml::Value::as_str)
+        .context("Cargo.toml package.version missing")?;
+    let valid = regex::Regex::new(r"^[0-9]+[.][0-9]+[.][0-9]+(?:[-+][0-9A-Za-z.-]+)?$")?;
+    ensure!(
+        valid.is_match(version),
+        "invalid package version: {version}"
+    );
+    println!("{version}");
+    Ok(())
 }
