@@ -2,6 +2,7 @@ mod operations;
 mod process;
 mod sbom;
 mod security;
+mod updater;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -35,6 +36,10 @@ enum Command {
     Maintenance {
         #[command(subcommand)]
         command: MaintenanceCommand,
+    },
+    Dependencies {
+        #[command(subcommand)]
+        command: DependenciesCommand,
     },
 }
 
@@ -96,6 +101,34 @@ enum MaintenanceCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum DependenciesCommand {
+    RustyKaspa {
+        #[command(subcommand)]
+        command: RustyKaspaCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RustyKaspaCommand {
+    Check {
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        allow_prerelease: bool,
+    },
+    Update {
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        allow_prerelease: bool,
+        #[arg(long, default_value_t = false)]
+        no_branch: bool,
+        #[arg(long, default_value = "dev")]
+        base_branch: String,
+    },
+    Publish {
+        #[arg(long, default_value = "dev")]
+        base_branch: String,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -135,6 +168,17 @@ fn main() -> Result<()> {
             MaintenanceCommand::CleanHistory { confirm, push } => {
                 operations::clean_history(&confirm, push)
             }
+        },
+        Command::Dependencies { command } => match command {
+            DependenciesCommand::RustyKaspa { command } => match command {
+                RustyKaspaCommand::Check { allow_prerelease } => updater::check(allow_prerelease),
+                RustyKaspaCommand::Update {
+                    allow_prerelease,
+                    no_branch,
+                    base_branch,
+                } => updater::update(allow_prerelease, no_branch, &base_branch),
+                RustyKaspaCommand::Publish { base_branch } => updater::publish(&base_branch),
+            },
         },
     }
 }
