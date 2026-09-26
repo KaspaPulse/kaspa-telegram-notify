@@ -15,7 +15,7 @@ This file records intentionally accepted or currently unavoidable RustSec findin
 Current CI security gates:
 
 ```bash
-python3 scripts/check-security-advisories.py --max-age-days 45
+cargo xtask security advisories --max-age-days 45
 cargo audit
 cargo deny check
 cargo machete
@@ -158,7 +158,7 @@ The current Kaspa SDK dependencies are pinned to exact version `2.0.1` and immut
 Before a production release:
 
 ```bash
-python3 scripts/check-security-advisories.py --max-age-days 45
+cargo xtask security advisories --max-age-days 45
 cargo fmt --all -- --check
 cargo check --locked --all-targets --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings

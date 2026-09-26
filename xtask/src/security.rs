@@ -524,9 +524,42 @@ mod tests {
     }
 
     #[test]
+    fn scorecard_filter_preserves_unknown_findings_fail_closed() {
+        let mut document = serde_json::json!({
+            "runs": [{
+                "results": [
+                    {"ruleId": "FutureSecurityFindingID"},
+                    {"ruleId": "CodeReviewID"}
+                ]
+            }]
+        });
+        filter_scorecard_sarif(&mut document).unwrap();
+        assert_eq!(
+            document["runs"][0]["results"],
+            serde_json::json!([{"ruleId": "FutureSecurityFindingID"}])
+        );
+    }
+
+    #[test]
     fn scorecard_filter_fails_closed_on_malformed_input() {
         let mut document = serde_json::json!({});
         assert!(filter_scorecard_sarif(&mut document).is_err());
+    }
+
+    #[test]
+    fn scorecard_filter_round_trip_writes_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.sarif");
+        let target = dir.path().join("target.sarif");
+        fs::write(
+            &source,
+            r#"{"runs":[{"results":[{"ruleId":"CodeReviewID"}]}]}"#,
+        )
+        .unwrap();
+        scorecard_filter(&source, &target).unwrap();
+        let document: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(document["runs"][0]["results"], serde_json::json!([]));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Time-bounded OSV exceptions for reviewed upstream/transitive RustSec advisories.
 # Every entry must be documented in SECURITY_ADVISORIES.md and expires within
-# the same 45-day review window enforced by scripts/check-security-advisories.py.
+# the same 45-day review window enforced by `cargo xtask security advisories`.
 # These exceptions are intentionally narrow: only advisory IDs are ignored;
 # packages, ecosystems, and future advisories remain fully scanned.
 
