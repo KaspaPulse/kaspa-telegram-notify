@@ -979,8 +979,8 @@ fn ensure_binary_embeds_source_revision(path: &Path, expected_sha: &str) -> Resu
         expected_sha.len() == 40 && expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "TESTED_SHA must be a full 40-character hexadecimal commit id"
     );
-    let bytes = fs::read(path)
-        .with_context(|| format!("read candidate binary {}", path.display()))?;
+    let bytes =
+        fs::read(path).with_context(|| format!("read candidate binary {}", path.display()))?;
     ensure!(
         bytes
             .windows(expected_sha.len())
