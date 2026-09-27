@@ -235,6 +235,26 @@ cargo test --locked --all-targets --all-features
 
 Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main`/`dev` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
 
+### Fail-closed Rust-only governance
+
+The repository distinguishes **owned source** from the complete transitive dependency stack. The owned executable implementation is required to be Rust-only; third-party native/FFI dependencies are allowed only when they are discovered, classified, and explicitly approved by policy. The project does **not** claim that every transitive dependency is pure Rust.
+
+Run the repository-native proof gate with:
+
+```bash
+cargo xtask proof verify
+```
+
+The proof schema is pinned to `1.0.0`. The gate discovers tracked and relevant untracked artifacts, classifies ownership/role/path/file class/executability/origin/target relevance, fails on unknown classifications, and emits deterministic machine-readable evidence under `target/proof/`:
+
+- `rust-only-proof.json` — fail-closed owned-source classification;
+- `native-dependency-inventory.json` — target-specific classified native/link trust surface;
+- `supply-chain-proof.json` — CI, action-pin, MSRV, advisory, SBOM, provenance, and attestation policy evidence.
+
+The required security workflow runs `cargo xtask proof verify` and uploads the three JSON artifacts. Negative tests intentionally prove that unknown languages, executable helpers, generated/vendor artifacts, non-Rust shebangs, and unknown native dependencies fail closed. Rust `1.97.1` remains the declared crate MSRV and is tested explicitly in CI against the supported `kaspa-pulse --all-targets --all-features` matrix; Rust `1.98.1` remains the pinned development/primary CI toolchain.
+
+Release provenance and attestations are verified, but no SLSA build level is claimed unless that level is independently proven.
+
 Dependency/security automation includes:
 
 ```bash
