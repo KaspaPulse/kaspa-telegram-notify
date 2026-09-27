@@ -1032,18 +1032,36 @@ fn task2_housekeeping_retention_contract(ctx: &ContextState) -> Result<Value> {
     let event_type = "OPQUAL_TASK2_RETENTION";
     pg_admin_input(
         ctx,
+        &format!("DELETE FROM bot_event_log WHERE event_type='{event_type}';"),
+    )?;
+    let inserted = pg_u64(
+        ctx,
         &format!(
-            "DELETE FROM bot_event_log WHERE event_type='{event_type}'; \
-             INSERT INTO bot_event_log(event_type,severity,chat_id,status,metadata,created_at) \
-             VALUES ('{event_type}','info',{SYNTH_ADMIN_ID},'old','{{}}'::jsonb,NOW()-INTERVAL '5 days');"
+            "WITH inserted AS (\
+                 INSERT INTO bot_event_log(event_type,severity,chat_id,status,metadata,created_at) \
+                 VALUES ('{event_type}','info',{SYNTH_ADMIN_ID},'fresh','{{}}'::jsonb,NOW()) \
+                 RETURNING 1\
+             ) SELECT count(*) FROM inserted;"
         ),
     )?;
     ensure!(
-        pg_u64(
-            ctx,
-            &format!("SELECT count(*) FROM bot_event_log WHERE event_type='{event_type}';")
-        )? == 1,
-        "old retention fixture was not inserted"
+        inserted == 1,
+        "retention fixture insert did not return exactly one row"
+    );
+    let aged = pg_u64(
+        ctx,
+        &format!(
+            "WITH aged AS (\
+                 UPDATE bot_event_log \
+                 SET created_at=NOW()-INTERVAL '5 days', status='old' \
+                 WHERE event_type='{event_type}' \
+                 RETURNING 1\
+             ) SELECT count(*) FROM aged;"
+        ),
+    )?;
+    ensure!(
+        aged == 1,
+        "retention fixture was not aged past the E2E retention boundary"
     );
     wait_until(
         || {
