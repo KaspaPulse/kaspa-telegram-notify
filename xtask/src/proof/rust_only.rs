@@ -192,6 +192,17 @@ fn classify_known(path: &str) -> Option<Class> {
             false,
         ));
     }
+    if path == "opqual/scenario-surfaces-v1.json" {
+        return Some(known(
+            "OWNED",
+            "E2E_IMPACT_POLICY",
+            "CONFIGURATION",
+            "FIRST_PARTY",
+            "TEST_CI",
+            "KNOWN_AND_POLICY_APPROVED",
+            false,
+        ));
+    }
     if ext == Some("md") {
         return Some(known(
             "OWNED",
@@ -404,6 +415,21 @@ mod tests {
         let class = classify_artifact("src/main.rs", "100644", b"fn main() {}").unwrap();
         assert!(class.implementation);
         assert_eq!(class.file_class, "RUST_SOURCE");
+    }
+
+    #[test]
+    fn e2e_surface_manifest_is_explicitly_policy_approved() {
+        let class = classify_artifact(
+            "opqual/scenario-surfaces-v1.json",
+            "100644",
+            br#"{"schema_version":1}"#,
+        )
+        .unwrap();
+        assert_eq!(class.role, "E2E_IMPACT_POLICY");
+        assert_eq!(class.file_class, "CONFIGURATION");
+        assert_eq!(class.target_relevance, "TEST_CI");
+        assert_eq!(class.decision, "KNOWN_AND_POLICY_APPROVED");
+        assert!(!class.implementation);
     }
 
     #[test]
