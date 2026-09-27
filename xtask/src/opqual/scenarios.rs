@@ -126,6 +126,29 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
         println!("{}={} {}", result.id, result.outcome, result.reason);
         results.insert(row.id.clone(), result);
     }
+    let supplemental_started = Instant::now();
+    let supplemental_runtime_evidence = task2_ux_changed_surface(ctx)?;
+    let supplemental = Scenario {
+        id: "TASK2-UX-CHANGED-SURFACE".into(),
+        feature: "UX-progressive-disclosure".into(),
+        role: "public user and configured private admin".into(),
+        historical_outcome: String::new(),
+        historical_evidence: String::new(),
+        historical_source_head: String::new(),
+        row_hash: sha256_bytes(b"TASK2-UX-CHANGED-SURFACE-V1"),
+    };
+    let supplemental_implementation_hash = scenario_implementation_hash(ctx, &supplemental);
+    let supplemental_input = ScenarioEvidenceInput {
+        outcome: "VERIFIED_PASS",
+        execution_level: "FULL_MAIN_DISPATCHER",
+        strategy: "task2_progressive_disclosure_full_journey",
+        implementation_hash: &supplemental_implementation_hash,
+        runtime_evidence: &supplemental_runtime_evidence,
+        duration_ms: supplemental_started.elapsed().as_millis(),
+    };
+    let (_supplemental_evidence, supplemental_canonical_sha256) =
+        persist_scenario_evidence(ctx, &supplemental, &supplemental_input)?;
+
     write_results(ctx, &rows, &results)?;
     let pass = results
         .values()
@@ -148,7 +171,7 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
                 && r.execution_level == "FULL_MAIN_DISPATCHER"
         })
         .count();
-    let journeys = executed_pass;
+    let journeys = executed_pass + 1;
     atomic_json(
         &ctx.run_dir.join("scenario-summary.json"),
         &json!({
@@ -159,7 +182,9 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
             "historical_not_applicable_reuse":false,
             "total":rows.len(),"verified_pass":pass,"verified_fail":fail,"blocked":blocked,
             "not_applicable":na,"not_tested":0,"full_bot_journeys_completed":journeys,
-            "supplemental_runs":Vec::<&str>::new()
+            "supplemental_verified_pass":1,
+            "supplemental_runs":["TASK2-UX-CHANGED-SURFACE"],
+            "task2_changed_surface_canonical_sha256":supplemental_canonical_sha256
         }),
     )?;
     ensure!(
@@ -398,6 +423,9 @@ fn event_contract(ctx: &ContextState, name: &str) -> Result<Value> {
 }
 
 fn command_contract(ctx: &ContextState, name: &str) -> Result<Value> {
+    if name == "legacy-memory-noop" {
+        return deprecated_memory_command_contract(ctx);
+    }
     let admin = [
         "health",
         "stats",
@@ -457,6 +485,9 @@ fn command_contract(ctx: &ContextState, name: &str) -> Result<Value> {
 }
 
 fn callback_contract(ctx: &ContextState, name: &str, role: &str) -> Result<Value> {
+    if name == "btn_toggle_ENABLE_MEMORY_CLEANER" {
+        return deprecated_memory_callback_contract(ctx);
+    }
     if let Some(command) = nonce_command(name) {
         return nonce_contract(ctx, name, command);
     }
@@ -545,6 +576,581 @@ fn callback_contract(ctx: &ContextState, name: &str, role: &str) -> Result<Value
     )
 }
 
+fn task2_ux_changed_surface(ctx: &ContextState) -> Result<Value> {
+    align_runtime_baseline(ctx)?;
+
+    let command_sync = task2_command_sync_contract(ctx)?;
+
+    let home = task2_message_page(ctx, SYNTH_USER_ID, SYNTH_CHAT_ID, "/start", "☰ More")?;
+    ensure_event_contains(
+        &home,
+        &[
+            "💰 Balance",
+            "👛 Wallets",
+            "⛏️ Mining",
+            "🌐 Network",
+            "📈 Market",
+            "☰ More",
+        ],
+    )?;
+    ensure_event_not_contains(&home, "🛡️ Admin")?;
+
+    let wallets = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "cmd_wallets",
+        "Clear Wallets",
+    )?;
+    ensure_event_contains(
+        &wallets,
+        &[
+            "My Wallets",
+            "Add Wallet",
+            "Remove Wallet",
+            "Clear Wallets",
+            "Back",
+        ],
+    )?;
+    let back_from_wallets =
+        task2_callback_page(ctx, SYNTH_USER_ID, SYNTH_CHAT_ID, "cmd_start", "☰ More")?;
+    ensure_event_contains(
+        &back_from_wallets,
+        &["Balance", "Wallets", "Mining", "Network"],
+    )?;
+
+    let mining = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "menu_mining",
+        "Mined Blocks",
+    )?;
+    ensure_event_contains(&mining, &["Hashrate", "Mined Blocks", "Back"])?;
+
+    let network_menu = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "menu_network",
+        "Network Health",
+    )?;
+    ensure_event_contains(
+        &network_menu,
+        &["Network Health", "BlockDAG", "Fees", "Supply", "Back"],
+    )?;
+
+    let network_health = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "cmd_network",
+        "local-fixture-cfafeb4",
+    )?;
+    ensure_event_contains(
+        &network_health,
+        &[
+            "Version:",
+            "local-fixture-cfafeb4",
+            "Network:",
+            "mainnet",
+            "Connected Peers",
+            "Sync Status",
+            "Expected BPS",
+            "10.0",
+        ],
+    )?;
+    ensure_event_not_contains(&network_health, "Core:")?;
+
+    let network_refresh = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "refresh_network",
+        "local-fixture-cfafeb4",
+    )?;
+    ensure_event_contains(&network_refresh, &["Version:", "Expected BPS", "10.0"])?;
+
+    let more = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "menu_more",
+        "Delete My Data",
+    )?;
+    ensure_event_contains(&more, &["Help", "Donate", "Delete My Data", "Back"])?;
+
+    let unauthorized = task2_callback_page(
+        ctx,
+        SYNTH_USER_ID,
+        SYNTH_CHAT_ID,
+        "cmd_admin",
+        "Unauthorized action",
+    )?;
+    ensure_event_not_contains(&unauthorized, "Overview")?;
+
+    let admin_home = task2_message_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "/admin",
+        "Administration",
+    )?;
+    ensure_event_contains(
+        &admin_home,
+        &[
+            "Overview",
+            "Operations",
+            "Alerts",
+            "Diagnostics",
+            "Settings",
+        ],
+    )?;
+
+    let overview = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_overview",
+        "Kaspa Node Version",
+    )?;
+    ensure_event_contains(
+        &overview,
+        &[
+            "Kaspa Node Version",
+            "local-fixture-cfafeb4",
+            "Database",
+            "Monitoring",
+        ],
+    )?;
+
+    ensure!(
+        setting(ctx, "ENABLE_LIVE_SYNC")? == "true",
+        "monitoring baseline must be enabled"
+    );
+    let operations = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_operations",
+        "Pause Monitoring",
+    )?;
+    ensure_event_contains(
+        &operations,
+        &[
+            "Pause Monitoring",
+            "Service Information",
+            "Maintenance Tools",
+        ],
+    )?;
+    ensure_event_not_contains(&operations, "Resume Monitoring")?;
+
+    let (pause_payload, pause_mid, paused) =
+        task2_confirm_admin_callback(ctx, "cmd_pause", "admin_do:pause:", "Resume Monitoring")?;
+    ensure_event_contains(&paused, &["Resume Monitoring", "Service Information"])?;
+    ensure!(
+        setting(ctx, "ENABLE_LIVE_SYNC")? == "false",
+        "confirmed pause did not persist monitoring=false"
+    );
+
+    let stale_start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    inject_callback(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        &pause_payload,
+        Some(pause_mid),
+    )?;
+    let stale = wait_contains(
+        ctx,
+        stale_start,
+        "Confirmation failed",
+        Duration::from_secs(15),
+    )?;
+    ensure_event_contains(&stale, &["Confirmation failed"])?;
+    ensure!(
+        setting(ctx, "ENABLE_LIVE_SYNC")? == "false",
+        "stale pause replay changed monitoring state"
+    );
+
+    let (_resume_payload, _resume_mid, resumed) =
+        task2_confirm_admin_callback(ctx, "cmd_resume", "admin_do:resume:", "Pause Monitoring")?;
+    ensure_event_contains(&resumed, &["Pause Monitoring"])?;
+    ensure!(
+        setting(ctx, "ENABLE_LIVE_SYNC")? == "true",
+        "confirmed resume did not restore monitoring=true"
+    );
+
+    let alerts = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_alerts",
+        "Disable Alerts",
+    )?;
+    ensure_event_contains(
+        &alerts,
+        &["Alert Delivery Status", "ENABLED", "Disable Alerts"],
+    )?;
+    let (_mute_payload, _mute_mid, muted) = task2_confirm_admin_callback(
+        ctx,
+        "cmd_mute_alerts",
+        "admin_do:mute_alerts:",
+        "Enable Alerts",
+    )?;
+    ensure_event_contains(&muted, &["DISABLED", "Enable Alerts"])?;
+    ensure!(
+        setting(ctx, "ENABLE_ALERT_DELIVERY")? == "false",
+        "confirmed alert mute did not persist false"
+    );
+    let (_unmute_payload, _unmute_mid, unmuted) = task2_confirm_admin_callback(
+        ctx,
+        "cmd_unmute_alerts",
+        "admin_do:unmute_alerts:",
+        "Disable Alerts",
+    )?;
+    ensure_event_contains(&unmuted, &["ENABLED", "Disable Alerts"])?;
+    ensure!(
+        setting(ctx, "ENABLE_ALERT_DELIVERY")? == "true",
+        "confirmed alert resume did not restore true"
+    );
+
+    let diagnostics = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_diagnostics",
+        "Database",
+    )?;
+    ensure_event_contains(
+        &diagnostics,
+        &["Errors", "Events", "Delivery", "Database", "Logs"],
+    )?;
+
+    let tools = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_maintenance_tools",
+        "Cleanup Old Events",
+    )?;
+    ensure_event_contains(&tools, &["Cleanup Old Events", "Operations"])?;
+
+    let settings = task2_callback_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "admin_settings",
+        "Housekeeping",
+    )?;
+    ensure_event_contains(
+        &settings,
+        &["Monitoring", "Maintenance", "Housekeeping", "ALWAYS ON"],
+    )?;
+    ensure_event_not_contains(&settings, "Memory Cleaner")?;
+
+    let legacy_memory_callback = deprecated_memory_callback_contract(ctx)?;
+    let legacy_memory_command = deprecated_memory_command_contract(ctx)?;
+
+    let legacy_restart = task2_message_page(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "/restart_info",
+        "Restart Information",
+    )?;
+    ensure_event_contains(&legacy_restart, &["does not restart its own process"])?;
+
+    let housekeeping = task2_housekeeping_retention_contract(ctx)?;
+
+    align_runtime_baseline(ctx)?;
+
+    Ok(json!({
+        "contract":"task2_progressive_disclosure_full_journey",
+        "command_scope_reconciliation":command_sync,
+        "home_flow":"PASS",
+        "wallets_navigation":"PASS",
+        "mining_navigation":"PASS",
+        "network_navigation":"PASS",
+        "network_health_version":"PASS",
+        "network_refresh":"PASS",
+        "admin_authorization":"PASS",
+        "admin_navigation":"PASS",
+        "monitoring_state_aware":"PASS",
+        "monitoring_stale_callback":"PASS",
+        "alerts_state_aware":"PASS",
+        "diagnostics_navigation":"PASS",
+        "maintenance_tools_navigation":"PASS",
+        "settings_housekeeping":"PASS",
+        "legacy_memory_callback":legacy_memory_callback,
+        "legacy_memory_command":legacy_memory_command,
+        "legacy_restart_command":"PASS",
+        "housekeeping_retention":housekeeping,
+        "final_baseline_restored":true
+    }))
+}
+
+fn task2_message_page(
+    ctx: &ContextState,
+    uid: i64,
+    cid: i64,
+    text: &str,
+    needle: &str,
+) -> Result<Value> {
+    let start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    inject_message(ctx, uid, cid, text)?;
+    wait_contains(ctx, start, needle, Duration::from_secs(20))
+}
+
+fn task2_callback_page(
+    ctx: &ContextState,
+    uid: i64,
+    cid: i64,
+    data: &str,
+    needle: &str,
+) -> Result<Value> {
+    let start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    inject_callback(ctx, uid, cid, data, None)?;
+    wait_contains(ctx, start, needle, Duration::from_secs(20))
+}
+
+fn task2_confirm_admin_callback(
+    ctx: &ContextState,
+    entry_callback: &str,
+    confirmation_prefix: &str,
+    final_needle: &str,
+) -> Result<(String, i64, Value)> {
+    let start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    inject_callback(ctx, SYNTH_ADMIN_ID, SYNTH_ADMIN_ID, entry_callback, None)?;
+    let (row, payload) = wait_keyboard(ctx, start, confirmation_prefix, Duration::from_secs(15))?;
+    let mid = row
+        .get("response_message_id")
+        .or_else(|| row.get("message_id"))
+        .and_then(Value::as_i64)
+        .context("Task2 confirmation message id missing")?;
+    let effect_start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    inject_callback(ctx, SYNTH_ADMIN_ID, SYNTH_ADMIN_ID, &payload, Some(mid))?;
+    let final_event = wait_contains(ctx, effect_start, final_needle, Duration::from_secs(20))?;
+    Ok((payload, mid, final_event))
+}
+
+fn ensure_event_contains(event: &Value, needles: &[&str]) -> Result<()> {
+    let rendered = event.to_string();
+    for needle in needles {
+        ensure!(
+            rendered.contains(needle),
+            "Telegram E2E event missing {needle:?}: {rendered}"
+        );
+    }
+    Ok(())
+}
+
+fn ensure_event_not_contains(event: &Value, needle: &str) -> Result<()> {
+    let rendered = event.to_string();
+    ensure!(
+        !rendered.contains(needle),
+        "Telegram E2E event unexpectedly contains {needle:?}: {rendered}"
+    );
+    Ok(())
+}
+
+fn telegram_command_names(event: &Value) -> Option<Vec<String>> {
+    let raw = event.get("commands")?;
+    let value = match raw {
+        Value::String(encoded) => serde_json::from_str::<Value>(encoded).ok()?,
+        value => value.clone(),
+    };
+    Some(
+        value
+            .as_array()?
+            .iter()
+            .filter_map(|command| {
+                command
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect(),
+    )
+}
+
+fn task2_command_sync_contract(ctx: &ContextState) -> Result<Value> {
+    let logs = app_logs()?;
+    ensure!(
+        logs.contains("TELEGRAM_COMMAND_SYNC=PASS"),
+        "application did not prove Telegram command read-back reconciliation"
+    );
+    let telegram_events = events(ctx)?;
+    let set_calls = telegram_events
+        .iter()
+        .filter(|event| event.get("method").and_then(Value::as_str) == Some("setmycommands"))
+        .collect::<Vec<_>>();
+    let get_calls = telegram_events
+        .iter()
+        .filter(|event| event.get("method").and_then(Value::as_str) == Some("getmycommands"))
+        .count();
+    let command_lists = set_calls
+        .iter()
+        .filter_map(|event| telegram_command_names(event))
+        .collect::<Vec<_>>();
+    let public = ["start", "help", "balance", "wallets", "network"];
+    let admin = ["start", "help", "balance", "wallets", "network", "admin"];
+    ensure!(
+        command_lists.iter().any(|commands| {
+            commands
+                .iter()
+                .map(String::as_str)
+                .eq(public.iter().copied())
+        }),
+        "public Telegram command surface was not set exactly"
+    );
+    ensure!(
+        command_lists.iter().any(|commands| {
+            commands
+                .iter()
+                .map(String::as_str)
+                .eq(admin.iter().copied())
+        }),
+        "admin Telegram command surface was not set exactly"
+    );
+    ensure!(
+        get_calls >= 2,
+        "Telegram getMyCommands read-back was not observed for both command surfaces"
+    );
+    Ok(json!({
+        "result":"PASS",
+        "set_my_commands_calls":set_calls.len(),
+        "get_my_commands_calls":get_calls,
+        "public_visible_commands":public,
+        "admin_visible_commands":admin,
+        "application_readback":"TELEGRAM_COMMAND_SYNC=PASS"
+    }))
+}
+
+fn task2_housekeeping_retention_contract(ctx: &ContextState) -> Result<Value> {
+    align_legacy_memory_disabled(ctx)?;
+    let event_type = "OPQUAL_TASK2_RETENTION";
+    pg_admin_input(
+        ctx,
+        &format!("DELETE FROM bot_event_log WHERE event_type='{event_type}';"),
+    )?;
+    let inserted = pg_u64(
+        ctx,
+        &format!(
+            "WITH inserted AS (\
+                 INSERT INTO bot_event_log(event_type,severity,chat_id,status,metadata,created_at) \
+                 VALUES ('{event_type}','info',{SYNTH_ADMIN_ID},'fresh','{{}}'::jsonb,NOW()) \
+                 RETURNING 1\
+             ) SELECT count(*) FROM inserted;"
+        ),
+    )?;
+    ensure!(
+        inserted == 1,
+        "retention fixture insert did not return exactly one row"
+    );
+    let aged = pg_u64(
+        ctx,
+        &format!(
+            "WITH aged AS (\
+                 UPDATE bot_event_log \
+                 SET created_at=NOW()-INTERVAL '5 days', status='old' \
+                 WHERE event_type='{event_type}' \
+                 RETURNING 1\
+             ) SELECT count(*) FROM aged;"
+        ),
+    )?;
+    ensure!(
+        aged == 1,
+        "retention fixture was not aged past the E2E retention boundary"
+    );
+    wait_until(
+        || {
+            Ok(pg_u64(
+                ctx,
+                &format!("SELECT count(*) FROM bot_event_log WHERE event_type='{event_type}';"),
+            )? == 0)
+        },
+        80,
+        Duration::from_millis(250),
+        "always-on housekeeping did not purge old bot event while legacy flag=false",
+    )?;
+    let logs = app_logs()?;
+    ensure!(
+        logs.contains("[MEMORY CLEANER] Purged in-memory runtime state"),
+        "housekeeping worker cycle log not observed"
+    );
+    ensure!(
+        setting(ctx, "ENABLE_MEMORY_CLEANER")? == "false",
+        "legacy memory setting changed during housekeeping proof"
+    );
+    Ok(json!({
+        "result":"PASS",
+        "legacy_enable_memory_cleaner":"false",
+        "old_event_purged":true,
+        "housekeeping_cycle_observed":true,
+        "user_can_disable_housekeeping":false
+    }))
+}
+
+fn deprecated_memory_callback_contract(ctx: &ContextState) -> Result<Value> {
+    align_legacy_memory_disabled(ctx)?;
+    let before = setting(ctx, "ENABLE_MEMORY_CLEANER")?;
+    let start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    let update_id = inject_callback(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "btn_toggle_ENABLE_MEMORY_CLEANER",
+        None,
+    )?;
+    let _ = wait_contains(
+        ctx,
+        start,
+        "Housekeeping is always enabled",
+        Duration::from_secs(15),
+    )?;
+    let after = setting(ctx, "ENABLE_MEMORY_CLEANER")?;
+    ensure!(
+        after == before,
+        "legacy memory callback changed persisted state"
+    );
+    Ok(json!({
+        "contract":"deprecated_memory_callback_is_noop_housekeeping_always_on",
+        "callback_update_id":update_id,
+        "persisted_before":before,
+        "persisted_after":after
+    }))
+}
+
+fn deprecated_memory_command_contract(ctx: &ContextState) -> Result<Value> {
+    align_legacy_memory_disabled(ctx)?;
+    let before = setting(ctx, "ENABLE_MEMORY_CLEANER")?;
+    let start = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
+    let update_id = inject_message(
+        ctx,
+        SYNTH_ADMIN_ID,
+        SYNTH_ADMIN_ID,
+        "/toggle ENABLE_MEMORY_CLEANER",
+    )?;
+    let _ = wait_contains(
+        ctx,
+        start,
+        "Runtime housekeeping is always enabled",
+        Duration::from_secs(15),
+    )?;
+    let after = setting(ctx, "ENABLE_MEMORY_CLEANER")?;
+    ensure!(
+        after == before,
+        "legacy memory command changed persisted state"
+    );
+    Ok(json!({
+        "contract":"deprecated_memory_command_is_noop_housekeeping_always_on",
+        "message_update_id":update_id,
+        "persisted_before":before,
+        "persisted_after":after
+    }))
+}
+
 fn nonce_command(name: &str) -> Option<&'static str> {
     match name {
         "confirm-pause" => Some("/pause"),
@@ -554,7 +1160,6 @@ fn nonce_command(name: &str) -> Option<&'static str> {
         "confirm-unmute_alerts" => Some("/unmute_alerts"),
         "confirm-clear_wallets" => Some("/forget_wallets"),
         "confirm-forget_all" => Some("/forget_all"),
-        "confirm-toggle_memory" => Some("/toggle ENABLE_MEMORY_CLEANER"),
         "confirm-toggle_live_sync" => Some("/toggle ENABLE_LIVE_SYNC"),
         "confirm-toggle_maintenance" => Some("/toggle MAINTENANCE_MODE"),
         _ => None,
@@ -1262,14 +1867,23 @@ fn align_runtime_baseline(ctx: &ContextState) -> Result<()> {
         ctx,
         "INSERT INTO system_settings(key_name,value_data) VALUES ('ENABLE_ALERT_DELIVERY','true') ON CONFLICT(key_name) DO UPDATE SET value_data=EXCLUDED.value_data;",
     )?;
+    align_legacy_memory_disabled(ctx)?;
     seed_wallet(ctx, SYNTH_CHAT_ID)?;
-    for (k, v) in [
-        ("ENABLE_MEMORY_CLEANER", "false"),
-        ("ENABLE_LIVE_SYNC", "true"),
-        ("MAINTENANCE_MODE", "false"),
-    ] {
+    for (k, v) in [("ENABLE_LIVE_SYNC", "true"), ("MAINTENANCE_MODE", "false")] {
         align_setting(ctx, k, v)?;
     }
+    Ok(())
+}
+
+fn align_legacy_memory_disabled(ctx: &ContextState) -> Result<()> {
+    pg_admin_input(
+        ctx,
+        "INSERT INTO system_settings(key_name,value_data) VALUES ('ENABLE_MEMORY_CLEANER','false') ON CONFLICT(key_name) DO UPDATE SET value_data=EXCLUDED.value_data;",
+    )?;
+    ensure!(
+        setting(ctx, "ENABLE_MEMORY_CLEANER")? == "false",
+        "legacy memory setting baseline must be false"
+    );
     Ok(())
 }
 fn align_setting(ctx: &ContextState, key: &str, target: &str) -> Result<()> {
@@ -1294,7 +1908,6 @@ fn toggle_via_confirmation(ctx: &ContextState, key: &str, require_delta: bool) -
         None,
     )?;
     let prefix = match key {
-        "ENABLE_MEMORY_CLEANER" => "admin_do:toggle_memory:",
         "ENABLE_LIVE_SYNC" => "admin_do:toggle_live_sync:",
         "MAINTENANCE_MODE" => "admin_do:toggle_maintenance:",
         _ => bail!("unknown toggle"),

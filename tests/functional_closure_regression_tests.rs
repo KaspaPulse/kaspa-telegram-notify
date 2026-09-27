@@ -359,9 +359,9 @@ fn f05_restart_is_explicitly_information_only() {
     let security = include_str!("../src/domain/models/telegram_security.rs");
 
     assert!(commands.contains("rename = \"restart_info\""));
-    assert!(commands.contains("show restart instructions"));
+    assert!(commands.contains("external service restart instructions"));
     assert!(!commands.contains("BotCommand::new(\"restart\""));
-    assert!(menu.contains("Restart Info"));
+    assert!(menu.contains("Service Information"));
     assert!(menu.contains("cmd_restart_info"));
     assert!(handlers.contains("Command::RestartInfo"));
     assert!(handlers.contains("handle_restart_info"));
@@ -412,7 +412,7 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
         .load_persisted_runtime_settings()
         .await
         .unwrap();
-    assert!(!defaults.memory_cleaner_enabled);
+    assert!(defaults.memory_cleaner_enabled);
     assert!(defaults.live_sync_enabled);
     assert!(!defaults.maintenance_mode);
     let inserted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM f09_defaults.system_settings")
@@ -420,6 +420,32 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
         .await
         .unwrap();
     assert_eq!(inserted, 3);
+
+    sqlx::query(
+        "UPDATE f09_defaults.system_settings
+         SET value_data = 'false'
+         WHERE key_name = 'ENABLE_MEMORY_CLEANER'",
+    )
+    .execute(&admin)
+    .await
+    .unwrap();
+    let legacy_false = default_repo
+        .load_persisted_runtime_settings()
+        .await
+        .unwrap();
+    assert!(
+        legacy_false.memory_cleaner_enabled,
+        "legacy false must not disable always-on housekeeping"
+    );
+    let stored_legacy_value: String = sqlx::query_scalar(
+        "SELECT value_data
+         FROM f09_defaults.system_settings
+         WHERE key_name = 'ENABLE_MEMORY_CLEANER'",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(stored_legacy_value, "false");
     default_pool.close().await;
 
     sqlx::query("DROP SCHEMA IF EXISTS f09_fault CASCADE")
@@ -475,49 +501,74 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
 
 #[test]
 fn f08_help_registered_commands_and_admin_buttons_are_consistent() {
-    use kaspa_pulse::presentation::telegram::commands::admin_bot_commands;
+    use kaspa_pulse::presentation::telegram::commands::{admin_bot_commands, public_bot_commands};
+
+    let public = public_bot_commands()
+        .into_iter()
+        .map(|command| command.command)
+        .collect::<Vec<_>>();
+    let admin = admin_bot_commands()
+        .into_iter()
+        .map(|command| command.command)
+        .collect::<Vec<_>>();
+    assert_eq!(public, ["start", "help", "balance", "wallets", "network"]);
+    assert_eq!(
+        admin,
+        ["start", "help", "balance", "wallets", "network", "admin"]
+    );
 
     let handlers = include_str!("../src/presentation/telegram/handlers/mod.rs");
     let menus = include_str!("../src/presentation/telegram/menus.rs");
-    for command in admin_bot_commands() {
-        let documented = format!("/{}", command.command);
+    for visible in [
+        "/start", "/help", "/balance", "/wallets", "/network", "/admin",
+    ] {
         assert!(
-            handlers.contains(&documented),
-            "registered command {documented} is missing from /help"
+            handlers.contains(visible),
+            "visible command {visible} is missing from /help"
+        );
+    }
+    assert!(handlers.contains("Legacy admin commands remain supported for compatibility"));
+    for legacy_hidden in [
+        "health",
+        "stats",
+        "sys",
+        "pause",
+        "resume",
+        "restart_info",
+        "logs",
+        "events",
+        "errors",
+        "delivery",
+        "db_diag",
+        "cleanup_events",
+        "mute_alerts",
+        "unmute_alerts",
+        "alerts_status",
+        "toggle",
+    ] {
+        assert!(
+            !public.iter().any(|command| command == legacy_hidden)
+                && !admin.iter().any(|command| command == legacy_hidden),
+            "legacy command {legacy_hidden} leaked into Telegram command menu"
         );
     }
 
-    for real_button in [
-        "Health",
-        "System",
-        "Stats",
+    for admin_area in [
+        "Overview",
+        "Operations",
+        "Alerts",
+        "Diagnostics",
         "Settings",
-        "Pause",
-        "Resume",
-        "Restart Info",
-        "DB Diagnostics",
-        "Logs",
-        "Events",
-        "Errors",
-        "Delivery",
-        "Cleanup Events",
-        "Stop Alerts",
-        "Resume Alerts",
-        "Alert Status",
+        "Main Menu",
     ] {
         assert!(
-            menus.contains(real_button),
-            "admin menu missing {real_button}"
-        );
-        assert!(
-            handlers.contains(&format!("<b>{real_button}</b>")),
-            "help missing {real_button}"
+            menus.contains(admin_area),
+            "admin menu missing {admin_area}"
         );
     }
-    assert!(!handlers.contains("<b>Subscribers</b> -"));
-    assert!(!handlers.contains("<b>Wallet Events</b> -"));
-    assert!(handlers.contains("<b>Market</b> - KAS market information."));
-    assert!(!handlers.contains("<b>Price</b> - KAS price and market info."));
+    assert!(menus.contains("Service Information"));
+    assert!(menus.contains("Maintenance Tools"));
+    assert!(menus.contains("Cleanup Old Events"));
 }
 
 #[test]

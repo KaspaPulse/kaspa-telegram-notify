@@ -7,26 +7,38 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use sysinfo::System;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
+pub async fn set_monitoring_enabled(
+    app_context: &Arc<AppContext>,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    let db = PostgresRepository::new(app_context.pool.clone());
+    db.update_setting("ENABLE_LIVE_SYNC", if enabled { "true" } else { "false" })
+        .await?;
+    app_context
+        .live_sync_enabled
+        .store(enabled, Ordering::Relaxed);
+    Ok(())
+}
+
+#[allow(dead_code)]
 pub async fn handle_pause(
     bot: Bot,
     msg: Message,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    app_context
-        .live_sync_enabled
-        .store(false, Ordering::Relaxed);
+    set_monitoring_enabled(&app_context, false).await?;
     crate::send_logged!(bot, msg, "⏸️ <b>Live monitoring paused.</b>");
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn handle_resume(
     bot: Bot,
     msg: Message,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    app_context.live_sync_enabled.store(true, Ordering::Relaxed);
+    set_monitoring_enabled(&app_context, true).await?;
     crate::send_logged!(bot, msg, "▶️ <b>Live monitoring active.</b>");
     Ok(())
 }
@@ -62,7 +74,7 @@ pub async fn handle_health(
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
     let db = crate::infrastructure::admin_diagnostics::collect(&app_context.pool).await;
-    let node_ok = app_context.rpc.get_server_info().await.is_ok();
+    let node_info = app_context.rpc.get_server_info().await.ok();
     let webhook_enabled = std::env::var("USE_WEBHOOK")
         .unwrap_or_else(|_| "false".to_string())
         .eq_ignore_ascii_case("true");
@@ -75,13 +87,27 @@ pub async fn handle_health(
          ━━━━━━━━━━━━━━━━━━\n\
          🤖 <b>Bot:</b> <code>Online</code>\n\
          🌐 <b>Node:</b> <code>{}</code>\n\
+         🧩 <b>Kaspa Node Version:</b> <code>{}</code>\n\
+         🌍 <b>Network:</b> <code>{}</code>\n\
          🗄️ <b>DB:</b> <code>{}</code>\n\
          🔎 <b>DB Queries:</b> <code>{}</code>\n\
          🔗 <b>Webhook:</b> <code>{}</code>\n\
          👛 <b>Tracked wallets:</b> <code>{}</code>\n\
          ⛏️ <b>Last alert:</b> <code>{}</code>\n\
          ⏱️ <b>Process uptime:</b> <code>{}</code>",
-        if node_ok { "Online" } else { "Offline" },
+        if node_info.is_some() {
+            "Online"
+        } else {
+            "Offline"
+        },
+        node_info
+            .as_ref()
+            .map(|info| info.server_version.as_str())
+            .unwrap_or("Unavailable"),
+        node_info
+            .as_ref()
+            .map(|info| info.network_id.to_string())
+            .unwrap_or_else(|| "Unavailable".to_string()),
         if db.connection_ok() {
             "CONNECTED"
         } else {
@@ -115,14 +141,13 @@ pub async fn handle_stats(
          👛 Wallets: <code>{}</code>\n\
          ⛏️ Mined Records: <code>{}</code>\n\
          🔄 Live Monitoring: <code>{}</code>\n\
-         🧹 Memory Cleaner: <code>{}</code>\n\
+         🧹 Housekeeping: <code>ALWAYS ON</code>\n\
          🚧 Maintenance: <code>{}</code>",
         db.database_status(),
         crate::infrastructure::admin_diagnostics::display_count(&db.users_count),
         crate::infrastructure::admin_diagnostics::display_count(&db.wallets_count),
         crate::infrastructure::admin_diagnostics::display_count(&db.mined_count),
         app_context.live_sync_enabled.load(Ordering::Relaxed),
-        app_context.memory_cleaner_enabled.load(Ordering::Relaxed),
         app_context.maintenance_mode.load(Ordering::Relaxed),
     );
     crate::send_logged!(bot, msg, text);
@@ -140,29 +165,27 @@ pub async fn handle_toggle(
 
     let new_state = match key.as_str() {
         "ENABLE_MEMORY_CLEANER" | "MEMORY" | "MEM" => {
-            let current = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
-            let next = !current;
-            app_context
-                .memory_cleaner_enabled
-                .store(next, Ordering::Relaxed);
-            db.update_setting("ENABLE_MEMORY_CLEANER", if next { "true" } else { "false" })
-                .await?;
-            Some(("ENABLE_MEMORY_CLEANER", next))
+            crate::send_logged!(
+                bot,
+                msg,
+                "🧹 <b>Runtime housekeeping is always enabled.</b>\nThe legacy Memory Cleaner switch is deprecated and no longer controls cleanup."
+            );
+            return Ok(());
         }
         "ENABLE_LIVE_SYNC" | "LIVE" | "SYNC" => {
             let current = app_context.live_sync_enabled.load(Ordering::Relaxed);
             let next = !current;
-            app_context.live_sync_enabled.store(next, Ordering::Relaxed);
             db.update_setting("ENABLE_LIVE_SYNC", if next { "true" } else { "false" })
                 .await?;
+            app_context.live_sync_enabled.store(next, Ordering::Relaxed);
             Some(("ENABLE_LIVE_SYNC", next))
         }
         "MAINTENANCE_MODE" | "MAINTENANCE" => {
             let current = app_context.maintenance_mode.load(Ordering::Relaxed);
             let next = !current;
-            app_context.maintenance_mode.store(next, Ordering::Relaxed);
             db.update_setting("MAINTENANCE_MODE", if next { "true" } else { "false" })
                 .await?;
+            app_context.maintenance_mode.store(next, Ordering::Relaxed);
             Some(("MAINTENANCE_MODE", next))
         }
         _ => None,
@@ -183,7 +206,7 @@ pub async fn handle_toggle(
             crate::send_logged!(
                 bot,
                 msg,
-                "⚠️ <b>Unknown setting.</b>\nAvailable: MEMORY, SYNC, MAINTENANCE"
+                "⚠️ <b>Unknown setting.</b>\nAvailable: SYNC, MAINTENANCE. MEMORY is deprecated because housekeeping is always enabled."
             );
         }
     }
@@ -254,51 +277,117 @@ pub async fn handle_db_diag(
     Ok(())
 }
 
+pub fn settings_panel_text(app_context: &Arc<AppContext>) -> String {
+    let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+    let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+    format!(
+        "⚙️ <b>Settings</b>\n\
+         ━━━━━━━━━━━━━━━━━━\n\
+         🔄 Monitoring: <code>{}</code>\n\
+         🚧 Maintenance: <code>{}</code>\n\
+         🧹 Housekeeping: <code>ALWAYS ON</code>",
+        if monitoring { "ON" } else { "OFF" },
+        if maintenance { "ON" } else { "OFF" }
+    )
+}
+
 pub async fn handle_interactive_settings(
     bot: Bot,
     chat_id: teloxide::types::ChatId,
     msg_id: Option<teloxide::types::MessageId>,
     app_context: Arc<AppContext>,
 ) -> anyhow::Result<()> {
-    let mem = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
-    let sync = app_context.live_sync_enabled.load(Ordering::Relaxed);
-    let maint = app_context.maintenance_mode.load(Ordering::Relaxed);
-
-    let text = format!(
-        "⚙️ <b>Settings Panel</b>\n\
-         ━━━━━━━━━━━━━━━━━━\n\
-         🧹 Memory Cleaner: <code>{}</code>\n\
-         🔄 Live Monitoring: <code>{}</code>\n\
-         🚧 Maintenance: <code>{}</code>",
-        mem, sync, maint
+    let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+    let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+    let text = settings_panel_text(&app_context);
+    let markup = crate::presentation::telegram::menus::TelegramMenus::admin_settings_markup(
+        monitoring,
+        maintenance,
     );
 
-    let markup = InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("Toggle Memory", "btn_toggle_ENABLE_MEMORY_CLEANER"),
-            InlineKeyboardButton::callback("Toggle Monitoring", "btn_toggle_ENABLE_LIVE_SYNC"),
-        ],
-        vec![InlineKeyboardButton::callback(
-            "Toggle Maintenance",
-            "btn_toggle_MAINTENANCE_MODE",
-        )],
-    ]);
-
     if let Some(id) = msg_id {
-        let _ = bot
-            .edit_message_text(chat_id, id, text)
-            .parse_mode(ParseMode::Html)
-            .reply_markup(markup)
-            .await?;
+        crate::utils::edit_logged_message(&bot, chat_id, id, text, Some(markup)).await?;
     } else {
-        let _ = bot
-            .send_message(chat_id, text)
-            .parse_mode(ParseMode::Html)
-            .reply_markup(markup)
-            .await?;
+        crate::utils::send_logged_message(&bot, chat_id, None, text, Some(markup)).await?;
     }
 
     Ok(())
+}
+
+pub fn operations_panel_text(app_context: &Arc<AppContext>) -> String {
+    let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+    let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+    format!(
+        "⚙️ <b>Operations</b>\n\
+         ━━━━━━━━━━━━━━━━━━\n\
+         🔄 Monitoring: <code>{}</code>\n\
+         🚧 Maintenance: <code>{}</code>\n\
+         🧹 Housekeeping: <code>ALWAYS ON</code>",
+        if monitoring { "ON" } else { "OFF" },
+        if maintenance { "ON" } else { "OFF" }
+    )
+}
+
+pub async fn overview_panel_text(app_context: &Arc<AppContext>) -> String {
+    let db = crate::infrastructure::admin_diagnostics::collect(&app_context.pool).await;
+    let node_info = app_context.rpc.get_server_info().await.ok();
+    let alert_delivery =
+        crate::wallet::alert_delivery_gate::is_alert_delivery_enabled(&app_context.pool)
+            .await
+            .ok();
+    let uptime = format_uptime(current_process_uptime_seconds().unwrap_or_else(System::uptime));
+
+    format!(
+        "🩺 <b>Administration Overview</b>\n\
+         ━━━━━━━━━━━━━━━━━━\n\
+         🤖 Bot: <code>Online</code>\n\
+         🌐 Kaspa Node: <code>{}</code>\n\
+         🧩 Kaspa Node Version: <code>{}</code>\n\
+         🌍 Network: <code>{}</code>\n\
+         🗄 Database: <code>{}</code>\n\
+         🔄 Monitoring: <code>{}</code>\n\
+         📣 Telegram Delivery: <code>{}</code>\n\
+         👥 Users: <code>{}</code>\n\
+         👛 Wallets: <code>{}</code>\n\
+         ⛏ Last Alert: <code>{}</code>\n\
+         ⏱ Process Uptime: <code>{}</code>",
+        if node_info.is_some() {
+            "Online"
+        } else {
+            "Offline"
+        },
+        node_info
+            .as_ref()
+            .map(|info| info.server_version.as_str())
+            .unwrap_or("Unavailable"),
+        node_info
+            .as_ref()
+            .map(|info| info.network_id.to_string())
+            .unwrap_or_else(|| "Unavailable".to_string()),
+        db.database_status(),
+        if app_context.live_sync_enabled.load(Ordering::Relaxed) {
+            "ON"
+        } else {
+            "OFF"
+        },
+        match alert_delivery {
+            Some(true) => "ENABLED",
+            Some(false) => "DISABLED",
+            None => "UNAVAILABLE",
+        },
+        crate::infrastructure::admin_diagnostics::display_count(&db.users_count),
+        crate::infrastructure::admin_diagnostics::display_count(&db.wallets_count),
+        crate::infrastructure::admin_diagnostics::display_last_alert(&db.last_alert),
+        uptime
+    )
+}
+
+pub const fn diagnostics_panel_text() -> &'static str {
+    "🔧 <b>Diagnostics</b>\n━━━━━━━━━━━━━━━━━━\nChoose the diagnostic surface you need."
+}
+
+pub const fn maintenance_tools_text() -> &'static str {
+    "🧹 <b>Maintenance Tools</b>\n━━━━━━━━━━━━━━━━━━\nDestructive maintenance actions require confirmation."
 }
 
 fn current_process_uptime_seconds() -> Option<u64> {

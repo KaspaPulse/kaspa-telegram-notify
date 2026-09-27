@@ -19,22 +19,17 @@ impl SystemTasksUseCase {
     }
 
     pub async fn execute_memory_cleanup(&self) {
-        let is_enabled = self
-            .db
-            .get_setting("ENABLE_MEMORY_CLEANER", "false")
-            .await
-            .unwrap_or_else(|_| "false".to_string());
-
-        if is_enabled != "true" {
-            return;
-        }
-
-        info!("[MEMORY CLEANER] Starting cleanup.");
+        // Housekeeping is an always-on runtime invariant. The historical
+        // ENABLE_MEMORY_CLEANER setting is compatibility data only.
+        info!("[HOUSEKEEPING] Starting scheduled database cleanup.");
 
         if let Err(e) = self.db.run_memory_cleaner().await {
-            error!("[DATABASE ERROR] Failed to purge old chat rows: {}", e);
+            error!(
+                "[DATABASE ERROR] Failed to run scheduled housekeeping: {}",
+                e
+            );
         } else {
-            info!("[MEMORY CLEANER] Cleanup complete.");
+            info!("[HOUSEKEEPING] Scheduled database cleanup complete.");
         }
     }
 

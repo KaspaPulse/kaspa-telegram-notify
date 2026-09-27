@@ -30,8 +30,13 @@ fn telegram_command_sync_does_not_claim_false_success() {
 
     assert!(source.contains("telegram_command_sync_errors"));
     assert!(source.contains("Telegram command synchronization operation failed"));
+    assert!(source.contains("get_my_commands"));
+    assert!(source.contains("command_lists_match"));
+    assert!(source.contains("for attempt in 1_u64..=3"));
     assert!(source.contains("if telegram_command_sync_errors == 0"));
-    assert!(source.contains("Telegram command synchronization completed with errors"));
+    assert!(source.contains("TELEGRAM_COMMAND_SYNC=PASS"));
+    assert!(source.contains("TELEGRAM_COMMAND_SYNC=DEGRADED"));
+    assert!(source.contains("backend authorization unchanged"));
 }
 
 #[test]

@@ -44,7 +44,7 @@ pub async fn handle_network_overview(
         network_name = info.network_id.to_string();
 
         text.push_str(&format!(
-            "⚙️ <b>Core:</b> <code>{}</code>\n🌐 <b>Network:</b> <code>{}</code>\n",
+            "🧩 <b>Version:</b> <code>{}</code>\n🌐 <b>Network:</b> <code>{}</code>\n",
             info.server_version, info.network_id
         ));
     } else {

@@ -38,6 +38,7 @@ fn maintenance_allows_command(command: &Command) -> bool {
             | Command::Help
             | Command::Remove(_)
             | Command::List
+            | Command::Wallets
             | Command::Blocks
             | Command::Donate
             | Command::ForgetWallets
@@ -58,6 +59,8 @@ fn maintenance_allows_callback(data: &str) -> bool {
             | "do_forget_all"
             | "cmd_wallets"
             | "cmd_remove_wallets"
+            | "menu_mining"
+            | "menu_more"
             | "cmd_start"
             | "cmd_help"
             | "cmd_list"
@@ -353,153 +356,69 @@ pub fn handle_command(
             }
 
             Command::Help => {
-                let help_text = r#"📚 <b>Kaspa Pulse Help</b>
-━━━━━━━━━━━━━━━━━━
-<b>Community Mining Alerts</b>
+                let help_text = String::from(
+                    "📚 <b>Kaspa Pulse Help</b>\n\
+                     ━━━━━━━━━━━━━━━━━━\n\
+                     <b>Community Mining Alerts</b>\n\n\
+                     Kaspa Pulse tracks Kaspa wallets, estimates solo-mining activity, and sends confirmed mining-reward alerts.\n\n\
+                     🚀 <b>Quick Start</b>\n\
+                     • Use /start to open the main menu.\n\
+                     • Open <b>Wallets</b> to manage tracked wallets.\n\
+                     • Open <b>Mining</b> for hashrate and mined-block views.\n\
+                     • Open <b>Network</b> for node health, BlockDAG, fees, and supply.\n\
+                     • Open <b>Market</b> for KAS market data.\n\
+                     • Open <b>More</b> for help, donation, and privacy actions.\n\n\
+                     ✅ <b>Reward Confirmation Policy</b>\n\
+                     • Rewards are detected from wallet UTXOs, then held until they reach the configured confirmation threshold.\n\
+                     • Default threshold: <b>10 DAA confirmations</b>.\n\
+                     • Confirmed rewards continue to DAG analysis before alert delivery.\n\n\
+                     👛 <b>Wallet Buttons</b>\n\
+                     • <b>My Wallets</b> — Show tracked wallets.\n\
+                     • <b>Add Wallet</b> — Add a wallet.\n\
+                     • <b>Remove Wallet</b> — Remove one wallet.\n\
+                     • <b>Clear Wallets</b> — Remove all tracked wallets after confirmation.\n\
+                     • <b>Back</b> — Return to the previous menu.\n\n\
+                     ⌨️ <b>Visible Commands</b>\n\
+                     • /start — Open the main menu.\n\
+                     • /help — Show this guide.\n\
+                     • /balance — Check live balance and UTXOs.\n\
+                     • /wallets — Open wallet management.\n\
+                     • /network — Show Kaspa node and network health.",
+                );
 
-Kaspa Pulse monitors Kaspa wallets, detects native node mining rewards, identifies the real mined block, and sends Telegram alerts after reward confirmation.
-
-🚀 <b>Quick Start</b>
-• Press <b>Wallets</b> from /start to manage your wallets.
-• Press <b>Add Wallet</b> or paste any <code>kaspa:...</code> address in chat.
-• Use <b>Remove Wallet</b> to choose a wallet from buttons.
-• <b>Clear Wallets</b> and <b>Delete My Data</b> require confirmation before deletion.
-• Mining rewards are not sent immediately; the bot waits for reward confirmations before DAG analysis and alert delivery.
-
-✅ <b>Reward Confirmation Policy</b>
-• Rewards are first detected from wallet UTXOs.
-• The bot waits until the reward reaches the configured confirmation threshold.
-• Default confirmation threshold: <b>10 DAA confirmations</b>.
-• After confirmation, the bot analyzes the DAG to find:
-  - Accepting Block
-  - Real Mined Block
-  - Worker name
-  - Nonce / block details
-• If some candidate DAG blocks are unavailable, the bot skips them safely and continues searching.
-
-🧭 <b>General, Privacy &amp; Menu Commands</b>
-• /start - Open the main menu.
-• /help - Show this guide.
-• /hidemenu - Hide the persistent reply keyboard.
-• /forget_wallets - Delete all tracked wallets after confirmation.
-• /forget_all - Delete and verify all user-linked tracking data after confirmation.
-
-👛 <b>Wallet Commands</b>
-• /add <code>kaspa:...</code> - Track a wallet.
-• /remove <code>kaspa:...</code> - Stop tracking a wallet.
-• /list - Show Wallet 1, Wallet 2, and all tracked addresses.
-• /balance - Show total balance plus per-wallet balance, value, UTXOs, and status.
-
-👛 <b>Wallet Buttons</b>
-• <b>Wallets</b> - Open wallet management panel.
-• <b>Add Wallet</b> - Add a new wallet.
-• <b>Remove Wallet</b> - Remove one wallet by button.
-• <b>Clear Wallets</b> - Remove all tracked wallets after confirmation.
-• <b>Delete My Data</b> - Delete all user data after confirmation.
-• <b>Back</b> - Return to main menu.
-
-⛏️ <b>Mining Commands</b>
-• /blocks - Show total mined blocks plus per-wallet block stats.
-• /miner - Estimate solo-mining hashrate for your tracked wallets.
-
-⛏️ <b>Mining Alert Details</b>
-Each confirmed mining alert may include:
-• Reward time
-• Wallet
-• Reward amount
-• Live balance
-• TXID
-• Real mined block
-• Accepting block
-• Worker name
-• DAA score"#;
-
-                let help_text_2 = r#"🌐 <b>Network &amp; Market</b>
-• /network - Show node status, peers, sync status, Live BPS, and Expected BPS.
-• /dag - Show BlockDAG overview, pruning point, readable pruning time, and BPS.
-• /price - Show KAS price, market cap, hashrate, peers, pruning point, and BPS.
-• /market - Show KAS market details.
-• /supply - Show circulating supply, max supply, and minted percentage.
-• /fees - Show current network fee estimate.
-
-🌐 <b>Network Buttons</b>
-• <b>Network</b> - Node and sync status.
-• <b>DAG</b> - BlockDAG overview.
-• <b>Market</b> - KAS market information.
-• <b>Supply</b> - Supply and minted percentage.
-• <b>Fees</b> - Current network fee estimate.
-
-❤️ <b>Support</b>
-• /donate - Show the donation address.
-
-🛡️ <b>Owner Commands</b>
-• /health - Production health report.
-• /settings - Settings panel.
-• /stats - System counters and bot statistics.
-• /sys - System diagnostics such as RAM, swap, and server time.
-• /logs - Recent service logs.
-• /db_diag - Database diagnostics.
-• /events - Latest 10 compact bot events.
-• /errors - Recent error events.
-• /delivery - Alert delivery summary.
-• /subscribers <code>kaspa:...</code> - Show subscribers for one wallet.
-• /wallet_events <code>kaspa:...</code> - Show recent events for one wallet.
-• /cleanup_events - Clean old bot events.
-• /pause - Pause live monitoring.
-• /resume - Resume live monitoring.
-• /mute_alerts - Stop Telegram mining-alert delivery.
-• /unmute_alerts - Resume Telegram mining-alert delivery.
-• /alerts_status - Show mining-alert delivery status.
-• /toggle <code>MEMORY|SYNC|MAINTENANCE</code> - Confirm and change an admin feature flag.
-• /restart_info - Explain the external supervisor restart procedure.
-
-🛡️ <b>Owner Buttons</b>
-• <b>Health</b> - Production health report.
-• <b>Settings</b> - Open settings panel.
-• <b>Stats</b> - System statistics.
-• <b>System</b> - Server diagnostics.
-• <b>Logs</b> - Recent bounded in-process service logs.
-• <b>DB Diagnostics</b> - Database checks.
-• <b>Events</b> - Latest compact event log.
-• <b>Errors</b> - Recent errors.
-• <b>Delivery</b> - Alert delivery summary.
-• <b>Cleanup Events</b> - Purge old event logs.
-• <b>Pause</b> - Pause monitoring.
-• <b>Resume</b> - Resume monitoring.
-• <b>Stop Alerts</b> - Stop Telegram mining-alert delivery.
-• <b>Resume Alerts</b> - Resume Telegram mining-alert delivery.
-• <b>Alert Status</b> - Show mining-alert delivery status.
-• <b>Restart Info</b> - Explain how production restarts are controlled.
-
-⚙️ <b>System Behavior</b>
-• Telegram commands are synced automatically at startup.
-• Old deleted Telegram commands are cleared before syncing new commands.
-• Important events are recorded in <code>bot_event_log</code>.
-• Startup, webhook start, shutdown, delivery, duplicate alerts, DB errors, RPC errors, and panic recovery are logged.
-• Panic markers are recovered after restart and shown in /errors.
-• Memory cleaner removes old runtime state, old dedup records, and old seen UTXOs.
-
-🧪 <b>Production Safety</b>
-• DAG analysis does not stop when a candidate block is unavailable.
-• Missing candidate DAG blocks are skipped safely.
-• Critical RPC/DB failures are logged.
-• Duplicate alerts are prevented using alert deduplication.
-• Regression tests protect the alert flow from breaking changes.
-
-ℹ️ <i>Tip: Most actions are easier from the /start buttons.</i>
-For mining alerts, wait for the configured confirmations before expecting Telegram delivery."#;
-
+                let mut help_text_2 = String::from(
+                    "🧭 <b>Mining, Network &amp; Safety</b>\n\
+                     ━━━━━━━━━━━━━━━━━━\n\
+                     • Confirmed reward analysis can include accepting block, real mined block, worker, nonce, and DAA details.\n\
+                     • DAG analysis does not stop when a candidate block is unavailable; unavailable candidates are skipped safely while the search continues.\n\
+                     • <b>Network Health</b> shows node status, explicit Kaspa node version, network, sync, peers, hashrate, and BPS.\n\n\
+                     🔐 <b>Privacy &amp; Safety</b>\n\
+                     • Clear Wallets and Delete My Data require confirmation.\n\
+                     • Admin-only actions remain protected by the configured private admin identity.\n\
+                     • Hidden legacy commands remain supported for compatibility; hiding a command is never used as authorization.",
+                );
+                if is_admin {
+                    help_text_2.push_str(
+                        "\n\n🛡️ <b>Owner Buttons</b>\n\
+                         • <b>Overview</b> — Bot, Kaspa node/version, database, monitoring, delivery, uptime, users, wallets, and last alert.\n\
+                         • <b>Operations</b> — State-aware monitoring, maintenance, service information, and maintenance tools.\n\
+                         • <b>Alerts</b> — Alert status and the single valid enable/disable action.\n\
+                         • <b>Diagnostics</b> — Errors, Events, Delivery, Database, and Logs.\n\
+                         • <b>Settings</b> — Monitoring and maintenance settings.\n\n\
+                         🛠️ <b>Owner Commands</b>\n\
+                         • /admin — Open the Administration panel.\n\
+                         • Legacy admin commands remain supported for compatibility but are intentionally hidden from the Telegram command menu.\n\
+                         • Advanced legacy commands include /events, /errors, /delivery, /logs, /db_diag, /health, /stats, /sys, /pause, /resume, /mute_alerts, /unmute_alerts, /alerts_status, and /cleanup_events."
+                    );
+                }
                 crate::send_logged!(bot, msg, help_text);
                 crate::send_logged!(bot, msg, help_text_2);
             }
             Command::Start => {
-                let markup = if is_admin {
-                    crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup()
-                } else {
-                    crate::presentation::telegram::menus::TelegramMenus::main_menu_markup()
-                };
+                let markup =
+                    crate::presentation::telegram::menus::TelegramMenus::home_menu_markup(is_admin);
 
-                let welcome = "🤖 <b>Kaspa Pulse</b>\nCommunity Mining Alerts\n━━━━━━━━━━━━━━━━━━\nTrack Kaspa wallets, monitor solo-mining rewards, and receive live alerts.\n\n⚡ <b>Quick Start:</b>\nPaste any <code>kaspa:...</code> address in this chat to activate tracking.\n\n👇 <i>Select an option below or type /help for commands.</i>";
+                let welcome = "🤖 <b>Kaspa Pulse</b>\nCommunity Mining Alerts\n━━━━━━━━━━━━━━━━━━\nTrack Kaspa wallets, monitor solo-mining rewards, and receive live alerts.\n\n⚡ <b>Quick Start:</b>\nPaste any <code>kaspa:...</code> address in this chat to activate tracking.\n\n👇 <i>Select a category below or type /help.</i>";
 
                 let _ = crate::utils::send_logged_message(
                     &bot,
@@ -526,6 +445,9 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
                 wallet::handle_remove(bot, msg, cid, wallet, ucs.wallet_mgt).await?
             }
             Command::List => wallet::handle_list(bot, msg, cid, ucs.wallet_query).await?,
+            Command::Wallets => {
+                send_wallet_panel(&bot, &msg, &ucs, cid).await?;
+            }
             Command::Balance => {
                 wallet::handle_balance(bot, msg, cid, ucs.wallet_query, app_context).await?
             }
@@ -553,6 +475,17 @@ For mining alerts, wait for the configured confirmations before expecting Telegr
                 .await?
             }
 
+            Command::Admin => {
+                crate::utils::send_logged_message(
+                    &bot,
+                    msg.chat.id,
+                    Some(msg.id),
+                    "🛡️ <b>Administration</b>\n━━━━━━━━━━━━━━━━━━\nChoose an administration area."
+                        .to_string(),
+                    Some(crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup()),
+                )
+                .await?;
+            }
             Command::Health => {
                 if !is_admin {
                     crate::send_logged!(bot, msg, "⛔ Unauthorized.");
@@ -821,6 +754,255 @@ pub async fn handle_callback(
         return Ok(());
     }
 
+    if data == "cmd_start" {
+        let _ = bot
+            .answer_callback_query(q.id.clone())
+            .text("Main menu")
+            .await;
+        edit_callback_state(
+            &bot,
+            &q,
+            "🤖 <b>Kaspa Pulse</b>\nCommunity Mining Alerts\n━━━━━━━━━━━━━━━━━━\nTrack Kaspa wallets, monitor solo-mining rewards, and receive live alerts.\n\n👇 <i>Select a category below or type /help.</i>",
+            crate::presentation::telegram::menus::TelegramMenus::home_menu_markup(
+                callback_is_admin,
+            ),
+        )
+        .await;
+        return Ok(());
+    }
+
+    if data == "menu_mining" {
+        let _ = bot.answer_callback_query(q.id.clone()).text("Mining").await;
+        edit_callback_state(
+            &bot,
+            &q,
+            "⛏️ <b>Mining</b>\n━━━━━━━━━━━━━━━━━━\nChoose a mining view.",
+            crate::presentation::telegram::menus::TelegramMenus::mining_menu_markup(),
+        )
+        .await;
+        return Ok(());
+    }
+
+    if data == "menu_network" {
+        let _ = bot
+            .answer_callback_query(q.id.clone())
+            .text("Network")
+            .await;
+        edit_callback_state(
+            &bot,
+            &q,
+            "🌐 <b>Network</b>\n━━━━━━━━━━━━━━━━━━\nChoose a network view.",
+            crate::presentation::telegram::menus::TelegramMenus::network_menu_markup(),
+        )
+        .await;
+        return Ok(());
+    }
+
+    if data == "menu_more" {
+        let _ = bot.answer_callback_query(q.id.clone()).text("More").await;
+        edit_callback_state(
+            &bot,
+            &q,
+            "☰ <b>More</b>\n━━━━━━━━━━━━━━━━━━\nHelp, support, and privacy actions.",
+            crate::presentation::telegram::menus::TelegramMenus::more_menu_markup(),
+        )
+        .await;
+        return Ok(());
+    }
+
+    if data == "cmd_admin"
+        || matches!(
+            data.as_str(),
+            "admin_overview"
+                | "admin_operations"
+                | "admin_alerts"
+                | "admin_diagnostics"
+                | "admin_settings"
+                | "admin_maintenance_tools"
+        )
+    {
+        if !callback_is_admin {
+            let _ = bot
+                .answer_callback_query(q.id.clone())
+                .text("Unauthorized.")
+                .await;
+            edit_callback_state(
+                &bot,
+                &q,
+                "⛔ <b>Unauthorized action.</b>",
+                crate::presentation::telegram::menus::TelegramMenus::main_menu_markup(),
+            )
+            .await;
+            return Ok(());
+        }
+
+        let _ = bot.answer_callback_query(q.id.clone()).await;
+        match data.as_str() {
+            "cmd_admin" => {
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    "🛡️ <b>Administration</b>\n━━━━━━━━━━━━━━━━━━\nChoose an administration area.",
+                    crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup(),
+                )
+                .await;
+            }
+            "admin_overview" => {
+                let text = admin::overview_panel_text(&app_context).await;
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    text,
+                    crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup(),
+                )
+                .await;
+            }
+            "admin_operations" => {
+                let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+                let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    admin::operations_panel_text(&app_context),
+                    crate::presentation::telegram::menus::TelegramMenus::admin_operations_markup(
+                        monitoring,
+                        maintenance,
+                    ),
+                )
+                .await;
+            }
+            "admin_alerts" => {
+                let enabled = crate::wallet::alert_delivery_gate::is_alert_delivery_enabled(
+                    &app_context.pool,
+                )
+                .await
+                .ok();
+                let text = crate::wallet::alert_delivery_gate::alert_delivery_status_text(
+                    &app_context.pool,
+                )
+                .await;
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    text,
+                    crate::presentation::telegram::menus::TelegramMenus::admin_alerts_markup(
+                        enabled,
+                    ),
+                )
+                .await;
+            }
+            "admin_diagnostics" => {
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    admin::diagnostics_panel_text(),
+                    crate::presentation::telegram::menus::TelegramMenus::admin_diagnostics_markup(),
+                )
+                .await;
+            }
+            "admin_settings" => {
+                if let Some(message) = q.message.as_ref() {
+                    admin::handle_interactive_settings(
+                        bot.clone(),
+                        message.chat().id,
+                        Some(message.id()),
+                        app_context.clone(),
+                    )
+                    .await?;
+                }
+            }
+            "admin_maintenance_tools" => {
+                edit_callback_state(
+                    &bot,
+                    &q,
+                    admin::maintenance_tools_text(),
+                    crate::presentation::telegram::menus::TelegramMenus::admin_maintenance_tools_markup(),
+                )
+                .await;
+            }
+            _ => unreachable!("admin navigation is matched above"),
+        }
+        return Ok(());
+    }
+
+    if data == "btn_toggle_ENABLE_MEMORY_CLEANER" {
+        let _ = bot
+            .answer_callback_query(q.id.clone())
+            .text("Housekeeping is always enabled.")
+            .await;
+        if callback_is_admin {
+            let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+            let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+            edit_callback_state(
+                &bot,
+                &q,
+                admin::settings_panel_text(&app_context),
+                crate::presentation::telegram::menus::TelegramMenus::admin_settings_markup(
+                    monitoring,
+                    maintenance,
+                ),
+            )
+            .await;
+        }
+        return Ok(());
+    }
+
+    if callback_is_admin && matches!(data.as_str(), "cmd_pause" | "cmd_resume") {
+        let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+        let stale = (data == "cmd_pause" && !monitoring) || (data == "cmd_resume" && monitoring);
+        if stale {
+            let _ = bot
+                .answer_callback_query(q.id.clone())
+                .text(if monitoring {
+                    "Monitoring is already active."
+                } else {
+                    "Monitoring is already paused."
+                })
+                .await;
+            edit_callback_state(
+                &bot,
+                &q,
+                admin::operations_panel_text(&app_context),
+                crate::presentation::telegram::menus::TelegramMenus::admin_operations_markup(
+                    monitoring,
+                    app_context.maintenance_mode.load(Ordering::Relaxed),
+                ),
+            )
+            .await;
+            return Ok(());
+        }
+    }
+
+    if callback_is_admin
+        && matches!(data.as_str(), "cmd_mute_alerts" | "cmd_unmute_alerts")
+        && let Ok(enabled) =
+            crate::wallet::alert_delivery_gate::is_alert_delivery_enabled(&app_context.pool).await
+    {
+        let stale =
+            (data == "cmd_mute_alerts" && !enabled) || (data == "cmd_unmute_alerts" && enabled);
+        if stale {
+            let _ = bot
+                .answer_callback_query(q.id.clone())
+                .text(if enabled {
+                    "Alerts are already enabled."
+                } else {
+                    "Alerts are already disabled."
+                })
+                .await;
+            edit_callback_state(
+                &bot,
+                &q,
+                crate::wallet::alert_delivery_gate::alert_delivery_status_text(&app_context.pool)
+                    .await,
+                crate::presentation::telegram::menus::TelegramMenus::admin_alerts_markup(Some(
+                    enabled,
+                )),
+            )
+            .await;
+            return Ok(());
+        }
+    }
+
     if callback_disables_keyboard(&data) && q.message.is_none() {
         let _ = bot
             .answer_callback_query(q.id)
@@ -1029,10 +1211,18 @@ pub async fn handle_callback(
 
                 match data.as_str() {
                     "do_pause" => {
-                        admin::handle_pause(bot.clone(), message, app_context.clone()).await
+                        if !app_context.live_sync_enabled.load(Ordering::Relaxed) {
+                            Ok(())
+                        } else {
+                            admin::set_monitoring_enabled(&app_context, false).await
+                        }
                     }
                     "do_resume" => {
-                        admin::handle_resume(bot.clone(), message, app_context.clone()).await
+                        if app_context.live_sync_enabled.load(Ordering::Relaxed) {
+                            Ok(())
+                        } else {
+                            admin::set_monitoring_enabled(&app_context, true).await
+                        }
                     }
                     "do_cleanup_events" => {
                         admin::handle_cleanup_events(bot.clone(), message, app_context.clone())
@@ -1057,13 +1247,28 @@ pub async fn handle_callback(
 
         match action_result {
             Ok(()) => {
-                restore_safe_callback_menu(
-                    &bot,
-                    &q,
-                    true,
-                    "✅ <b>Action completed.</b>\nThe admin menu is available again.",
-                )
-                .await;
+                if matches!(data.as_str(), "do_pause" | "do_resume") {
+                    let monitoring = app_context.live_sync_enabled.load(Ordering::Relaxed);
+                    let maintenance = app_context.maintenance_mode.load(Ordering::Relaxed);
+                    edit_callback_state(
+                        &bot,
+                        &q,
+                        admin::operations_panel_text(&app_context),
+                        crate::presentation::telegram::menus::TelegramMenus::admin_operations_markup(
+                            monitoring,
+                            maintenance,
+                        ),
+                    )
+                    .await;
+                } else {
+                    restore_safe_callback_menu(
+                        &bot,
+                        &q,
+                        true,
+                        "✅ <b>Action completed.</b>\nThe admin menu is available again.",
+                    )
+                    .await;
+                }
             }
             Err(error) => {
                 restore_safe_callback_menu(
@@ -1169,11 +1374,15 @@ pub async fn handle_callback(
         }
 
         let enabled = data == "do_unmute_alerts";
-        if let Err(error) = crate::wallet::alert_delivery_gate::set_alert_delivery_enabled(
-            &app_context.pool,
-            enabled,
-        )
-        .await
+        let current_enabled =
+            crate::wallet::alert_delivery_gate::is_alert_delivery_enabled(&app_context.pool)
+                .await?;
+        if current_enabled != enabled
+            && let Err(error) = crate::wallet::alert_delivery_gate::set_alert_delivery_enabled(
+                &app_context.pool,
+                enabled,
+            )
+            .await
         {
             restore_safe_callback_menu(
                 &bot,
@@ -1201,7 +1410,7 @@ pub async fn handle_callback(
             &bot,
             &q,
             status_text,
-            crate::presentation::telegram::menus::TelegramMenus::admin_menu_markup(),
+            crate::presentation::telegram::menus::TelegramMenus::admin_alerts_markup(Some(enabled)),
         )
         .await;
 
@@ -1508,25 +1717,26 @@ pub async fn handle_callback(
 
     if data.starts_with("btn_toggle_") {
         let flag = data.replace("btn_toggle_", "");
+        if flag == "ENABLE_MEMORY_CLEANER" {
+            let _ = bot
+                .answer_callback_query(q.id.clone())
+                .text("Housekeeping is always enabled.")
+                .await;
+            if callback_is_admin && let Some(message) = q.message.as_ref() {
+                admin::handle_interactive_settings(
+                    bot.clone(),
+                    message.chat().id,
+                    Some(message.id()),
+                    app_context.clone(),
+                )
+                .await?;
+            }
+            return Ok(());
+        }
+
         let db = PostgresRepository::new(app_context.pool.clone());
 
         let update_result = match flag.as_str() {
-            "ENABLE_MEMORY_CLEANER" => {
-                let current = app_context.memory_cleaner_enabled.load(Ordering::Relaxed);
-                let new_state = !current;
-                match db
-                    .update_setting(&flag, if new_state { "true" } else { "false" })
-                    .await
-                {
-                    Ok(()) => {
-                        app_context
-                            .memory_cleaner_enabled
-                            .store(new_state, Ordering::Relaxed);
-                        Ok(())
-                    }
-                    Err(error) => Err(error),
-                }
-            }
             "ENABLE_LIVE_SYNC" => {
                 let current = app_context.live_sync_enabled.load(Ordering::Relaxed);
                 let new_state = !current;
@@ -1672,6 +1882,43 @@ pub async fn handle_callback(
         .await;
 
     Ok(())
+}
+
+fn wallet_panel_text(wallets: &[String]) -> String {
+    if wallets.is_empty() {
+        "👛 <b>Wallets</b>\n━━━━━━━━━━━━━━━━━━\nNo tracked wallets yet.\n\nPress Add Wallet and send your <code>kaspa:...</code> address.".to_string()
+    } else {
+        let list = wallets
+            .iter()
+            .enumerate()
+            .map(|(index, wallet)| format!("{}. <code>{}</code>", index + 1, wallet))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "👛 <b>Wallets</b>\n━━━━━━━━━━━━━━━━━━\n{}\n\nChoose an action below.",
+            list
+        )
+    }
+}
+
+async fn send_wallet_panel(
+    bot: &Bot,
+    msg: &Message,
+    ucs: &BotUseCases,
+    cid: i64,
+) -> anyhow::Result<()> {
+    let wallets = ucs.wallet_query.get_list(cid).await.map_err(|error| {
+        wallet::log_wallet_data_error("send_wallet_panel", &error);
+        anyhow::Error::from(error)
+    })?;
+    crate::utils::send_logged_message(
+        bot,
+        msg.chat.id,
+        Some(msg.id),
+        wallet_panel_text(&wallets),
+        Some(crate::presentation::telegram::menus::TelegramMenus::wallet_menu_markup()),
+    )
+    .await
 }
 
 async fn render_wallet_panel(

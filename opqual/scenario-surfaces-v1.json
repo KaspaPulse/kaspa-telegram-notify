@@ -147,7 +147,7 @@
     "FLOW-CB-confirm-resume": "full_system_v1",
     "FLOW-CB-confirm-toggle_live_sync": "full_system_v1",
     "FLOW-CB-confirm-toggle_maintenance": "full_system_v1",
-    "FLOW-CB-confirm-toggle_memory": "full_system_v1",
+    "FLOW-CMD-legacy-memory-noop": "full_system_v1",
     "FLOW-CB-confirm-unmute_alerts": "full_system_v1",
     "FLOW-CB-confirm_forget_all": "full_system_v1",
     "FLOW-CB-confirm_forget_wallets": "full_system_v1",

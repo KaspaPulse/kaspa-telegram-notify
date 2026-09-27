@@ -13,6 +13,8 @@ pub enum Command {
     Remove(String),
     #[command(description = "List all tracked wallets.")]
     List,
+    #[command(rename = "wallets", description = "Open wallet management.")]
+    Wallets,
     #[command(description = "Check live balance and UTXOs.")]
     Balance,
     #[command(description = "Estimate your solo-mining hashrate.")]
@@ -45,6 +47,8 @@ pub enum Command {
     #[command(description = "Check real-time mempool fees.")]
     Fees,
 
+    #[command(description = "Admin: Open administration panel.")]
+    Admin,
     #[command(description = "Admin: Community bot health report.")]
     Health,
     #[command(description = "Admin: Global analytics and user report.")]
@@ -118,7 +122,8 @@ impl Command {
     pub fn is_admin_only(&self) -> bool {
         matches!(
             self,
-            Self::Health
+            Self::Admin
+                | Self::Health
                 | Self::Stats
                 | Self::Sys
                 | Self::Pause
@@ -145,49 +150,42 @@ pub fn public_bot_commands() -> Vec<teloxide::types::BotCommand> {
     vec![
         teloxide::types::BotCommand::new("start", "Open the main menu"),
         teloxide::types::BotCommand::new("help", "Show the guide and features"),
-        teloxide::types::BotCommand::new("add", "Add a wallet: /add kaspa:..."),
-        teloxide::types::BotCommand::new("remove", "Remove a wallet: /remove kaspa:..."),
-        teloxide::types::BotCommand::new("list", "Show tracked wallets"),
         teloxide::types::BotCommand::new("balance", "Check live balance and UTXOs"),
-        teloxide::types::BotCommand::new("miner", "Estimate solo-mining hashrate"),
-        teloxide::types::BotCommand::new("blocks", "Show mined block stats"),
+        teloxide::types::BotCommand::new("wallets", "Open wallet management"),
         teloxide::types::BotCommand::new("network", "Show node and network health"),
-        teloxide::types::BotCommand::new("dag", "Show BlockDAG overview"),
-        teloxide::types::BotCommand::new("price", "Check KAS price and market data"),
-        teloxide::types::BotCommand::new("market", "Check market cap details"),
-        teloxide::types::BotCommand::new("supply", "Check circulating and max supply"),
-        teloxide::types::BotCommand::new("fees", "Check real-time network fees"),
-        teloxide::types::BotCommand::new("donate", "Support development"),
-        teloxide::types::BotCommand::new("forget_wallets", "Delete all my tracked wallets"),
-        teloxide::types::BotCommand::new("forget_all", "Erase all my data"),
-        teloxide::types::BotCommand::new("hidemenu", "Hide the persistent keyboard"),
     ]
 }
 
 pub fn admin_bot_commands() -> Vec<teloxide::types::BotCommand> {
     let mut commands = public_bot_commands();
-
-    commands.extend(vec![
-        teloxide::types::BotCommand::new("health", "Admin: bot health report"),
-        teloxide::types::BotCommand::new("stats", "Admin: global analytics report"),
-        teloxide::types::BotCommand::new("sys", "Admin: system diagnostics"),
-        teloxide::types::BotCommand::new("pause", "Admin: pause monitoring"),
-        teloxide::types::BotCommand::new("resume", "Admin: resume monitoring"),
-        teloxide::types::BotCommand::new("restart_info", "Admin: show restart instructions"),
-        teloxide::types::BotCommand::new("logs", "Admin: tail recent log lines"),
-        teloxide::types::BotCommand::new("events", "Admin: show recent bot events"),
-        teloxide::types::BotCommand::new("errors", "Admin: show recent error events"),
-        teloxide::types::BotCommand::new("delivery", "Admin: alert delivery summary"),
-        teloxide::types::BotCommand::new("mute_alerts", "Admin: stop sending mining alerts"),
-        teloxide::types::BotCommand::new("unmute_alerts", "Admin: resume sending mining alerts"),
-        teloxide::types::BotCommand::new("alerts_status", "Admin: alert delivery status"),
-        teloxide::types::BotCommand::new("subscribers", "Admin: show wallet subscribers"),
-        teloxide::types::BotCommand::new("wallet_events", "Admin: show wallet event history"),
-        teloxide::types::BotCommand::new("cleanup_events", "Admin: cleanup old bot events"),
-        teloxide::types::BotCommand::new("db_diag", "Admin: database diagnostics"),
-        teloxide::types::BotCommand::new("settings", "Admin: open settings panel"),
-        teloxide::types::BotCommand::new("toggle", "Admin: toggle a feature flag"),
-    ]);
-
+    commands.push(teloxide::types::BotCommand::new(
+        "admin",
+        "Open administration panel",
+    ));
     commands
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_command_surface_is_intentionally_small() {
+        let public = public_bot_commands();
+        let admin = admin_bot_commands();
+        assert_eq!(
+            public
+                .iter()
+                .map(|command| command.command.as_str())
+                .collect::<Vec<_>>(),
+            ["start", "help", "balance", "wallets", "network"]
+        );
+        assert_eq!(
+            admin
+                .iter()
+                .map(|command| command.command.as_str())
+                .collect::<Vec<_>>(),
+            ["start", "help", "balance", "wallets", "network", "admin"]
+        );
+    }
 }

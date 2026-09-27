@@ -37,7 +37,8 @@ fn sensitive_toggle_flags_are_detected() {
     );
     assert_eq!(
         sensitive_action_from_toggle_flag("MEMORY"),
-        Some(SensitiveAction::ToggleMemoryCleaner)
+        None,
+        "legacy memory-cleaner setting is no longer user-toggleable"
     );
 }
 
