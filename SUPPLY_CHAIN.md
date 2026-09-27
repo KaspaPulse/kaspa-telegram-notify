@@ -19,10 +19,10 @@ The release workflow uses GitHub OIDC and ephemeral Sigstore signing through Git
 
 Install the GitHub CLI, authenticate to GitHub if required, and download the assets for the release you want to verify.
 
-For `v1.2.5` on Linux x86_64:
+For `v1.3.0` on Linux x86_64:
 
 ```bash
-archive="kaspa-pulse-1.2.5-x86_64-unknown-linux-gnu.tar.gz"
+archive="kaspa-pulse-1.3.0-x86_64-unknown-linux-gnu.tar.gz"
 
 sha256sum --check "${archive}.sha256"
 
@@ -51,6 +51,18 @@ The release pipeline:
 Pull requests and scheduled security workflows use independent controls including CodeQL, OSV Scanner, `cargo audit`, `cargo deny`, dependency review, secret scanning, strict Clippy, tests, release builds, and production-container smoke tests.
 
 Reviewed RustSec/OSV exceptions are advisory-ID-specific, documented in `SECURITY_ADVISORIES.md`, and time-bounded by CI policy. A passing exception policy does not replace the independent vulnerability scanners.
+
+## Continuous Rust-only and native trust proof
+
+`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.0.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
+
+- `rust-only-proof.json` classifies every tracked/relevant artifact by ownership, role, path, file class, executability, origin, and target relevance; any unknown classification fails the gate;
+- `native-dependency-inventory.json` records the production-reachable Cargo packages that expose `links` metadata or `-sys` surfaces for both supported Linux targets, including exact locked identity, dependency path, native mechanism, approval, and validity predicates;
+- `supply-chain-proof.json` records the pinned workflow/action policy, dependency/advisory controls, explicit MSRV policy, SBOM/provenance/attestation controls, and input digests.
+
+Owned-source Rust-only proof and transitive-native proof are deliberately separate. Approved third-party native code does not count as owned non-Rust implementation, but a new unclassified native/link dependency fails closed until the policy is explicitly updated and reviewed. The security workflow runs this proof gate on pull requests and `main`/`dev` pushes and publishes the JSON evidence as a CI artifact.
+
+The repository currently records SLSA provenance predicates and verifies GitHub artifact attestations, but the proof policy sets `slsa_claim = "NOT_ASSERTED"`; no SLSA build level is claimed solely because attestations exist.
 
 ## Trust boundary
 

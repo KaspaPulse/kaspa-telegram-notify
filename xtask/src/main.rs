@@ -1,6 +1,7 @@
 mod operations;
 mod opqual;
 mod process;
+mod proof;
 mod sbom;
 mod security;
 mod updater;
@@ -21,6 +22,10 @@ enum Command {
     Security {
         #[command(subcommand)]
         command: SecurityCommand,
+    },
+    Proof {
+        #[command(subcommand)]
+        command: ProofCommand,
     },
     Sbom {
         #[command(subcommand)]
@@ -72,6 +77,14 @@ enum SecurityCommand {
     RustHardening,
     AdminWebhookHardening,
     Pipeline,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProofCommand {
+    RustOnly,
+    Native,
+    Supply,
+    Verify,
 }
 
 #[derive(Debug, Subcommand)]
@@ -171,6 +184,12 @@ fn main() -> Result<()> {
             SecurityCommand::RustHardening => operations::rust_hardening(),
             SecurityCommand::AdminWebhookHardening => operations::admin_webhook_hardening(),
             SecurityCommand::Pipeline => operations::security_pipeline(),
+        },
+        Command::Proof { command } => match command {
+            ProofCommand::RustOnly => proof::emit_rust_only("."),
+            ProofCommand::Native => proof::emit_native("."),
+            ProofCommand::Supply => proof::emit_supply("."),
+            ProofCommand::Verify => proof::verify_all("."),
         },
         Command::Sbom { command } => match command {
             SbomCommand::Finalize {

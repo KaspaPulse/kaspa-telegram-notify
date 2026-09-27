@@ -1,0 +1,166 @@
+schema_version = "1.0.0"
+policy_version = 1
+proof_artifact_dir = "target/proof"
+targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+msrv = "1.97.1"
+toolchain = "1.98.1"
+slsa_claim = "NOT_ASSERTED"
+policy_owner = "KaspaPulse repository owner"
+required_ci_workflow = ".github/workflows/security.yml"
+msrv_ci_workflow = ".github/workflows/rust-ci.yml"
+
+[[native_approval]]
+name = "aws-lc-rs"
+version = "1.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_PROVIDER_RUST_WRAPPER"
+role = "TLS_CRYPTO_PROVIDER"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Cargo links wrapper around aws-lc-sys"
+native_code = true
+why_required = "Rustls provider used by HTTP, SQLx, and Kaspa networking paths."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "aws-lc-sys"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_FFI"
+role = "TLS_CRYPTO_PROVIDER"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Bundled AWS-LC C and assembly built by aws-lc-sys"
+native_code = true
+why_required = "Native cryptographic implementation selected by aws-lc-rs."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "openssl-sys"
+version = "0.9.117"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_FFI"
+role = "TLS_PLATFORM_PROVIDER"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "FFI bindings to platform OpenSSL"
+native_code = true
+why_required = "Transitive native-tls path from teloxide/reqwest; reduction is optional and not a closure condition."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "ring"
+version = "0.17.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_FFI"
+role = "TLS_CRYPTO_PROVIDER"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Bundled C and assembly cryptography built by ring"
+native_code = true
+why_required = "Rustls and webpki cryptographic backend."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "secp256k1-sys"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_FFI"
+role = "KASPA_CRYPTO"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Bundled native secp256k1 implementation through FFI"
+native_code = true
+why_required = "Transitive rusty-kaspa cryptography."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "CARGO_LINKS_METADATA_ONLY"
+role = "RUST_PARALLELISM"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Cargo links coordination metadata; implementation is Rust"
+native_code = false
+why_required = "Transitive parallelism used by rusty-kaspa cryptographic dependencies."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "wasm-bindgen-shared"
+version = "0.2.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "CARGO_LINKS_METADATA_ONLY"
+role = "KASPA_WASM_SUPPORT"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Cargo links coordination metadata; implementation is Rust"
+native_code = false
+why_required = "Transitive rusty-kaspa WASM support in the resolved graph."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "dirs-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "RUST_PLATFORM_ADAPTER"
+role = "FILESYSTEM_PLATFORM_DISCOVERY"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Rust platform adapter crate; -sys naming does not imply compiled C/assembly here"
+native_code = false
+why_required = "Transitive rusty-kaspa workflow-core path through dirs."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "js-sys"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "RUST_WASM_BINDINGS"
+role = "KASPA_WASM_SUPPORT"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Rust wasm-bindgen JavaScript bindings; no bundled C/assembly implementation"
+native_code = false
+why_required = "Transitive rusty-kaspa WASM support remains present in the resolved production graph."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "libsqlite3-sys"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "NATIVE_FFI"
+role = "TRANSITIVE_SQLITE_BACKEND"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "SQLite C FFI/build integration exposed by libsqlite3-sys"
+native_code = true
+why_required = "Resolved transitively through the locked SQLx graph; PostgreSQL remains the application runtime database."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "RUST_PLATFORM_BINDINGS"
+role = "LINUX_SYSCALL_METADATA"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Generated Rust Linux ABI constants/types; no bundled C/assembly implementation"
+native_code = false
+why_required = "Transitive rustix/async-io platform metadata from rusty-kaspa workflow dependencies."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
+
+[[native_approval]]
+name = "web-sys"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+classification = "RUST_WASM_BINDINGS"
+role = "KASPA_WASM_SUPPORT"
+origin = "THIRD_PARTY_REGISTRY"
+native_mechanism = "Rust wasm-bindgen Web API bindings; no bundled C/assembly implementation"
+native_code = false
+why_required = "Transitive rusty-kaspa workflow/WASM support present in the resolved graph."
+policy_owner = "KaspaPulse repository owner"
+approval = "APPROVED"
