@@ -26,28 +26,28 @@ cargo test --locked --all-targets --all-features
 
 The security workflow also runs the SHA-pinned official OSV Scanner reusable workflow against `Cargo.lock` and applies only the reviewed, time-bounded entries in `osv-scanner.toml`.
 
-Last automated review: **2026-09-15**
+Last automated review: **2026-09-27**
 
 ---
 
 ## Scorecard / OSV aggregation note
 
-OpenSSF Scorecard currently groups eight RustSec records in this dependency graph under its broad `Vulnerabilities` check. That aggregate must not be interpreted as eight equivalent exploitable runtime vulnerabilities.
+OpenSSF Scorecard currently groups the previously reviewed RustSec records in this dependency graph under its broad `Vulnerabilities` check. That aggregate must not be interpreted as eight equivalent exploitable runtime vulnerabilities.
 
-Seven of the eight records are RustSec `INFO Unmaintained` notices: `RUSTSEC-2025-0052`, `RUSTSEC-2024-0375`, `RUSTSEC-2024-0388`, `RUSTSEC-2024-0384`, `RUSTSEC-2024-0436`, `RUSTSEC-2024-0370`, and `RUSTSEC-2026-0173`. `RUSTSEC-2021-0145` is `INFO Unsound`, affects `atty` on Windows, has no patched release, and is retained only through an upstream/transitive path. Production container validation remains Linux-based.
+The prior eight-record baseline contains seven RustSec `INFO Unmaintained` notices: `RUSTSEC-2025-0052`, `RUSTSEC-2024-0375`, `RUSTSEC-2024-0388`, `RUSTSEC-2024-0384`, `RUSTSEC-2024-0436`, `RUSTSEC-2024-0370`, and `RUSTSEC-2026-0173`. `RUSTSEC-2021-0145` is `INFO Unsound`, affects `atty` on Windows, has no patched release, and is retained only through an upstream/transitive path. Production container validation remains Linux-based.
 
-After dependency-path review, these eight records are encoded in `osv-scanner.toml` as narrow advisory-ID exceptions expiring on **2026-10-15**. CI rejects expired, undocumented, duplicate, malformed, or excessively long-lived OSV exceptions. This is not a blanket package/ecosystem override: new advisories remain scannable, and `cargo audit` plus `cargo deny` remain independent security controls.
+After dependency-path review, the retained records are encoded in `osv-scanner.toml` as narrow advisory-ID exceptions expiring on **2026-10-15**. CI rejects expired, undocumented, duplicate, malformed, or excessively long-lived OSV exceptions. This is not a blanket package/ecosystem override: new advisories remain scannable, and `cargo audit` plus `cargo deny` remain independent security controls.
 
 The purpose of these OSV exceptions is to encode the reviewed non-actionability of specific upstream/transitive findings while preserving an automatic expiry and re-review requirement; they must not be used to hide a locally actionable vulnerability.
 
 ### 2026-09-15 independent re-review
 
-- An unfiltered `cargo audit` executed outside repository configuration against the exact `Cargo.lock` reports **0 vulnerabilities** and the same eight informational RustSec records: seven `unmaintained` and one `unsound` (`RUSTSEC-2021-0145`).
+- An unfiltered `cargo audit` executed outside repository configuration against the exact `Cargo.lock` reports **0 vulnerabilities** and the eight informational RustSec records in that baseline: seven `unmaintained` and one `unsound` (`RUSTSEC-2021-0145`).
 - `cargo deny check advisories` remains PASS independently of `osv-scanner.toml`.
-- `rusty-kaspa v2.0.1` at `cfafeb4c093fa37a303f1b9f19c58f986b870ce3` is still the newest stable upstream release/tag; upstream `master` is newer but is not a stable release and is not adopted as an unreviewed production dependency.
+- rusty-kaspa v2.1.0 at 01b532e8b553523216471682649693af92f0fd16 is the newest stable upstream release/tag and is also current upstream master; the repository pins that exact revision.
 - `teloxide 0.17.0`, `aquamarine 0.6.0`, and `proc-macro-error2 2.0.1` remain the newest published versions. Exact-main Rust 1.98.1 CI continues to report `proc-macro-error2 2.0.1` as future-incompatible, so the issue remains actively tracked rather than silently accepted.
-- The exact dependency paths were rechecked with `cargo tree -i`; none of the eight advisories is introduced directly by Kaspa Pulse and no compatible stable update currently removes the affected path.
-- All eight OSV exceptions therefore remain advisory-ID-specific and are renewed only through **2026-10-15** (30 days). New advisories, packages, and ecosystems remain unignored.
+- The exact dependency paths were rechecked with `cargo tree -i`; the retained upstream/transitive advisories have no compatible stable update that removes their affected paths.
+- All OSV exceptions remain advisory-ID-specific and expire no later than **2026-10-15** in this review window. New advisories, packages, and ecosystems remain unignored.
 
 Next mandatory re-review: **on or before 2026-10-15**, and earlier if Rust, rusty-kaspa, Teloxide/Aquamarine, or the relevant workflow/Kaspa dependencies change.
 
@@ -123,11 +123,19 @@ Status: upstream/transitive build-time exception.
 
 Action: remove after the upstream dependency path is replaced.
 
-### RUSTSEC-2025-0134 — `rustls-pemfile`
+### RUSTSEC-2025-0134 — rustls-pemfile
 
-Status: resolved from the current locked graph on 2026-09-10; no Cargo audit/deny exception remains.
+Status: reintroduced only by the Rust-native operational qualification fixture during the 2026-09-27 migration, then removed in the current remediation by using rustls-pki-types PemObject directly. No OSV exception is used.
 
-Action: retain this record as history and re-open only if a future TLS dependency change reintroduces the advisory.
+Action: keep rustls-pemfile absent from the locked graph; re-open only if a future TLS dependency change reintroduces it.
+
+### RUSTSEC-2026-0306 — faster-hex AVX2 decode over-read
+
+Status: current upstream rusty-kaspa v2.1.0 (01b532e8b553523216471682649693af92f0fd16) constrains faster-hex to the 0.9.x line, while the upstream fix is 0.10.1 or newer. Upstream master is the same Kaspa revision, so there is no newer stable/current Kaspa source to adopt.
+
+Reachability review on 2026-09-27 found no direct hex_decode_unchecked call in the selected Kaspa source or this repository. The selected Kaspa call sites use hex_decode, whose checked wrapper validates the source length against the destination length before entering the internal unchecked decoder.
+
+Action: retain a single advisory-ID-specific OSV exception only through **2026-10-15**. Re-review immediately when rusty-kaspa changes or permits faster-hex 0.10.1 or newer; do not fork Kaspa or suppress future faster-hex advisories.
 
 ### RUSTSEC-2024-0407 — `linkme`
 

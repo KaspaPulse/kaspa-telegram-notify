@@ -5,11 +5,12 @@ use rustls::{
     ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, StreamOwned,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
+use rustls_pki_types::pem::PemObject;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::{
     fs::{self, OpenOptions},
-    io::{BufReader, Read, Write},
+    io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
@@ -101,14 +102,9 @@ fn sleep_mode(cfg: &Value) {
     }
 }
 fn tls_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>> {
-    let mut c =
-        BufReader::new(fs::File::open(cert).with_context(|| format!("open {}", cert.display()))?);
     let certs: Vec<CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut c).collect::<std::result::Result<_, _>>()?;
-    let mut k =
-        BufReader::new(fs::File::open(key).with_context(|| format!("open {}", key.display()))?);
-    let key: PrivateKeyDer<'static> =
-        rustls_pemfile::private_key(&mut k)?.context("private key missing")?;
+        CertificateDer::pem_file_iter(cert)?.collect::<std::result::Result<_, _>>()?;
+    let key: PrivateKeyDer<'static> = PrivateKeyDer::from_pem_file(key)?;
     let cfg = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)?;
@@ -821,8 +817,7 @@ fn probe(cli: &Cli) -> Result<()> {
             .as_deref()
             .context("--ca is required for HTTPS probe")?;
         let mut roots = RootCertStore::empty();
-        let mut reader = BufReader::new(fs::File::open(ca)?);
-        for cert in rustls_pemfile::certs(&mut reader) {
+        for cert in CertificateDer::pem_file_iter(ca)? {
             roots.add(cert?)?;
         }
         let cfg = Arc::new(
