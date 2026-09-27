@@ -37,11 +37,22 @@ jobs:
         with:
           toolchain: 1.98.1
 
-      - name: Install actionlint 1.7.12
-        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
-        with:
-          tool: actionlint@1.7.12
-          fallback: none
+      - name: Install verified actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/actionlint-1.7.12.tar.gz"
+          extract_dir="${RUNNER_TEMP}/actionlint-1.7.12"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check --strict
+          mkdir -p "$extract_dir"
+          tar -xzf "$archive" -C "$extract_dir"
+          binary="$(find "$extract_dir" -maxdepth 2 -type f -name actionlint -print -quit)"
+          test -n "$binary"
+          sudo install -m 0755 "$binary" /usr/local/bin/actionlint
+          actionlint -version
 
       - name: Lint GitHub Actions workflows
         run: actionlint -color

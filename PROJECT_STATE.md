@@ -131,8 +131,8 @@ The final wrd wallet-removal callback is synchronized against the resulting
 database state rather than an earlier callback acknowledgement, eliminating a
 qualification race without changing the Production wallet-removal path.
 
-REMOTE_PUBLICATION=NOT_YET_PERFORMED
-REMOTE_CI=NOT_YET_VERIFIED_FOR_THIS_CANDIDATE
+REMOTE_PUBLICATION=PR_71
+REMOTE_CI_SOURCE=GitHub PR #71 exact-head checks; durable continuity records the current conclusions.
 PRODUCTION_DEPLOYMENT=UNCHANGED_FROM_REFERENCE_RELEASE_STATE
-TASK_CLOSED=NO
-NEXT_ACTION=Complete exact-candidate security/supply-chain/documentation qualification, then publish only the qualified candidate through repository policy.
+TASK_CLOSURE_SOURCE=Durable continuity state after required remote gates and exact-final-main verification.
+REMOTE_FINALIZATION_POLICY=Merge only after exact-head required checks pass; then independently verify the actual resulting main SHA/tree and exact-main CI.
