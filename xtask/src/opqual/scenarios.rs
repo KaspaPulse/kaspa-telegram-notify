@@ -880,10 +880,21 @@ fn panic_marker_recovery_contract(ctx: &ContextState) -> Result<Value> {
         !marker.exists(),
         "panic marker was not removed after recovery"
     );
+    wait_for_fresh_telegram_poll(ctx, Duration::from_secs(90))?;
+    let telegram_start = events(ctx)?.len();
+    inject_message(ctx, SYNTH_USER_ID, SYNTH_CHAT_ID, "/help")?;
+    wait_contains(
+        ctx,
+        telegram_start,
+        "Kaspa Pulse Help",
+        Duration::from_secs(20),
+    )?;
     Ok(json!({
-        "contract":"pending_panic_marker_exact_application_restart_db_recovery",
+        "contract":"pending_panic_marker_exact_application_restart_db_recovery+telegram_dispatcher_readiness",
         "marker_removed":true,
-        "recovered_event_count_increased":true
+        "recovered_event_count_increased":true,
+        "telegram_dispatcher_polling":"PASS",
+        "telegram_help_smoke":"PASS"
     }))
 }
 
@@ -1467,6 +1478,26 @@ fn fresh_poll_proves_queue_drained(events: &[Value], start: usize, latest: u64) 
         telegram_getupdates_offset(value)
             .is_some_and(|offset| if latest == 0 { true } else { offset > latest })
     })
+}
+
+fn wait_for_fresh_telegram_poll(ctx: &ContextState, timeout: Duration) -> Result<()> {
+    let event_start = events(ctx)?.len();
+    let deadline = Instant::now() + timeout;
+    loop {
+        let current_events = events(ctx)?;
+        if current_events
+            .iter()
+            .skip(event_start)
+            .any(|value| telegram_getupdates_offset(value).is_some())
+        {
+            return Ok(());
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "Telegram dispatcher did not resume polling within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn wait_update_queue_drained(ctx: &ContextState, p: &Path) -> Result<()> {
