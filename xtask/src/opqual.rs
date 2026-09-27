@@ -1,5 +1,6 @@
 mod cleanup;
 mod evidence;
+mod impact;
 mod runtime;
 mod scenarios;
 
@@ -323,6 +324,15 @@ fn hex_sha256(bytes: &[u8]) -> String {
 
 pub(crate) fn canonical_json(value: &Value) -> Result<Vec<u8>> {
     Ok(serde_json_canonicalizer::to_vec(value)?)
+}
+
+pub fn impact(
+    base_sha: &str,
+    tested_sha: &str,
+    baseline_proof: Option<&Path>,
+    output: &Path,
+) -> Result<()> {
+    impact::execute(base_sha, tested_sha, baseline_proof, output)
 }
 
 pub fn execute(mode: Mode, binary: &Path, resume_id: Option<&str>) -> Result<()> {
