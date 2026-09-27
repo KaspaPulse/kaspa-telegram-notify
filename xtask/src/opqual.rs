@@ -38,9 +38,10 @@ const APPLICATION_NAME: &str = "kaspa-opqual-v1";
 const WEBHOOK_APPLICATION_NAME: &str = "kaspa-opqual-v1-webhook";
 const OBSERVER_APP_NAME: &str = "kaspa-opqual-observer";
 const LOCK_APP_NAME: &str = "kaspa-opqual-lock-holder";
-const POSTGRES_IMAGE: &str = "postgres:18";
+const POSTGRES_IMAGE: &str =
+    "postgres:18@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636";
 const EXPECTED_POSTGRES_IMAGE_ID: &str =
-    "sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280";
+    "sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636";
 const HEALTH_PORT: u16 = 18480;
 const WEBHOOK_PORT: u16 = 18443;
 const WEBHOOK_HEALTH_PORT: u16 = 18481;
@@ -264,6 +265,40 @@ fn validate_tested_identity(
 
 fn optional_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn approved_execution_environment(
+    host: &str,
+    github_actions: bool,
+    repository: Option<&str>,
+    runner_os: Option<&str>,
+    runner_arch: Option<&str>,
+) -> Option<&'static str> {
+    if host.split('.').next() == Some("kas") {
+        return Some("LOCAL_KAS");
+    }
+    if github_actions
+        && repository == Some("KaspaPulse/kaspa-telegram-notify")
+        && runner_os == Some("Linux")
+        && runner_arch == Some("X64")
+    {
+        return Some("GITHUB_ACTIONS");
+    }
+    None
+}
+
+fn current_execution_environment() -> Result<&'static str> {
+    let host = hostname();
+    approved_execution_environment(
+        &host,
+        env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true"),
+        env::var("GITHUB_REPOSITORY").ok().as_deref(),
+        env::var("RUNNER_OS").ok().as_deref(),
+        env::var("RUNNER_ARCH").ok().as_deref(),
+    )
+    .context(
+        "opqual requires host kas or the canonical GitHub Actions Linux/X64 repository context",
+    )
 }
 
 fn host_target_triple() -> Result<String> {
@@ -769,10 +804,8 @@ fn preflight(ctx: &ContextState) -> Result<()> {
         "PLANNED",
         "verify host, exact candidate, Rust fixture, Docker isolation and ownership conflicts",
     )?;
-    ensure!(
-        hostname().split('.').next() == Some("kas"),
-        "host must be kas"
-    );
+    let execution_environment = current_execution_environment()?;
+    ctx.state_set("execution_environment", execution_environment)?;
     ensure!(env::consts::OS == "linux", "Linux required");
     ensure!(env::consts::ARCH == "x86_64", "x86_64 required");
     for tool in ["git", "sudo", "docker"] {
@@ -841,10 +874,10 @@ fn preflight(ctx: &ContextState) -> Result<()> {
             "{{.Id}}",
         ],
     )?;
-    ensure!(image_id.0, "postgres:18 image missing");
+    ensure!(image_id.0, "pinned PostgreSQL image missing");
     ensure!(
         image_id.1.trim() == EXPECTED_POSTGRES_IMAGE_ID,
-        "postgres:18 image mismatch: {}",
+        "pinned PostgreSQL image identity mismatch: {}",
         image_id.1.trim()
     );
     for name in [
@@ -1180,5 +1213,48 @@ mod evidence_identity_tests {
             sha256_bytes(&canonical_json(&left).unwrap()),
             sha256_bytes(&canonical_json(&right).unwrap())
         );
+    }
+
+    #[test]
+    fn execution_environment_is_fail_closed_and_ci_specific() {
+        assert_eq!(
+            approved_execution_environment("kas", false, None, None, None),
+            Some("LOCAL_KAS")
+        );
+        assert_eq!(
+            approved_execution_environment(
+                "fv-az123",
+                true,
+                Some("KaspaPulse/kaspa-telegram-notify"),
+                Some("Linux"),
+                Some("X64"),
+            ),
+            Some("GITHUB_ACTIONS")
+        );
+        for candidate in [
+            approved_execution_environment(
+                "fv-az123",
+                false,
+                Some("KaspaPulse/kaspa-telegram-notify"),
+                Some("Linux"),
+                Some("X64"),
+            ),
+            approved_execution_environment(
+                "fv-az123",
+                true,
+                Some("attacker/fork"),
+                Some("Linux"),
+                Some("X64"),
+            ),
+            approved_execution_environment(
+                "fv-az123",
+                true,
+                Some("KaspaPulse/kaspa-telegram-notify"),
+                Some("Windows"),
+                Some("X64"),
+            ),
+        ] {
+            assert_eq!(candidate, None);
+        }
     }
 }

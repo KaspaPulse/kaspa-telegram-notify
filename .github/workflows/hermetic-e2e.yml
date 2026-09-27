@@ -1,0 +1,233 @@
+name: Hermetic E2E
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermetic-e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  POSTGRES_IMAGE: "postgres:18@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636"
+
+jobs:
+  full-hermetic-e2e:
+    name: Full hermetic application E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact tested ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust 1.98.1
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Resolve exact tested Git identity
+        id: identity
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          EVENT_BEFORE_SHA: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          tested_sha="$(git rev-parse HEAD)"
+          tested_tree="$(git rev-parse 'HEAD^{tree}')"
+          if [[ "$tested_sha" != "$GITHUB_SHA" ]]; then
+            echo "Checked-out HEAD does not equal GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          pr_head_sha=""
+          pr_head_tree=""
+          base_sha=""
+          base_tree=""
+          merge_base_sha=""
+
+          case "$EVENT_NAME" in
+            pull_request)
+              tested_ref_kind="PR_MERGE_CANDIDATE"
+              pr_head_sha="$EVENT_PR_HEAD_SHA"
+              base_sha="$EVENT_BASE_SHA"
+              git cat-file -e "${pr_head_sha}^{commit}"
+              git cat-file -e "${base_sha}^{commit}"
+              pr_head_tree="$(git rev-parse "${pr_head_sha}^{tree}")"
+              base_tree="$(git rev-parse "${base_sha}^{tree}")"
+              merge_base_sha="$(git merge-base "$pr_head_sha" "$base_sha")"
+              ;;
+            push)
+              tested_ref_kind="MAIN"
+              base_sha="$EVENT_BEFORE_SHA"
+              if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+                base_sha="$(git rev-parse HEAD^)"
+              fi
+              base_tree="$(git rev-parse "${base_sha}^{tree}")"
+              merge_base_sha="$base_sha"
+              ;;
+            workflow_dispatch)
+              if [[ "$GITHUB_REF_NAME" == "main" ]]; then
+                tested_ref_kind="MAIN"
+              else
+                tested_ref_kind="WORKFLOW_DISPATCH_REF"
+              fi
+              base_sha="$(git rev-parse HEAD^)"
+              base_tree="$(git rev-parse "${base_sha}^{tree}")"
+              merge_base_sha="$base_sha"
+              ;;
+            *)
+              echo "Unsupported GitHub event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "TESTED_SHA=$tested_sha"
+            echo "TESTED_TREE=$tested_tree"
+            echo "OPQUAL_TESTED_SHA=$tested_sha"
+            echo "OPQUAL_TESTED_TREE=$tested_tree"
+            echo "OPQUAL_TESTED_REF_KIND=$tested_ref_kind"
+            echo "OPQUAL_PR_HEAD_SHA=$pr_head_sha"
+            echo "OPQUAL_PR_HEAD_TREE=$pr_head_tree"
+            echo "OPQUAL_BASE_SHA=$base_sha"
+            echo "OPQUAL_BASE_TREE=$base_tree"
+            echo "OPQUAL_MERGE_BASE_SHA=$merge_base_sha"
+            echo "E2E_BASE_SHA=$base_sha"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "tested_sha=$tested_sha"
+            echo "tested_tree=$tested_tree"
+            echo "tested_ref_kind=$tested_ref_kind"
+            echo "base_sha=$base_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pull pinned PostgreSQL image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker pull "$POSTGRES_IMAGE"
+          test "$(sudo docker image inspect "$POSTGRES_IMAGE" --format '{{.Id}}')" =             "sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636"
+
+      - name: Build exact candidate and Rust-native harness
+        shell: bash
+        env:
+          KASPA_PULSE_SOURCE_REVISION: ${{ steps.identity.outputs.tested_sha }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --workspace --all-features
+          test -x target/release/kaspa-pulse
+          test -x target/release/xtask
+          test -x target/release/opqual-fixture
+          sha256sum target/release/kaspa-pulse target/release/xtask target/release/opqual-fixture
+
+      - name: Classify affected E2E surface fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/xtask opqual impact             --base-sha "$E2E_BASE_SHA"             --tested-sha "$TESTED_SHA"             --output target/opqual-impact-ci.json
+          jq -e '
+            .result == "PASS" and
+            (.classification == "FULL_HERMETIC_E2E" or .classification == "REUSE_ALL") and
+            .counts.scenario_total == 195
+          ' target/opqual-impact-ci.json >/dev/null
+
+      - name: Run full hermetic application E2E
+        id: e2e
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/hermetic-e2e.log"
+          ./target/release/xtask opqual run             --binary target/release/kaspa-pulse | tee "$log"
+          run_id="$(sed -n 's/^OPQUAL_COMPLETE run_id=\([^ ]*\).*/\1/p' "$log" | tail -1)"
+          test -n "$run_id"
+          evidence_dir="$GITHUB_WORKSPACE/evidence/opqual/$run_id"
+          test -d "$evidence_dir"
+          cp "$log" "$evidence_dir/github-actions-e2e.log"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Verify canonical E2E proof
+        shell: bash
+        env:
+          EVIDENCE_DIR: ${{ steps.e2e.outputs.evidence_dir }}
+        run: |
+          set -euo pipefail
+          test -f "$EVIDENCE_DIR/CANONICAL_SEMANTIC_PROOF.json"
+          test -f "$EVIDENCE_DIR/CANONICAL_SEMANTIC_PROOF.sha256"
+          jq -e             --arg sha "$TESTED_SHA"             --arg tree "$TESTED_TREE" '
+              .result == "PASS" and
+              .audit_status == "COMPLETE" and
+              .harness_runtime_execution == "PASS" and
+              .exec_01 == "PASS" and
+              .cleanup == "PASS" and
+              .e2e_definition == "HERMETIC_FULL_APPLICATION_SYSTEM_E2E" and
+              .identity.tested_sha == $sha and
+              .identity.source_head == $sha and
+              .identity.tested_tree == $tree and
+              .identity.source_tree == $tree and
+              .scenario_summary.total == 195 and
+              .scenario_summary.verified_fail == 0 and
+              .scenario_summary.blocked == 0 and
+              .scenario_summary.not_tested == 0 and
+              .scenario_summary.full_bot_journeys_completed >= 150 and
+              .scenario_summary.historical_pass_reuse == false and
+              .scenario_summary.historical_not_applicable_reuse == false
+            ' "$EVIDENCE_DIR/CANONICAL_SEMANTIC_PROOF.json" >/dev/null
+          expected="$(cat "$EVIDENCE_DIR/CANONICAL_SEMANTIC_PROOF.sha256")"
+          actual="$(sha256sum "$EVIDENCE_DIR/CANONICAL_SEMANTIC_PROOF.json" | awk '{print $1}')"
+          test "$actual" = "$expected"
+
+      - name: Upload hermetic E2E evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermetic-e2e-${{ steps.identity.outputs.tested_sha }}
+          path: |
+            evidence/opqual/
+            target/opqual-impact-ci.json
+            target/opqual-impact-ci.sha256
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
+
+  required-gate:
+    name: Hermetic E2E required gate
+    if: ${{ always() }}
+    needs: [full-hermetic-e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce upstream E2E result
+        shell: bash
+        env:
+          E2E_RESULT: ${{ needs.full-hermetic-e2e.result }}
+        run: |
+          set -euo pipefail
+          case "$E2E_RESULT" in
+            success)
+              echo "Hermetic E2E upstream result: success"
+              ;;
+            *)
+              echo "Hermetic E2E upstream result is not success: $E2E_RESULT" >&2
+              exit 1
+              ;;
+          esac
