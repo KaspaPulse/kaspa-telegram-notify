@@ -136,3 +136,18 @@ REMOTE_CI_SOURCE=GitHub PR #71 exact-head checks; durable continuity records the
 PRODUCTION_DEPLOYMENT=UNCHANGED_FROM_REFERENCE_RELEASE_STATE
 TASK_CLOSURE_SOURCE=Durable continuity state after required remote gates and exact-final-main verification.
 REMOTE_FINALIZATION_POLICY=Merge only after exact-head required checks pass; then independently verify the actual resulting main SHA/tree and exact-main CI.
+## v1.3.0 release closeout candidate — 2026-09-27
+
+RELEASE_CANDIDATE_VERSION=1.3.0
+RELEASE_CANDIDATE_BASE_MAIN=0aa63df13dff16d891a6e20cc81ae945350955d6
+RELEASE_CANDIDATE_BASE_TREE=f8f3c565237f6a25916ef6f9a84d9df956b8cceb
+RELEASE_SCOPE=VERSION_METADATA_ONLY_AFTER_RUST_NATIVE_MIGRATION
+IMPLEMENTATION_DELTA_FROM_QUALIFIED_MAIN=NONE
+PRODUCTION_ARCHITECTURE=aarch64
+PRODUCTION_DEPLOYMENT_STATUS=NOT_YET_CHANGED
+RELEASE_PUBLICATION_STATUS=NOT_YET_PUBLISHED
+
+The v1.3.0 version transition is a release-closeout metadata change over the already
+qualified Rust-native main tree. Production remains on the verified v1.2.10 binary
+until the v1.3.0 source is independently published, built for aarch64, and deployed
+through the existing fail-closed production procedure.
