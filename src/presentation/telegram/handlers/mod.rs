@@ -356,35 +356,63 @@ pub fn handle_command(
             }
 
             Command::Help => {
-                let mut help_text = String::from(
+                let help_text = String::from(
                     "📚 <b>Kaspa Pulse Help</b>\n\
                      ━━━━━━━━━━━━━━━━━━\n\
                      <b>Community Mining Alerts</b>\n\n\
                      Kaspa Pulse tracks Kaspa wallets, estimates solo-mining activity, and sends confirmed mining-reward alerts.\n\n\
                      🚀 <b>Quick Start</b>\n\
                      • Use /start to open the main menu.\n\
-                     • Open <b>Wallets</b> to list, add, remove, or clear tracked wallets.\n\
+                     • Open <b>Wallets</b> to manage tracked wallets.\n\
                      • Open <b>Mining</b> for hashrate and mined-block views.\n\
                      • Open <b>Network</b> for node health, BlockDAG, fees, and supply.\n\
                      • Open <b>Market</b> for KAS market data.\n\
                      • Open <b>More</b> for help, donation, and privacy actions.\n\n\
+                     ✅ <b>Reward Confirmation Policy</b>\n\
+                     • Rewards are detected from wallet UTXOs, then held until they reach the configured confirmation threshold.\n\
+                     • Default threshold: <b>10 DAA confirmations</b>.\n\
+                     • Confirmed rewards continue to DAG analysis before alert delivery.\n\n\
+                     👛 <b>Wallet Buttons</b>\n\
+                     • <b>My Wallets</b> — Show tracked wallets.\n\
+                     • <b>Add Wallet</b> — Add a wallet.\n\
+                     • <b>Remove Wallet</b> — Remove one wallet.\n\
+                     • <b>Clear Wallets</b> — Remove all tracked wallets after confirmation.\n\
+                     • <b>Back</b> — Return to the previous menu.\n\n\
                      ⌨️ <b>Visible Commands</b>\n\
                      • /start — Open the main menu.\n\
                      • /help — Show this guide.\n\
                      • /balance — Check live balance and UTXOs.\n\
                      • /wallets — Open wallet management.\n\
-                     • /network — Show Kaspa node and network health.\n\n\
+                     • /network — Show Kaspa node and network health.",
+                );
+
+                let mut help_text_2 = String::from(
+                    "🧭 <b>Mining, Network &amp; Safety</b>\n\
+                     ━━━━━━━━━━━━━━━━━━\n\
+                     • Confirmed reward analysis can include accepting block, real mined block, worker, nonce, and DAA details.\n\
+                     • DAG analysis does not stop when a candidate block is unavailable; unavailable candidates are skipped safely while the search continues.\n\
+                     • <b>Network Health</b> shows node status, explicit Kaspa node version, network, sync, peers, hashrate, and BPS.\n\n\
                      🔐 <b>Privacy &amp; Safety</b>\n\
-                     Clear Wallets and Delete My Data require confirmation. Admin-only actions remain protected by the configured private admin identity.",
+                     • Clear Wallets and Delete My Data require confirmation.\n\
+                     • Admin-only actions remain protected by the configured private admin identity.\n\
+                     • Hidden legacy commands remain supported for compatibility; hiding a command is never used as authorization.",
                 );
                 if is_admin {
-                    help_text.push_str(
-                        "\n\n🛡️ <b>Administration</b>\n\
-                         • /admin — Open Overview, Operations, Alerts, Diagnostics, and Settings.\n\
-                         Legacy admin commands remain supported for compatibility but are intentionally hidden from the Telegram command menu."
+                    help_text_2.push_str(
+                        "\n\n🛡️ <b>Owner Buttons</b>\n\
+                         • <b>Overview</b> — Bot, Kaspa node/version, database, monitoring, delivery, uptime, users, wallets, and last alert.\n\
+                         • <b>Operations</b> — State-aware monitoring, maintenance, service information, and maintenance tools.\n\
+                         • <b>Alerts</b> — Alert status and the single valid enable/disable action.\n\
+                         • <b>Diagnostics</b> — Errors, Events, Delivery, Database, and Logs.\n\
+                         • <b>Settings</b> — Monitoring and maintenance settings.\n\n\
+                         🛠️ <b>Owner Commands</b>\n\
+                         • /admin — Open the Administration panel.\n\
+                         • Legacy admin commands remain supported for compatibility but are intentionally hidden from the Telegram command menu.\n\
+                         • Advanced legacy commands include /events, /errors, /delivery, /logs, /db_diag, /health, /stats, /sys, /pause, /resume, /mute_alerts, /unmute_alerts, /alerts_status, and /cleanup_events."
                     );
                 }
                 crate::send_logged!(bot, msg, help_text);
+                crate::send_logged!(bot, msg, help_text_2);
             }
             Command::Start => {
                 let markup =

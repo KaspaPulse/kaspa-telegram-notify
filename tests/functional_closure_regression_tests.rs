@@ -412,7 +412,7 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
         .load_persisted_runtime_settings()
         .await
         .unwrap();
-    assert!(!defaults.memory_cleaner_enabled);
+    assert!(defaults.memory_cleaner_enabled);
     assert!(defaults.live_sync_enabled);
     assert!(!defaults.maintenance_mode);
     let inserted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM f09_defaults.system_settings")
@@ -420,6 +420,32 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
         .await
         .unwrap();
     assert_eq!(inserted, 3);
+
+    sqlx::query(
+        "UPDATE f09_defaults.system_settings
+         SET value_data = 'false'
+         WHERE key_name = 'ENABLE_MEMORY_CLEANER'",
+    )
+    .execute(&admin)
+    .await
+    .unwrap();
+    let legacy_false = default_repo
+        .load_persisted_runtime_settings()
+        .await
+        .unwrap();
+    assert!(
+        legacy_false.memory_cleaner_enabled,
+        "legacy false must not disable always-on housekeeping"
+    );
+    let stored_legacy_value: String = sqlx::query_scalar(
+        "SELECT value_data
+         FROM f09_defaults.system_settings
+         WHERE key_name = 'ENABLE_MEMORY_CLEANER'",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(stored_legacy_value, "false");
     default_pool.close().await;
 
     sqlx::query("DROP SCHEMA IF EXISTS f09_fault CASCADE")
