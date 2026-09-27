@@ -83,10 +83,95 @@ jobs:
             --version "$VERSION" \
             --target "$TARGET"
 
+  verify-e2e-proof:
+    name: Verify exact-main Hermetic E2E proof
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Require main and checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Wait for exact-main Hermetic E2E proof
+        id: e2e
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          deadline=$((SECONDS + 5100))
+          run_id=""
+          while (( SECONDS < deadline )); do
+            runs="$(gh api               "/repos/$GITHUB_REPOSITORY/actions/workflows/hermetic-e2e.yml/runs?head_sha=$GITHUB_SHA&per_page=100")"
+            latest="$(jq -c '
+              [.workflow_runs[] |
+               select(.head_sha == env.GITHUB_SHA and .head_branch == "main" and
+                      (.event == "push" or .event == "workflow_dispatch"))][0] // null
+            ' <<< "$runs")"
+            if [[ "$latest" == "null" ]]; then
+              sleep 15
+              continue
+            fi
+            status="$(jq -r '.status' <<< "$latest")"
+            conclusion="$(jq -r '.conclusion // ""' <<< "$latest")"
+            if [[ "$status" != "completed" ]]; then
+              sleep 15
+              continue
+            fi
+            if [[ "$conclusion" != "success" ]]; then
+              echo "Latest Hermetic E2E completed unsuccessfully for $GITHUB_SHA: $conclusion" >&2
+              exit 1
+            fi
+            run_id="$(jq -r '.id' <<< "$latest")"
+            break
+          done
+          test -n "$run_id"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify canonical exact-main proof
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          E2E_RUN_ID: ${{ steps.e2e.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          out="$RUNNER_TEMP/exact-main-e2e"
+          mkdir -p "$out"
+          gh run download "$E2E_RUN_ID"             --repo "$GITHUB_REPOSITORY"             --name "hermetic-e2e-$GITHUB_SHA"             --dir "$out"
+          proof="$(find "$out" -type f -name CANONICAL_SEMANTIC_PROOF.json -print -quit)"
+          test -n "$proof"
+          digest_file="${proof%.json}.sha256"
+          test -f "$digest_file"
+          jq -e --arg sha "$GITHUB_SHA" --arg tree "$tree" '
+            .result == "PASS" and
+            .audit_status == "COMPLETE" and
+            .identity.tested_ref_kind == "MAIN" and
+            .identity.tested_sha == $sha and
+            .identity.source_head == $sha and
+            .identity.tested_tree == $tree and
+            .identity.source_tree == $tree and
+            .scenario_summary.blocked == 0 and
+            .scenario_summary.verified_fail == 0 and
+            .scenario_summary.not_tested == 0
+          ' "$proof" >/dev/null
+          expected="$(tr -d '[:space:]' < "$digest_file")"
+          actual="$(sha256sum "$proof" | awk '{print $1}')"
+          test "$expected" = "$actual"
+
   release:
     name: Build, attest, and publish
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: validate
+    needs: [validate, verify-e2e-proof]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:

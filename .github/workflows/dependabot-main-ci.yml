@@ -65,7 +65,7 @@ jobs:
               raise SystemExit(0)
 
           workflows = (
-              'rust-ci.yml', 'codeql.yml', 'secret-scan.yml',
+              'hermetic-e2e.yml', 'rust-ci.yml', 'codeql.yml', 'secret-scan.yml',
               'security.yml', 'workflow-lint.yml', 'scorecard.yml', 'release.yml')
           # Give an ordinary user-token push time to register its runs first.
           time.sleep(20)

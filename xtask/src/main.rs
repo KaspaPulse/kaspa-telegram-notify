@@ -135,6 +135,16 @@ enum OpqualCommand {
         #[arg(long, default_value = "target/release/kaspa-pulse")]
         binary: PathBuf,
     },
+    Impact {
+        #[arg(long)]
+        base_sha: String,
+        #[arg(long)]
+        tested_sha: String,
+        #[arg(long)]
+        baseline_proof: Option<PathBuf>,
+        #[arg(long, default_value = "target/opqual-impact-plan.json")]
+        output: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -219,6 +229,12 @@ fn main() -> Result<()> {
             OpqualCommand::Resume { run_id, binary } => {
                 opqual::execute(opqual::Mode::Resume, &binary, Some(&run_id))
             }
+            OpqualCommand::Impact {
+                base_sha,
+                tested_sha,
+                baseline_proof,
+                output,
+            } => opqual::impact(&base_sha, &tested_sha, baseline_proof.as_deref(), &output),
         },
         Command::Dependencies { command } => match command {
             DependenciesCommand::RustyKaspa { command } => match command {
