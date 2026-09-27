@@ -245,7 +245,7 @@ fn persist_scenario_evidence(
         "application_binary_sha256": ctx.binary_sha256,
         "cargo_lock_sha256": ctx.cargo_lock_sha256,
         "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
-        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "postgres_image_digest": EXPECTED_POSTGRES_REPO_DIGEST,
         "target_triple": ctx.target_triple,
         "execution_level": input.execution_level,
         "strategy": input.strategy,
@@ -260,7 +260,7 @@ fn persist_scenario_evidence(
             "fixture_binary_sha256": ctx.fixture_sha256,
             "cargo_lock_sha256": ctx.cargo_lock_sha256,
             "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
-            "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+            "postgres_image_digest": EXPECTED_POSTGRES_REPO_DIGEST,
             "target_triple": ctx.target_triple
         }
     });

@@ -125,7 +125,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo docker pull "$POSTGRES_IMAGE"
-          test "$(sudo docker image inspect "$POSTGRES_IMAGE" --format '{{.Id}}')" =             "sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636"
+          sudo docker image inspect "$POSTGRES_IMAGE" --format '{{json .RepoDigests}}' | \
+            jq -e --arg digest "postgres@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636" \
+              'index($digest) != null' >/dev/null
 
       - name: Build exact candidate and Rust-native harness
         shell: bash

@@ -125,7 +125,7 @@ pub(super) fn collect(ctx: &ContextState) -> Result<()> {
         "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
         "scenario_map_sha256": ctx.scenario_map_sha256,
         "postgres_image": POSTGRES_IMAGE,
-        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "postgres_image_digest": EXPECTED_POSTGRES_REPO_DIGEST,
         "harness_source_hash": ctx.harness_source_hash,
         "harness_binary_sha256": ctx.harness_binary_sha256,
         "target_triple": ctx.target_triple
@@ -138,7 +138,7 @@ pub(super) fn collect(ctx: &ContextState) -> Result<()> {
         "cargo_lock_sha256": ctx.cargo_lock_sha256,
         "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
         "scenario_map_sha256": ctx.scenario_map_sha256,
-        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "postgres_image_digest": EXPECTED_POSTGRES_REPO_DIGEST,
         "harness_source_hash": ctx.harness_source_hash,
         "harness_binary_sha256": ctx.harness_binary_sha256,
         "target_triple": ctx.target_triple

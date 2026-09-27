@@ -40,8 +40,8 @@ const OBSERVER_APP_NAME: &str = "kaspa-opqual-observer";
 const LOCK_APP_NAME: &str = "kaspa-opqual-lock-holder";
 const POSTGRES_IMAGE: &str =
     "postgres:18@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636";
-const EXPECTED_POSTGRES_IMAGE_ID: &str =
-    "sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636";
+const EXPECTED_POSTGRES_REPO_DIGEST: &str =
+    "postgres@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636";
 const HEALTH_PORT: u16 = 18480;
 const WEBHOOK_PORT: u16 = 18443;
 const WEBHOOK_HEALTH_PORT: u16 = 18481;
@@ -301,6 +301,12 @@ fn current_execution_environment() -> Result<&'static str> {
     )
 }
 
+fn repo_digests_contain(raw_json: &str, expected: &str) -> Result<bool> {
+    let digests: Vec<String> =
+        serde_json::from_str(raw_json.trim()).context("parse Docker RepoDigests JSON")?;
+    Ok(digests.iter().any(|digest| digest == expected))
+}
+
 fn host_target_triple() -> Result<String> {
     let verbose = capture("rustc", ["-vV"])?;
     verbose
@@ -447,7 +453,7 @@ fn contract_manifest(ctx: &ContextState) -> Value {
             "webhook_container": WEBHOOK_CONTAINER,
             "lock_container": LOCK_CONTAINER,
             "postgres_image": POSTGRES_IMAGE,
-            "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID
+            "postgres_image_digest": EXPECTED_POSTGRES_REPO_DIGEST
         },
         "database": {
             "name": DATABASE,
@@ -862,7 +868,7 @@ fn preflight(ctx: &ContextState) -> Result<()> {
         sha256_file(&ctx.fixture_binary)? == ctx.fixture_sha256,
         "Rust fixture binary SHA mismatch"
     );
-    let image_id = capture_status(
+    let repo_digests = capture_status(
         "sudo",
         [
             "-n",
@@ -871,14 +877,14 @@ fn preflight(ctx: &ContextState) -> Result<()> {
             "inspect",
             POSTGRES_IMAGE,
             "--format",
-            "{{.Id}}",
+            "{{json .RepoDigests}}",
         ],
     )?;
-    ensure!(image_id.0, "pinned PostgreSQL image missing");
+    ensure!(repo_digests.0, "pinned PostgreSQL image missing");
     ensure!(
-        image_id.1.trim() == EXPECTED_POSTGRES_IMAGE_ID,
-        "pinned PostgreSQL image identity mismatch: {}",
-        image_id.1.trim()
+        repo_digests_contain(&repo_digests.1, EXPECTED_POSTGRES_REPO_DIGEST)?,
+        "pinned PostgreSQL repository digest mismatch: {}",
+        repo_digests.1.trim()
     );
     for name in [
         POSTGRES_CONTAINER,
@@ -1213,6 +1219,26 @@ mod evidence_identity_tests {
             sha256_bytes(&canonical_json(&left).unwrap()),
             sha256_bytes(&canonical_json(&right).unwrap())
         );
+    }
+
+    #[test]
+    fn postgres_repo_digest_identity_is_manifest_based_and_fail_closed() {
+        let expected = EXPECTED_POSTGRES_REPO_DIGEST;
+        assert!(
+            repo_digests_contain(
+                r#"["postgres@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636"]"#,
+                expected,
+            )
+            .unwrap()
+        );
+        assert!(
+            !repo_digests_contain(
+                r#"["postgres@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]"#,
+                expected,
+            )
+            .unwrap()
+        );
+        assert!(repo_digests_contain("not-json", expected).is_err());
     }
 
     #[test]
