@@ -245,10 +245,10 @@ Run the repository-native proof gate with:
 cargo xtask proof verify
 ```
 
-The proof schema is pinned to `1.0.0`. The gate discovers tracked and relevant untracked artifacts, classifies ownership/role/path/file class/executability/origin/target relevance, fails on unknown classifications, and emits deterministic machine-readable evidence under `target/proof/`:
+The proof schema is pinned to `1.1.0`. The gate discovers tracked and relevant untracked artifacts, classifies ownership/role/path/file class/executability/origin/target relevance, fails on unknown classifications, and emits deterministic machine-readable evidence under `target/proof/`. Native proof discovery also records every production-reachable custom build script by digest and requires explicit policy approval for any package exposed by Cargo `links`, a `-sys` name, or compiler/link/process/native-source capability signals in `build.rs`.
 
 - `rust-only-proof.json` — fail-closed owned-source classification;
-- `native-dependency-inventory.json` — target-specific classified native/link trust surface;
+- `native-dependency-inventory.json` — target-specific classified native/link/build-script trust surface, including whether native code is active for each supported target and complete custom-build-script coverage;
 - `supply-chain-proof.json` — CI, action-pin, MSRV, advisory, SBOM, provenance, and attestation policy evidence.
 
 The required security workflow runs `cargo xtask proof verify` and uploads the three JSON artifacts. Negative tests intentionally prove that unknown languages, executable helpers, generated/vendor artifacts, non-Rust shebangs, and unknown native dependencies fail closed. Rust `1.97.1` remains the declared crate MSRV and is tested explicitly in CI against the supported `kaspa-pulse --all-targets --all-features` matrix; Rust `1.98.1` remains the pinned development/primary CI toolchain.
