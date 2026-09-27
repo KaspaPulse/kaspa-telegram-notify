@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use toml::Value as TomlValue;
 
-pub const PROOF_SCHEMA_VERSION: &str = "1.0.0";
+pub const PROOF_SCHEMA_VERSION: &str = "1.1.0";
 const RUST_ONLY_FILE: &str = "rust-only-proof.json";
 const NATIVE_FILE: &str = "native-dependency-inventory.json";
 const SUPPLY_FILE: &str = "supply-chain-proof.json";

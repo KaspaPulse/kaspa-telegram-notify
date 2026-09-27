@@ -54,13 +54,13 @@ Reviewed RustSec/OSV exceptions are advisory-ID-specific, documented in `SECURIT
 
 ## Continuous Rust-only and native trust proof
 
-`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.0.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
+`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.1.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
 
 - `rust-only-proof.json` classifies every tracked/relevant artifact by ownership, role, path, file class, executability, origin, and target relevance; any unknown classification fails the gate;
-- `native-dependency-inventory.json` records the production-reachable Cargo packages that expose `links` metadata or `-sys` surfaces for both supported Linux targets, including exact locked identity, dependency path, native mechanism, approval, and validity predicates;
+- `native-dependency-inventory.json` records all production-reachable custom build scripts by digest and classifies the union of Cargo `links`, `-sys` names, and build scripts with compiler/link/process/native-source capability signals. Each candidate has exact locked identity, dependency path, resolved features, discovery signals, target-aware native activation, approval, and validity predicates;
 - `supply-chain-proof.json` records the pinned workflow/action policy, dependency/advisory controls, explicit MSRV policy, SBOM/provenance/attestation controls, and input digests.
 
-Owned-source Rust-only proof and transitive-native proof are deliberately separate. Approved third-party native code does not count as owned non-Rust implementation, but a new unclassified native/link dependency fails closed until the policy is explicitly updated and reviewed. The security workflow runs this proof gate on pull requests and `main`/`dev` pushes and publishes the JSON evidence as a CI artifact.
+Owned-source Rust-only proof and transitive-native proof are deliberately separate. Approved third-party native code does not count as owned non-Rust implementation, but a new unclassified native/link/build-script candidate fails closed until the policy is explicitly updated and reviewed. Custom build scripts without native-capability signals are still emitted in the proof so their package identity and build-script digest remain auditable. The security workflow runs this proof gate on pull requests and `main`/`dev` pushes and publishes the JSON evidence as a CI artifact.
 
 The repository currently records SLSA provenance predicates and verifies GitHub artifact attestations, but the proof policy sets `slsa_claim = "NOT_ASSERTED"`; no SLSA build level is claimed solely because attestations exist.
 
