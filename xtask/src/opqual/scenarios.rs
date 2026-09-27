@@ -14,8 +14,10 @@ struct Scenario {
     id: String,
     feature: String,
     role: String,
-    outcome: String,
-    evidence: String,
+    historical_outcome: String,
+    historical_evidence: String,
+    historical_source_head: String,
+    row_hash: String,
 }
 #[derive(Clone, Debug)]
 struct ResultRow {
@@ -24,6 +26,10 @@ struct ResultRow {
     outcome: String,
     executed: String,
     strategy: String,
+    execution_level: String,
+    scenario_row_hash: String,
+    scenario_implementation_hash: String,
+    canonical_result_sha256: String,
     evidence: String,
     reason: String,
 }
@@ -56,73 +62,69 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
         rows.len()
     );
     let mut results = BTreeMap::<String, ResultRow>::new();
-    for row in &rows {
-        if row.outcome != "BLOCKED" {
-            results.insert(
-                row.id.clone(),
-                ResultRow {
-                    id: row.id.clone(),
-                    feature: row.feature.clone(),
-                    outcome: row.outcome.clone(),
-                    executed: "NO".into(),
-                    strategy: "REUSED_QUALIFIED_EVIDENCE".into(),
-                    evidence: row.evidence.clone(),
-                    reason: "source-bound prior evidence retained".into(),
-                },
-            );
-        }
-    }
-    let mut blocked = rows
-        .iter()
-        .filter(|r| r.outcome == "BLOCKED")
-        .cloned()
-        .collect::<Vec<_>>();
-    blocked.sort_by_key(priority);
     let evidence_dir = ctx.run_dir.join("scenario-evidence");
     fs::create_dir_all(&evidence_dir)?;
     align_runtime_baseline(ctx)?;
-    for row in blocked {
+    for row in &rows {
         let started = Instant::now();
-        let r = match scenario(ctx, &row) {
-            Ok(ev) => {
-                let rel = format!("scenario-evidence/{}.json", row.id);
-                atomic_json(
-                    &ctx.run_dir.join(&rel),
-                    &json!({"scenario":{"id":row.id,"feature_ids":row.feature},"runtime_evidence":ev,"duration_ms":started.elapsed().as_millis()}),
-                )?;
-                ResultRow {
-                    id: row.id.clone(),
-                    feature: row.feature.clone(),
-                    outcome: "VERIFIED_PASS".into(),
-                    executed: "YES".into(),
-                    strategy: ev
-                        .get("contract")
-                        .and_then(Value::as_str)
-                        .unwrap_or("runtime_contract")
-                        .into(),
-                    evidence: rel,
-                    reason: String::new(),
-                }
-            }
-            Err(e) => {
-                let rel = format!("scenario-evidence/{}.failure.json", row.id);
-                atomic_json(
-                    &ctx.run_dir.join(&rel),
-                    &json!({"scenario":{"id":row.id,"feature_ids":row.feature},"error":format!("{e:#}")}),
-                )?;
-                ResultRow {
-                    id: row.id.clone(),
-                    feature: row.feature.clone(),
-                    outcome: "VERIFIED_FAIL".into(),
-                    executed: "YES".into(),
-                    strategy: "RUNTIME_CONTRACT_FAILED".into(),
-                    evidence: rel,
-                    reason: format!("{e:#}"),
-                }
-            }
+        let execution_level = if row.id.starts_with("NA-") {
+            "APPLICABILITY_PROOF"
+        } else {
+            "FULL_MAIN_DISPATCHER"
         };
-        println!("{}={} {}", r.id, r.outcome, r.reason);
-        results.insert(row.id.clone(), r);
+        let attempt: Result<(String, String, Value)> = if row.id.starts_with("NA-") {
+            current_not_applicable_contract(ctx, row).map(|value| {
+                (
+                    "NOT_APPLICABLE".into(),
+                    "CURRENT_APPLICABILITY_PROOF".into(),
+                    value,
+                )
+            })
+        } else {
+            scenario(ctx, row).map(|value| {
+                let strategy = value
+                    .get("contract")
+                    .and_then(Value::as_str)
+                    .unwrap_or("runtime_contract")
+                    .to_owned();
+                ("VERIFIED_PASS".into(), strategy, value)
+            })
+        };
+        let (outcome, strategy, runtime_evidence, reason) = match attempt {
+            Ok((outcome, strategy, evidence)) => (outcome, strategy, evidence, String::new()),
+            Err(error) => (
+                "VERIFIED_FAIL".into(),
+                "RUNTIME_CONTRACT_FAILED".into(),
+                json!({"error": format!("{error:#}")}),
+                format!("{error:#}"),
+            ),
+        };
+        let implementation_hash = scenario_implementation_hash(ctx, row);
+        let evidence_input = ScenarioEvidenceInput {
+            outcome: &outcome,
+            execution_level,
+            strategy: &strategy,
+            implementation_hash: &implementation_hash,
+            runtime_evidence: &runtime_evidence,
+            duration_ms: started.elapsed().as_millis(),
+        };
+        let (evidence, canonical_result_sha256) =
+            persist_scenario_evidence(ctx, row, &evidence_input)?;
+        let result = ResultRow {
+            id: row.id.clone(),
+            feature: row.feature.clone(),
+            outcome,
+            executed: "YES".into(),
+            strategy,
+            execution_level: execution_level.into(),
+            scenario_row_hash: row.row_hash.clone(),
+            scenario_implementation_hash: implementation_hash,
+            canonical_result_sha256,
+            evidence,
+            reason,
+        };
+        println!("{}={} {}", result.id, result.outcome, result.reason);
+        results.insert(row.id.clone(), result);
     }
     write_results(ctx, &rows, &results)?;
     let pass = results
@@ -140,16 +142,24 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
         .count();
     let executed_pass = results
         .values()
-        .filter(|r| r.executed == "YES" && r.outcome == "VERIFIED_PASS")
+        .filter(|r| {
+            r.executed == "YES"
+                && r.outcome == "VERIFIED_PASS"
+                && r.execution_level == "FULL_MAIN_DISPATCHER"
+        })
         .count();
-    let edge001 = edge001(ctx)?;
-    let journeys = executed_pass + usize::from(edge001);
+    let journeys = executed_pass;
     atomic_json(
         &ctx.run_dir.join("scenario-summary.json"),
         &json!({
+            "schema_version":EVIDENCE_SCHEMA_VERSION,
+            "tested_sha":ctx.source_head,
+            "tested_tree":ctx.source_tree,
+            "historical_pass_reuse":false,
+            "historical_not_applicable_reuse":false,
             "total":rows.len(),"verified_pass":pass,"verified_fail":fail,"blocked":blocked,
             "not_applicable":na,"not_tested":0,"full_bot_journeys_completed":journeys,
-            "supplemental_runs":if edge001 {vec!["EDGE-001"]} else {Vec::<&str>::new()}
+            "supplemental_runs":Vec::<&str>::new()
         }),
     )?;
     ensure!(
@@ -171,6 +181,14 @@ pub(super) fn execute(ctx: &ContextState) -> Result<()> {
 }
 
 fn scenario(ctx: &ContextState, row: &Scenario) -> Result<Value> {
+    if row.id == "EDGE-001" {
+        ensure!(edge001(ctx)?, "EDGE-001 did not complete");
+        return Ok(json!({
+            "contract":"full_dispatcher_fee_invalid_provider_cases",
+            "missing_case":"PASS",
+            "negative_case":"PASS"
+        }));
+    }
     if row.id == "EDGE-002" {
         return edge002(ctx);
     }
@@ -189,8 +207,194 @@ fn scenario(ctx: &ContextState, row: &Scenario) -> Result<Value> {
         "JOB" => job_contract(ctx, name),
         "TASK" => task_contract(ctx, name),
         "LIFE" => life_contract(ctx, name),
+        "EVENT" => event_contract(ctx, name),
         _ => bail!("no execution strategy for {}", row.feature),
     }
+}
+
+fn scenario_implementation_hash(ctx: &ContextState, row: &Scenario) -> String {
+    sha256_bytes(format!("{}\0{}", row.id, ctx.harness_source_hash).as_bytes())
+}
+
+struct ScenarioEvidenceInput<'a> {
+    outcome: &'a str,
+    execution_level: &'a str,
+    strategy: &'a str,
+    implementation_hash: &'a str,
+    runtime_evidence: &'a Value,
+    duration_ms: u128,
+}
+
+fn persist_scenario_evidence(
+    ctx: &ContextState,
+    row: &Scenario,
+    input: &ScenarioEvidenceInput<'_>,
+) -> Result<(String, String)> {
+    let semantic = json!({
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "scenario_id": row.id,
+        "feature_ids": row.feature,
+        "tested_sha": ctx.source_head,
+        "tested_tree": ctx.source_tree,
+        "source_head": ctx.source_head,
+        "source_tree": ctx.source_tree,
+        "scenario_row_hash": row.row_hash,
+        "scenario_implementation_hash": input.implementation_hash,
+        "harness_source_hash": ctx.harness_source_hash,
+        "fixture_binary_sha256": ctx.fixture_sha256,
+        "application_binary_sha256": ctx.binary_sha256,
+        "cargo_lock_sha256": ctx.cargo_lock_sha256,
+        "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
+        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "target_triple": ctx.target_triple,
+        "execution_level": input.execution_level,
+        "strategy": input.strategy,
+        "result": input.outcome,
+        "runtime_evidence": input.runtime_evidence,
+        "validity_predicates": {
+            "tested_sha": ctx.source_head,
+            "tested_tree": ctx.source_tree,
+            "scenario_row_hash": row.row_hash,
+            "scenario_implementation_hash": input.implementation_hash,
+            "harness_source_hash": ctx.harness_source_hash,
+            "fixture_binary_sha256": ctx.fixture_sha256,
+            "cargo_lock_sha256": ctx.cargo_lock_sha256,
+            "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
+            "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+            "target_triple": ctx.target_triple
+        }
+    });
+    let canonical = canonical_json(&semantic)?;
+    let canonical_hash = sha256_bytes(&canonical);
+    let canonical_rel = format!("scenario-evidence/{}.canonical.json", row.id);
+    atomic_bytes(&ctx.run_dir.join(&canonical_rel), &canonical)?;
+    let raw_rel = format!("scenario-evidence/{}.json", row.id);
+    atomic_json(
+        &ctx.run_dir.join(&raw_rel),
+        &json!({
+            "scenario": {"id":row.id,"feature_ids":row.feature},
+            "historical": {
+                "outcome": row.historical_outcome,
+                "evidence": row.historical_evidence,
+                "source_head": row.historical_source_head
+            },
+            "current": semantic,
+            "canonical_evidence": canonical_rel,
+            "canonical_result_sha256": canonical_hash,
+            "duration_ms": input.duration_ms
+        }),
+    )?;
+    Ok((raw_rel, canonical_hash))
+}
+
+fn current_not_applicable_contract(ctx: &ContextState, row: &Scenario) -> Result<Value> {
+    let cargo = fs::read_to_string(ctx.repo.join("Cargo.toml"))?.to_ascii_lowercase();
+    let commands = fs::read_to_string(ctx.repo.join("src/presentation/telegram/commands.rs"))?
+        .to_ascii_lowercase();
+    let tracked = run_capture("git", ["ls-files"])?.to_ascii_lowercase();
+    let (predicate, pass) = match row.id.as_str() {
+        "NA-web-ui" => (
+            "no tracked browser frontend source extensions",
+            ![
+                ".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte",
+            ]
+            .iter()
+            .any(|ext| tracked.lines().any(|path| path.ends_with(ext))),
+        ),
+        "NA-password" => (
+            "no native password/login/registration command surface",
+            ![
+                "password",
+                "reset_password",
+                "register_password",
+                "login_password",
+            ]
+            .iter()
+            .any(|needle| commands.contains(needle)),
+        ),
+        "NA-email" => (
+            "no native SMTP/email dependency or command surface",
+            !["lettre", "smtp"]
+                .iter()
+                .any(|needle| cargo.contains(needle))
+                && !["email", "smtp"]
+                    .iter()
+                    .any(|needle| commands.contains(needle)),
+        ),
+        "NA-upload" => (
+            "no upload/import/export/printing command surface",
+            !["upload", "import", "export", "print_document"]
+                .iter()
+                .any(|needle| commands.contains(needle)),
+        ),
+        "NA-payments" => (
+            "no signing/submission/payment command surface",
+            ![
+                "payment",
+                "withdraw",
+                "transfer_kas",
+                "sign_transaction",
+                "send_transaction",
+            ]
+            .iter()
+            .any(|needle| commands.contains(needle)),
+        ),
+        "NA-desktop" => (
+            "no native desktop/mobile GUI framework dependency",
+            !["tauri", "winit", "eframe", "gtk", "iced"]
+                .iter()
+                .any(|needle| cargo.contains(needle)),
+        ),
+        _ => bail!("unrecognized NOT_APPLICABLE scenario {}", row.id),
+    };
+    ensure!(
+        pass,
+        "NOT_APPLICABLE predicate failed for {}: {}",
+        row.id,
+        predicate
+    );
+    Ok(json!({
+        "contract":"current_architecture_not_applicable",
+        "predicate":predicate,
+        "applicability":"NOT_APPLICABLE",
+        "historical_outcome_reused":false
+    }))
+}
+
+fn event_contract(ctx: &ContextState, name: &str) -> Result<Value> {
+    ensure!(name == "chat-member", "unknown EVENT scenario {name}");
+    let p = ctx.control_dir.join("telegram-updates.jsonl");
+    wait_update_queue_drained(ctx, &p)?;
+    let id = next_update(&p)?;
+    append_jsonl(
+        &p,
+        &json!({
+            "update_id":id,
+            "my_chat_member":{
+                "chat":{"id":SYNTH_CHAT_ID,"type":"private","first_name":"OpQualUser"},
+                "from":{"id":SYNTH_USER_ID,"is_bot":false,"first_name":"OpQualUser","username":"opqual_user"},
+                "date":Utc::now().timestamp(),
+                "old_chat_member":{
+                    "user":{"id":1234567890i64,"is_bot":true,"first_name":"OpQualBot","username":"opqual_bot"},
+                    "status":"member"
+                },
+                "new_chat_member":{
+                    "user":{"id":1234567890i64,"is_bot":true,"first_name":"OpQualBot","username":"opqual_bot"},
+                    "status":"kicked"
+                }
+            }
+        }),
+    )?;
+    wait_update_queue_drained(ctx, &p)?;
+    ensure!(
+        docker_inspect(APP_CONTAINER, "{{.State.Running}}")? == "true",
+        "application stopped while processing my_chat_member"
+    );
+    Ok(json!({
+        "contract":"full_dispatcher_my_chat_member",
+        "update_id":id,
+        "handler_completed_without_application_failure":true
+    }))
 }
 
 fn command_contract(ctx: &ContextState, name: &str) -> Result<Value> {
@@ -549,6 +753,7 @@ fn life_contract(ctx: &ContextState, name: &str) -> Result<Value> {
             );
             Ok(json!({"contract":"main_startup_log+database_event"}))
         }
+        "panic-marker" => panic_marker_recovery_contract(ctx),
         "settings" => {
             for k in [
                 "ENABLE_MEMORY_CLEANER",
@@ -584,6 +789,75 @@ fn life_contract(ctx: &ContextState, name: &str) -> Result<Value> {
         }
         _ => bail!("unknown lifecycle {name}"),
     }
+}
+
+fn panic_marker_recovery_contract(ctx: &ContextState) -> Result<Value> {
+    assert_owned_container(APP_CONTAINER)?;
+    ensure!(
+        docker_inspect(APP_CONTAINER, "{{.State.Running}}")? == "true",
+        "application not running before panic marker recovery"
+    );
+    let marker = ctx.run_dir.join("panic_event_pending.json");
+    ensure!(
+        !marker.exists(),
+        "stale panic marker exists before scenario"
+    );
+    let before = pg_u64(
+        ctx,
+        "SELECT count(*) FROM bot_event_log WHERE event_type='PANIC_EVENT' AND status='recovered_after_restart';",
+    )?;
+    atomic_json(
+        &marker,
+        &json!({
+            "event_type":"PANIC_EVENT",
+            "status":"pending_recovery",
+            "message":"opqual synthetic pending panic marker",
+            "location":"opqual/panic-marker",
+            "created_at":"2000-01-01T00:00:00Z",
+            "pid":0
+        }),
+    )?;
+    run(
+        "sudo",
+        ["-n", "docker", "restart", "--time", "30", APP_CONTAINER],
+    )?;
+    wait_until(
+        || {
+            Ok(
+                docker_inspect(APP_CONTAINER, "{{.State.Running}}")? == "true"
+                    && runtime::probe(
+                        ctx,
+                        &format!("http://{APP_CONTAINER}:{HEALTH_PORT}/readyz"),
+                        false,
+                    )
+                    .map(|value| value.contains("ready"))
+                    .unwrap_or(false),
+            )
+        },
+        80,
+        Duration::from_millis(500),
+        "application did not become ready after panic marker restart",
+    )?;
+    wait_until(
+        || {
+            Ok(pg_u64(
+                ctx,
+                "SELECT count(*) FROM bot_event_log WHERE event_type='PANIC_EVENT' AND status='recovered_after_restart';",
+            )? > before)
+        },
+        40,
+        Duration::from_millis(250),
+        "recovered PANIC_EVENT was not persisted",
+    )?;
+    ensure!(
+        !marker.exists(),
+        "panic marker was not removed after recovery"
+    );
+    Ok(json!({
+        "contract":"pending_panic_marker_exact_application_restart_db_recovery",
+        "marker_removed":true,
+        "recovered_event_count_increased":true
+    }))
 }
 
 fn reward_task_cycle(ctx: &ContextState) -> Result<()> {
@@ -1380,12 +1654,13 @@ fn read_matrix(path: &Path) -> Result<Vec<Scenario>> {
             .position(|x| x == name)
             .with_context(|| format!("matrix column missing {name}"))
     };
-    let (iid, ifeat, irole, iout, iev) = (
+    let (iid, ifeat, irole, iout, iev, isource) = (
         idx("id")?,
         idx("feature_ids")?,
         idx("role_preconditions")?,
         idx("outcome")?,
         idx("evidence")?,
+        idx("source_head")?,
     );
     let mut out = Vec::new();
     for line in lines {
@@ -1402,8 +1677,10 @@ fn read_matrix(path: &Path) -> Result<Vec<Scenario>> {
             id: c[iid].clone(),
             feature: c[ifeat].clone(),
             role: c[irole].clone(),
-            outcome: c[iout].clone(),
-            evidence: c[iev].clone(),
+            historical_outcome: c[iout].clone(),
+            historical_evidence: c[iev].clone(),
+            historical_source_head: c[isource].clone(),
+            row_hash: sha256_bytes(line.as_bytes()),
         })
     }
     Ok(out)
@@ -1430,22 +1707,6 @@ fn parse_csv(line: &str) -> Vec<String> {
     out.push(cur);
     out
 }
-fn priority(r: &Scenario) -> u8 {
-    if r.id.starts_with("EDGE-") {
-        30
-    } else {
-        match r.feature.split_once('-').map(|x| x.0).unwrap_or("") {
-            "CMD" => 10,
-            "CB" => 20,
-            "HTTP" => 40,
-            "INT" => 50,
-            "JOB" => 60,
-            "TASK" => 70,
-            "LIFE" => 80,
-            _ => 90,
-        }
-    }
-}
 fn csv_escape(s: &str) -> String {
     if s.contains([',', '"', '\n']) {
         format!("\"{}\"", s.replace('"', "\"\""))
@@ -1458,7 +1719,7 @@ fn write_results(
     rows: &[Scenario],
     results: &BTreeMap<String, ResultRow>,
 ) -> Result<()> {
-    let mut s = "id,feature_ids,outcome,executed_this_run,strategy,evidence,reason\n".to_owned();
+    let mut s = "id,feature_ids,outcome,executed_this_run,strategy,execution_level,scenario_row_hash,scenario_implementation_hash,canonical_result_sha256,evidence,reason\n".to_owned();
     for row in rows {
         let r = results.get(&row.id).context("scenario result missing")?;
         s.push_str(
@@ -1468,6 +1729,10 @@ fn write_results(
                 &r.outcome,
                 &r.executed,
                 &r.strategy,
+                &r.execution_level,
+                &r.scenario_row_hash,
+                &r.scenario_implementation_hash,
+                &r.canonical_result_sha256,
                 &r.evidence,
                 &r.reason,
             ]
@@ -1480,4 +1745,34 @@ fn write_results(
     }
     fs::write(ctx.run_dir.join("scenario-results.csv"), s)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod evidence_identity_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn scenario_matrix_without_source_head_fails_closed() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "id,feature_ids,role_preconditions,outcome,evidence").unwrap();
+        writeln!(file, "FLOW-X,CMD-help,user,VERIFIED_PASS,old.json").unwrap();
+        assert!(read_matrix(file.path()).is_err());
+    }
+
+    #[test]
+    fn scenario_row_identity_captures_historical_source_and_raw_row_hash() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let row = "FLOW-X,CMD-help,user,VERIFIED_PASS,old.json,deadbeef";
+        writeln!(
+            file,
+            "id,feature_ids,role_preconditions,outcome,evidence,source_head"
+        )
+        .unwrap();
+        writeln!(file, "{row}").unwrap();
+        let rows = read_matrix(file.path()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].historical_source_head, "deadbeef");
+        assert_eq!(rows[0].row_hash, sha256_bytes(row.as_bytes()));
+    }
 }

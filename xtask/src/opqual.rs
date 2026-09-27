@@ -19,6 +19,7 @@ use std::{
 };
 
 const TASK_ID: &str = "kaspa-telegram-opqual-v1";
+pub(crate) const EVIDENCE_SCHEMA_VERSION: &str = "2.0.0";
 const DOCKER_NETWORK: &str = "kp-opqual-v1";
 const POSTGRES_CONTAINER: &str = "kp-opqual-postgres18";
 const POSTGRES_VOLUME: &str = "kp-opqual-v1-pgdata";
@@ -72,6 +73,21 @@ pub(crate) struct ContextState {
     pub fixture_binary: PathBuf,
     pub fixture_sha256: String,
     pub source_head: String,
+    pub source_tree: String,
+    pub cargo_lock_sha256: String,
+    pub harness_cargo_lock_sha256: String,
+    pub scenario_map_sha256: String,
+    pub harness_source_root: PathBuf,
+    pub harness_source_hash: String,
+    pub harness_binary_sha256: String,
+    pub target_triple: String,
+    pub git_event: String,
+    pub tested_ref_kind: String,
+    pub pr_head_sha: Option<String>,
+    pub pr_head_tree: Option<String>,
+    pub base_sha: Option<String>,
+    pub base_tree: Option<String>,
+    pub merge_base_sha: Option<String>,
     pub mode: Mode,
 }
 
@@ -82,12 +98,25 @@ impl ContextState {
             repo.join("Cargo.toml").is_file(),
             "run xtask from repository root"
         );
-        let source_head = capture("git", ["rev-parse", "HEAD"])?.trim().to_owned();
+        let actual_head = capture("git", ["rev-parse", "HEAD"])?.trim().to_owned();
+        let source_head = env::var("OPQUAL_TESTED_SHA").unwrap_or_else(|_| actual_head.clone());
+        let actual_tree = capture("git", ["rev-parse", "HEAD^{tree}"])?
+            .trim()
+            .to_owned();
+        let source_tree = env::var("OPQUAL_TESTED_TREE").unwrap_or_else(|_| actual_tree.clone());
+        validate_tested_identity(&actual_head, &actual_tree, &source_head, &source_tree)?;
         let binary = binary
             .canonicalize()
             .with_context(|| format!("candidate binary missing: {}", binary.display()))?;
         let binary_sha256 = sha256_file(&binary)?;
-        let fixture_binary = repo.join("target/release/opqual-fixture");
+        let harness_source_root = env::var_os("OPQUAL_HARNESS_SOURCE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo.clone())
+            .canonicalize()
+            .context("canonicalize OPQUAL_HARNESS_SOURCE_ROOT")?;
+        let fixture_binary = env::var_os("OPQUAL_FIXTURE_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| harness_source_root.join("target/release/opqual-fixture"));
         ensure!(
             fixture_binary.is_file(),
             "release opqual fixture missing: {}",
@@ -95,6 +124,20 @@ impl ContextState {
         );
         let fixture_binary = fixture_binary.canonicalize()?;
         let fixture_sha256 = sha256_file(&fixture_binary)?;
+        let cargo_lock_sha256 = sha256_file(&repo.join("Cargo.lock"))?;
+        let harness_cargo_lock_sha256 = sha256_file(&harness_source_root.join("Cargo.lock"))?;
+        let scenario_map_sha256 = sha256_file(&repo.join("opqual/scenario-map.csv"))?;
+        let harness_source_hash = harness_source_hash(&harness_source_root)?;
+        let harness_binary_sha256 = sha256_file(&env::current_exe()?)?;
+        let target_triple = host_target_triple()?;
+        let git_event = env::var("GITHUB_EVENT_NAME").unwrap_or_else(|_| "local".into());
+        let tested_ref_kind =
+            env::var("OPQUAL_TESTED_REF_KIND").unwrap_or_else(|_| "LOCAL_HEAD".into());
+        let pr_head_sha = optional_env("OPQUAL_PR_HEAD_SHA");
+        let pr_head_tree = optional_env("OPQUAL_PR_HEAD_TREE");
+        let base_sha = optional_env("OPQUAL_BASE_SHA");
+        let base_tree = optional_env("OPQUAL_BASE_TREE");
+        let merge_base_sha = optional_env("OPQUAL_MERGE_BASE_SHA");
         let run_id = match (mode, resume_id) {
             (Mode::Resume, Some(id)) => id.to_owned(),
             (Mode::Resume, None) => bail!("resume requires run id"),
@@ -122,6 +165,21 @@ impl ContextState {
             fixture_binary,
             fixture_sha256,
             source_head,
+            source_tree,
+            cargo_lock_sha256,
+            harness_cargo_lock_sha256,
+            scenario_map_sha256,
+            harness_source_root,
+            harness_source_hash,
+            harness_binary_sha256,
+            target_triple,
+            git_event,
+            tested_ref_kind,
+            pr_head_sha,
+            pr_head_tree,
+            base_sha,
+            base_tree,
+            merge_base_sha,
             mode,
         })
     }
@@ -182,6 +240,91 @@ impl ContextState {
     }
 }
 
+fn validate_tested_identity(
+    actual_head: &str,
+    actual_tree: &str,
+    tested_sha: &str,
+    tested_tree: &str,
+) -> Result<()> {
+    ensure!(
+        actual_head == tested_sha,
+        "working repository HEAD {} does not equal TESTED_SHA {}",
+        actual_head,
+        tested_sha
+    );
+    ensure!(
+        actual_tree == tested_tree,
+        "working repository tree {} does not equal TESTED_TREE {}",
+        actual_tree,
+        tested_tree
+    );
+    Ok(())
+}
+
+fn optional_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn host_target_triple() -> Result<String> {
+    let verbose = capture("rustc", ["-vV"])?;
+    verbose
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+        .context("rustc -vV did not report host target")
+}
+
+fn harness_source_hash(root: &Path) -> Result<String> {
+    let mut files = vec![
+        root.join("xtask/Cargo.toml"),
+        root.join("xtask/src/main.rs"),
+        root.join("xtask/src/opqual.rs"),
+    ];
+    let opqual_dir = root.join("xtask/src/opqual");
+    if opqual_dir.is_dir() {
+        for entry in fs::read_dir(&opqual_dir)? {
+            let path = entry?.path();
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let mut hasher = Sha256::new();
+    for path in files {
+        let rel = path.strip_prefix(root).with_context(|| {
+            format!(
+                "harness source {} is outside {}",
+                path.display(),
+                root.display()
+            )
+        })?;
+        let rel = rel
+            .to_str()
+            .context("fixed harness source path must be valid UTF-8")?;
+        hasher.update((rel.len() as u64).to_be_bytes());
+        hasher.update(rel.as_bytes());
+        let bytes =
+            fs::read(&path).with_context(|| format!("read harness source {}", path.display()))?;
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hex_sha256(hasher.finalize().as_slice()))
+}
+
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex_sha256(hasher.finalize().as_slice())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub(crate) fn canonical_json(value: &Value) -> Result<Vec<u8>> {
+    Ok(serde_json_canonicalizer::to_vec(value)?)
+}
+
 pub fn execute(mode: Mode, binary: &Path, resume_id: Option<&str>) -> Result<()> {
     let ctx = ContextState::create(mode, binary, resume_id)?;
     ctx.init()?;
@@ -216,13 +359,38 @@ pub fn execute(mode: Mode, binary: &Path, resume_id: Option<&str>) -> Result<()>
         "OPQUAL_COMPLETE run_id={} source={} binary_sha256={} fixture_sha256={}",
         ctx.run_id, ctx.source_head, ctx.binary_sha256, ctx.fixture_sha256
     );
+    println!("OPQUAL_TESTED_TREE={}", ctx.source_tree);
+    println!("OPQUAL_HARNESS_SOURCE_HASH={}", ctx.harness_source_hash);
     Ok(())
 }
 
 fn contract_manifest(ctx: &ContextState) -> Value {
     json!({
         "task_id": TASK_ID,
+        "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
         "repository_root": ctx.repo,
+        "identity": {
+            "git_event": ctx.git_event,
+            "tested_ref_kind": ctx.tested_ref_kind,
+            "tested_sha": ctx.source_head,
+            "tested_tree": ctx.source_tree,
+            "source_head": ctx.source_head,
+            "source_tree": ctx.source_tree,
+            "pr_head_sha": ctx.pr_head_sha,
+            "pr_head_tree": ctx.pr_head_tree,
+            "base_sha": ctx.base_sha,
+            "base_tree": ctx.base_tree,
+            "merge_base_sha": ctx.merge_base_sha,
+            "application_binary_sha256": ctx.binary_sha256,
+            "fixture_binary_sha256": ctx.fixture_sha256,
+            "cargo_lock_sha256": ctx.cargo_lock_sha256,
+            "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
+            "scenario_map_sha256": ctx.scenario_map_sha256,
+            "harness_source_root": ctx.harness_source_root,
+            "harness_source_hash": ctx.harness_source_hash,
+            "harness_binary_sha256": ctx.harness_binary_sha256,
+            "target_triple": ctx.target_triple
+        },
         "docker": {
             "network": DOCKER_NETWORK,
             "postgres_container": POSTGRES_CONTAINER,
@@ -233,7 +401,8 @@ fn contract_manifest(ctx: &ContextState) -> Value {
             "app_container": APP_CONTAINER,
             "webhook_container": WEBHOOK_CONTAINER,
             "lock_container": LOCK_CONTAINER,
-            "postgres_image": POSTGRES_IMAGE
+            "postgres_image": POSTGRES_IMAGE,
+            "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID
         },
         "database": {
             "name": DATABASE,
@@ -615,12 +784,37 @@ fn preflight(ctx: &ContextState) -> Result<()> {
     }
     ensure!(
         capture("git", ["rev-parse", "HEAD"])?.trim() == ctx.source_head,
-        "source head changed during preflight"
+        "TESTED_SHA changed during preflight"
+    );
+    ensure!(
+        capture("git", ["rev-parse", "HEAD^{tree}"])?.trim() == ctx.source_tree,
+        "TESTED_TREE changed during preflight"
+    );
+    ensure!(
+        sha256_file(&ctx.repo.join("Cargo.lock"))? == ctx.cargo_lock_sha256,
+        "tested Cargo.lock identity changed during preflight"
+    );
+    ensure!(
+        sha256_file(&ctx.harness_source_root.join("Cargo.lock"))? == ctx.harness_cargo_lock_sha256,
+        "harness Cargo.lock identity changed during preflight"
+    );
+    ensure!(
+        sha256_file(&ctx.repo.join("opqual/scenario-map.csv"))? == ctx.scenario_map_sha256,
+        "scenario-map identity changed during preflight"
+    );
+    ensure!(
+        harness_source_hash(&ctx.harness_source_root)? == ctx.harness_source_hash,
+        "harness source identity changed during preflight"
+    );
+    ensure!(
+        sha256_file(&env::current_exe()?)? == ctx.harness_binary_sha256,
+        "harness binary identity changed during preflight"
     );
     ensure!(
         sha256_file(&ctx.binary)? == ctx.binary_sha256,
         "qualified binary SHA mismatch"
     );
+    ensure_binary_embeds_source_revision(&ctx.binary, &ctx.source_head)?;
     ensure!(
         sha256_file(&ctx.fixture_binary)? == ctx.fixture_sha256,
         "Rust fixture binary SHA mismatch"
@@ -780,6 +974,24 @@ fn hostname() -> String {
         .trim()
         .to_owned()
 }
+fn ensure_binary_embeds_source_revision(path: &Path, expected_sha: &str) -> Result<()> {
+    ensure!(
+        expected_sha.len() == 40 && expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "TESTED_SHA must be a full 40-character hexadecimal commit id"
+    );
+    let bytes = fs::read(path)
+        .with_context(|| format!("read candidate binary {}", path.display()))?;
+    ensure!(
+        bytes
+            .windows(expected_sha.len())
+            .any(|window| window == expected_sha.as_bytes()),
+        "candidate binary does not embed TESTED_SHA {}; build with KASPA_PULSE_SOURCE_REVISION={}",
+        expected_sha,
+        expected_sha
+    );
+    Ok(())
+}
+
 pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     let mut f = fs::File::open(path)?;
     let mut h = Sha256::new();
@@ -794,6 +1006,22 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     let digest = h.finalize();
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
+pub(crate) fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!(
+        "{}.tmp",
+        path.extension().and_then(|x| x.to_str()).unwrap_or("bin")
+    ));
+    let mut f = fs::File::create(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    fs::rename(&tmp, path)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    ensure!(fs::read(path)? == bytes, "atomic byte readback mismatch");
+    Ok(())
+}
+
 fn atomic_json(path: &Path, value: &Value) -> Result<()> {
     let tmp = path.with_extension(format!(
         "{}.tmp",
@@ -892,4 +1120,55 @@ pub(crate) fn wait_until(
         thread::sleep(delay)
     }
     bail!("{msg}")
+}
+
+#[cfg(test)]
+mod evidence_identity_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tested_identity_requires_exact_sha_and_tree() {
+        validate_tested_identity("a", "t1", "a", "t1").unwrap();
+        assert!(validate_tested_identity("a", "t1", "b", "t1").is_err());
+        assert!(validate_tested_identity("a", "t1", "a", "t2").is_err());
+    }
+
+    #[test]
+    fn canonical_json_uses_rfc8785_order_and_number_form() {
+        let value = json!({"b":false,"c":120.0,"a":"Hello!"});
+        let canonical = String::from_utf8(canonical_json(&value).unwrap()).unwrap();
+        assert_eq!(canonical, r#"{"a":"Hello!","b":false,"c":120}"#);
+    }
+
+    #[test]
+    fn candidate_binary_must_embed_tested_sha() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("candidate");
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        fs::write(&binary, format!("prefix-{sha}-suffix")).unwrap();
+        ensure_binary_embeds_source_revision(&binary, sha).unwrap();
+        assert!(
+            ensure_binary_embeds_source_revision(
+                &binary,
+                "89abcdef0123456789abcdef0123456789abcdef"
+            )
+            .is_err()
+        );
+        assert!(ensure_binary_embeds_source_revision(&binary, "short").is_err());
+    }
+
+    #[test]
+    fn canonical_hash_is_independent_of_object_insertion_order() {
+        let left: Value = serde_json::from_str(r#"{"z":1,"a":{"y":2,"b":3}}"#).unwrap();
+        let right: Value = serde_json::from_str(r#"{"a":{"b":3,"y":2},"z":1}"#).unwrap();
+        assert_eq!(
+            canonical_json(&left).unwrap(),
+            canonical_json(&right).unwrap()
+        );
+        assert_eq!(
+            sha256_bytes(&canonical_json(&left).unwrap()),
+            sha256_bytes(&canonical_json(&right).unwrap())
+        );
+    }
 }

@@ -3,6 +3,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -86,15 +87,100 @@ pub(super) fn collect(ctx: &ContextState) -> Result<()> {
         .filter(|name| !ctx.run_dir.join(name).is_file())
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
+    let cleanup = if state.get("phase.cleanup").and_then(Value::as_str) == Some("VERIFIED") {
+        "PASS"
+    } else {
+        "NOT_COMPLETE"
+    };
+    let forced_kill =
+        if state.get("exec01.forced_kill_used").and_then(Value::as_str) == Some("true") {
+            "YES"
+        } else {
+            "NO"
+        };
+    let scenario_digests = scenario_canonical_digests(ctx)?;
+    let canonical_result =
+        if audit == "COMPLETE" && runtime == "PASS" && cleanup == "PASS" && missing.is_empty() {
+            "PASS"
+        } else {
+            "PARTIAL"
+        };
+    let identity = json!({
+        "tested_ref_kind": ctx.tested_ref_kind,
+        "git_event": ctx.git_event,
+        "tested_sha": ctx.source_head,
+        "tested_tree": ctx.source_tree,
+        "source_head": ctx.source_head,
+        "source_tree": ctx.source_tree,
+        "pr_head_sha": ctx.pr_head_sha,
+        "pr_head_tree": ctx.pr_head_tree,
+        "base_sha": ctx.base_sha,
+        "base_tree": ctx.base_tree,
+        "merge_base_sha": ctx.merge_base_sha
+    });
+    let environment = json!({
+        "application_binary_sha256": ctx.binary_sha256,
+        "fixture_binary_sha256": ctx.fixture_sha256,
+        "cargo_lock_sha256": ctx.cargo_lock_sha256,
+        "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
+        "scenario_map_sha256": ctx.scenario_map_sha256,
+        "postgres_image": POSTGRES_IMAGE,
+        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "harness_source_hash": ctx.harness_source_hash,
+        "harness_binary_sha256": ctx.harness_binary_sha256,
+        "target_triple": ctx.target_triple
+    });
+    let validity_predicates = json!({
+        "tested_sha": ctx.source_head,
+        "tested_tree": ctx.source_tree,
+        "application_binary_sha256": ctx.binary_sha256,
+        "fixture_binary_sha256": ctx.fixture_sha256,
+        "cargo_lock_sha256": ctx.cargo_lock_sha256,
+        "harness_cargo_lock_sha256": ctx.harness_cargo_lock_sha256,
+        "scenario_map_sha256": ctx.scenario_map_sha256,
+        "postgres_image_digest": EXPECTED_POSTGRES_IMAGE_ID,
+        "harness_source_hash": ctx.harness_source_hash,
+        "harness_binary_sha256": ctx.harness_binary_sha256,
+        "target_triple": ctx.target_triple
+    });
+    let semantic = json!({
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "e2e_definition": "HERMETIC_FULL_APPLICATION_SYSTEM_E2E",
+        "result": canonical_result,
+        "identity": identity,
+        "environment": environment,
+        "harness_runtime_execution": runtime,
+        "exec_01": exec01,
+        "audit_status": audit,
+        "cleanup": cleanup,
+        "forced_kill_used": forced_kill,
+        "scenario_summary": summary,
+        "scenario_canonical_results": scenario_digests,
+        "validity_predicates": validity_predicates
+    });
+    let canonical = canonical_json(&semantic)?;
+    let canonical_sha256 = sha256_bytes(&canonical);
+    atomic_bytes(
+        &ctx.run_dir.join("CANONICAL_SEMANTIC_PROOF.json"),
+        &canonical,
+    )?;
+    atomic_bytes(
+        &ctx.run_dir.join("CANONICAL_SEMANTIC_PROOF.sha256"),
+        format!("{canonical_sha256}\n").as_bytes(),
+    )?;
     atomic_json(
         &ctx.run_dir.join("FINAL_RESULT.json"),
         &json!({
             "task":TASK_ID,"run_id":ctx.run_id,"harness_runtime_execution":runtime,"exec_01":exec01,
             "audit_status":audit,"scenario_summary":summary,
-            "cleanup":if state.get("phase.cleanup").and_then(Value::as_str)==Some("VERIFIED") {"PASS"} else {"NOT_COMPLETE"},
-            "expected_source_head":ctx.source_head,"expected_binary_sha256":ctx.binary_sha256,
-            "forced_kill_used":if state.get("exec01.forced_kill_used").and_then(Value::as_str)==Some("true") {"YES"} else {"NO"},
-            "missing_success_evidence":missing,"success_evidence_complete":missing.is_empty() && runtime=="PASS"
+            "cleanup":cleanup,
+            "tested_sha":ctx.source_head,"tested_tree":ctx.source_tree,
+            "source_head":ctx.source_head,"source_tree":ctx.source_tree,
+            "expected_binary_sha256":ctx.binary_sha256,
+            "forced_kill_used":forced_kill,
+            "missing_success_evidence":missing,"success_evidence_complete":missing.is_empty() && runtime=="PASS",
+            "canonical_semantic_proof":"CANONICAL_SEMANTIC_PROOF.json",
+            "canonical_result_sha256":canonical_sha256
         }),
     )?;
     write_manifest(&ctx.run_dir)?;
@@ -105,6 +191,26 @@ pub(super) fn collect(ctx: &ContextState) -> Result<()> {
         "FINAL_RESULT.json and SHA256SUMS.txt written",
     )?;
     Ok(())
+}
+
+fn scenario_canonical_digests(ctx: &ContextState) -> Result<BTreeMap<String, String>> {
+    let dir = ctx.run_dir.join("scenario-evidence");
+    let mut out = BTreeMap::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(id) = name.strip_suffix(".canonical.json") else {
+            continue;
+        };
+        let bytes = fs::read(&path)?;
+        out.insert(id.to_owned(), sha256_bytes(&bytes));
+    }
+    Ok(out)
 }
 
 fn load_summary(ctx: &ContextState) -> Value {
