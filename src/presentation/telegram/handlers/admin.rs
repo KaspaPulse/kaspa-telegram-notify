@@ -342,7 +342,7 @@ pub async fn overview_panel_text(app_context: &Arc<AppContext>) -> String {
          ━━━━━━━━━━━━━━━━━━\n\
          🤖 Bot: <code>Online</code>\n\
          🌐 Kaspa Node: <code>{}</code>\n\
-         🧩 Version: <code>{}</code>\n\
+         🧩 Kaspa Node Version: <code>{}</code>\n\
          🌍 Network: <code>{}</code>\n\
          🗄 Database: <code>{}</code>\n\
          🔄 Monitoring: <code>{}</code>\n\
