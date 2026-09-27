@@ -84,7 +84,7 @@ fn finalize_with_identity(
     Uuid::parse_str(uuid_text).context("cyclonedx-finalize: invalid serialNumber UUID")?;
 
     println!(
-        "cyclonedx-finalize: PASS (specVersion={spec_version}, serialNumber={serial}, sha={commit_sha})"
+        "cyclonedx-finalize: PASS (specVersion={spec_version}, serialNumber=generated, sha={commit_sha})"
     );
     Ok(())
 }
