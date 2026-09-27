@@ -397,6 +397,7 @@ fn app_env() -> Vec<(&'static str, String)> {
         ("KAS_PRICE_HISTORY_ENABLED","true".into()),("KAS_PRICE_REFRESH_INTERVAL_SECS","2".into()),
         ("RPC_TIMEOUT_SECS","5".into()),("HTTP_TIMEOUT_SECS","5".into()),("HTTP_CONNECT_TIMEOUT_SECS","2".into()),
         ("SHUTDOWN_DRAIN_SECS","3".into()),("SSL_CERT_FILE","/task/certs/ca.crt".into()),
+        ("RUNTIME_HOUSEKEEPING_INTERVAL_SECS","1".into()),("BOT_EVENT_LOG_RETENTION_DAYS","1".into()),
         ("PANIC_EVENT_MARKER_PATH","/evidence/panic_event_pending.json".into()),
     ]
 }

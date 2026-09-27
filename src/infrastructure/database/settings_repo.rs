@@ -49,12 +49,14 @@ impl PostgresRepository {
     pub async fn load_persisted_runtime_settings(
         &self,
     ) -> Result<PersistedRuntimeSettings, AppError> {
-        let memory = self.get_setting("ENABLE_MEMORY_CLEANER", "false").await?;
+        // Compatibility read only: housekeeping is now an always-on runtime invariant.
+        // Any historical value is tolerated and no longer controls the worker.
+        let _legacy_memory = self.get_setting("ENABLE_MEMORY_CLEANER", "true").await?;
         let live_sync = self.get_setting("ENABLE_LIVE_SYNC", "true").await?;
         let maintenance = self.get_setting("MAINTENANCE_MODE", "false").await?;
 
         Ok(PersistedRuntimeSettings {
-            memory_cleaner_enabled: parse_persisted_bool("ENABLE_MEMORY_CLEANER", &memory)?,
+            memory_cleaner_enabled: true,
             live_sync_enabled: parse_persisted_bool("ENABLE_LIVE_SYNC", &live_sync)?,
             maintenance_mode: parse_persisted_bool("MAINTENANCE_MODE", &maintenance)?,
         })

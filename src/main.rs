@@ -238,6 +238,111 @@ where
     Ok(())
 }
 
+fn command_lists_match(
+    expected: &[teloxide::types::BotCommand],
+    actual: &[teloxide::types::BotCommand],
+) -> bool {
+    expected == actual
+}
+
+async fn reconcile_public_commands(bot: &Bot) -> bool {
+    let expected = crate::presentation::telegram::commands::public_bot_commands();
+    for attempt in 1_u64..=3 {
+        let set_result = bot.set_my_commands(expected.clone()).await;
+        if let Err(error) = set_result {
+            tracing::warn!(
+                operation = "set_public_commands",
+                attempt,
+                error = %crate::utils::sanitize_for_log(&error.to_string()),
+                "[SYSTEM] Telegram command synchronization operation failed."
+            );
+        } else {
+            match bot.get_my_commands().await {
+                Ok(actual) if command_lists_match(&expected, &actual) => {
+                    tracing::info!(
+                        operation = "verify_public_commands",
+                        attempts = attempt,
+                        commands = expected.len(),
+                        "[SYSTEM] Telegram public command read-back matched exactly."
+                    );
+                    return true;
+                }
+                Ok(actual) => {
+                    tracing::warn!(
+                        operation = "verify_public_commands",
+                        attempt,
+                        expected = ?expected,
+                        actual = ?actual,
+                        "[SYSTEM] Telegram public command read-back mismatch."
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        operation = "get_public_commands",
+                        attempt,
+                        error = %crate::utils::sanitize_for_log(&error.to_string()),
+                        "[SYSTEM] Telegram command read-back failed."
+                    );
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt)).await;
+    }
+    false
+}
+
+async fn reconcile_admin_commands(bot: &Bot, admin_chat_id: i64) -> bool {
+    let expected = crate::presentation::telegram::commands::admin_bot_commands();
+    for attempt in 1_u64..=3 {
+        let scope = BotCommandScope::Chat {
+            chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
+        };
+        let set_result = bot
+            .set_my_commands(expected.clone())
+            .scope(scope.clone())
+            .await;
+        if let Err(error) = set_result {
+            tracing::warn!(
+                operation = "set_admin_commands",
+                attempt,
+                error = %crate::utils::sanitize_for_log(&error.to_string()),
+                "[SYSTEM] Telegram command synchronization operation failed."
+            );
+        } else {
+            match bot.get_my_commands().scope(scope).await {
+                Ok(actual) if command_lists_match(&expected, &actual) => {
+                    tracing::info!(
+                        operation = "verify_admin_commands",
+                        attempts = attempt,
+                        commands = expected.len(),
+                        "[SYSTEM] Telegram admin command read-back matched exactly."
+                    );
+                    return true;
+                }
+                Ok(actual) => {
+                    tracing::warn!(
+                        operation = "verify_admin_commands",
+                        attempt,
+                        expected = ?expected,
+                        actual = ?actual,
+                        "[SYSTEM] Telegram admin command read-back mismatch."
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        operation = "get_admin_commands",
+                        attempt,
+                        error = %crate::utils::sanitize_for_log(&error.to_string()),
+                        "[SYSTEM] Telegram command read-back failed."
+                    );
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200 * attempt)).await;
+    }
+    false
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     install_rustls_crypto_provider()?;
@@ -493,41 +598,21 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Public commands for all users.
-    if let Err(error) = bot
-        .set_my_commands(crate::presentation::telegram::commands::public_bot_commands())
-        .await
-    {
+    // Set and read back the exact command surface. A mismatch is degraded UX,
+    // never an authorization decision; backend admin checks remain authoritative.
+    if !reconcile_public_commands(&bot).await {
         telegram_command_sync_errors += 1;
-        tracing::warn!(
-            operation = "set_public_commands",
-            error = %crate::utils::sanitize_for_log(&error.to_string()),
-            "[SYSTEM] Telegram command synchronization operation failed."
-        );
     }
-
-    // Admin commands only in the admin chat.
-    if let Err(error) = bot
-        .set_my_commands(crate::presentation::telegram::commands::admin_bot_commands())
-        .scope(BotCommandScope::Chat {
-            chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
-        })
-        .await
-    {
+    if !reconcile_admin_commands(&bot, admin_chat_id).await {
         telegram_command_sync_errors += 1;
-        tracing::warn!(
-            operation = "set_admin_commands",
-            error = %crate::utils::sanitize_for_log(&error.to_string()),
-            "[SYSTEM] Telegram command synchronization operation failed."
-        );
     }
 
     if telegram_command_sync_errors == 0 {
-        tracing::info!("[SYSTEM] Telegram commands synced.");
+        tracing::info!("TELEGRAM_COMMAND_SYNC=PASS");
     } else {
         tracing::warn!(
             failed_operations = telegram_command_sync_errors,
-            "[SYSTEM] Telegram command synchronization completed with errors; bot startup will continue."
+            "TELEGRAM_COMMAND_SYNC=DEGRADED; bot startup will continue with backend authorization unchanged."
         );
     }
 

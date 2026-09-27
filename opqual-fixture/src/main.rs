@@ -9,6 +9,7 @@ use rustls_pki_types::pem::PemObject;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -248,6 +249,7 @@ struct TelegramState {
     seq: Arc<AtomicU64>,
     msg: Arc<AtomicU64>,
     webhook: Arc<Mutex<String>>,
+    commands: Arc<Mutex<BTreeMap<String, Value>>>,
     control: PathBuf,
     events: PathBuf,
 }
@@ -258,6 +260,7 @@ fn telegram(cli: &Cli) -> Result<()> {
         seq: Arc::new(AtomicU64::new(1)),
         msg: Arc::new(AtomicU64::new(10001)),
         webhook: Arc::new(Mutex::new(String::new())),
+        commands: Arc::new(Mutex::new(BTreeMap::new())),
         control: cli.control_dir.clone(),
         events: cli.event_dir.clone(),
     };
@@ -287,6 +290,27 @@ fn telegram(cli: &Cli) -> Result<()> {
     }
     Ok(())
 }
+fn telegram_json_field(data: &Map<String, Value>, key: &str, default: Value) -> Value {
+    match data.get(key) {
+        Some(Value::String(value)) => serde_json::from_str(value).unwrap_or_else(|_| json!(value)),
+        Some(value) => value.clone(),
+        None => default,
+    }
+}
+
+fn telegram_command_scope_key(data: &Map<String, Value>) -> Result<String> {
+    let scope = telegram_json_field(data, "scope", json!({"type":"default"}));
+    let language_code = data
+        .get("language_code")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    Ok(format!(
+        "{}|{}",
+        serde_json::to_string(&scope)?,
+        language_code
+    ))
+}
+
 fn telegram_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, s: TelegramState) -> Result<()> {
     let conn = ServerConnection::new(cfg)?;
     let mut io = StreamOwned::new(conn, tcp);
@@ -421,12 +445,37 @@ fn telegram_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, s: TelegramState) -> Re
             summary["response_message_id"] = json!(mid);
             json!({"message_id":mid,"date":unix_seconds() as i64,"chat":{"id":chat,"type":"private"},"from":bot,"text":text})
         }
-        "setmycommands"
-        | "deletemycommands"
-        | "answercallbackquery"
-        | "deletemessage"
-        | "sendchataction" => json!(true),
-        "getmycommands" => json!([]),
+        "setmycommands" => {
+            let key = telegram_command_scope_key(&data)?;
+            let commands = telegram_json_field(&data, "commands", json!([]));
+            ensure!(
+                commands.is_array(),
+                "setMyCommands commands must be an array"
+            );
+            s.commands
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Telegram command state lock unavailable"))?
+                .insert(key, commands);
+            json!(true)
+        }
+        "deletemycommands" => {
+            let key = telegram_command_scope_key(&data)?;
+            s.commands
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Telegram command state lock unavailable"))?
+                .remove(&key);
+            json!(true)
+        }
+        "getmycommands" => {
+            let key = telegram_command_scope_key(&data)?;
+            s.commands
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Telegram command state lock unavailable"))?
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| json!([]))
+        }
+        "answercallbackquery" | "deletemessage" | "sendchataction" => json!(true),
         _ => {
             status = 400;
             summary["status_code"] = json!(status);

@@ -301,13 +301,18 @@ pub fn spawn_node_monitor(ctx: AppContext, bot: Bot, token: CancellationToken) {
 }
 
 pub fn spawn_memory_cleaner(ctx: AppContext, token: CancellationToken) {
+    let interval_secs = crate::infrastructure::resilience::runtime::env_u64(
+        "RUNTIME_HOUSEKEEPING_INTERVAL_SECS",
+        3600,
+    )
+    .clamp(1, 86_400);
     crate::infrastructure::resilience::runtime::spawn_resilient(
         "runtime_memory_cleaner",
         async move {
             loop {
                 tokio::select! {
                     _ = token.cancelled() => { break; }
-                    _ = tokio::time::sleep(Duration::from_secs(3600)) => {
+                    _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {
                         ctx.utxo_state.retain(|wallet, _| ctx.state.contains_key(wallet));
                         ctx.rate_limiter.retain_recent();
                         let retention_days: i64 = std::env::var("BOT_EVENT_LOG_RETENTION_DAYS")

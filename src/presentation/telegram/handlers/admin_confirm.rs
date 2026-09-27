@@ -242,7 +242,7 @@ pub fn clear_all_runtime_state_for_identity(ctx: &Arc<AppContext>, identity: Req
 
 pub fn sensitive_action_from_toggle_flag(flag: &str) -> Option<SensitiveAction> {
     match flag.trim().to_uppercase().as_str() {
-        "ENABLE_MEMORY_CLEANER" | "MEMORY" | "MEM" => Some(SensitiveAction::ToggleMemoryCleaner),
+        "ENABLE_MEMORY_CLEANER" | "MEMORY" | "MEM" => None,
         "ENABLE_LIVE_SYNC" | "LIVE" | "SYNC" => Some(SensitiveAction::ToggleLiveSync),
         "MAINTENANCE_MODE" | "MAINTENANCE" => Some(SensitiveAction::ToggleMaintenance),
         _ => None,
