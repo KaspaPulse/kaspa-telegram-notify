@@ -298,10 +298,16 @@ fn callback_contract(ctx: &ContextState, name: &str, role: &str) -> Result<Value
     }
     let before = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
     let before_wallet = wallet_count(ctx, cid)?;
-    inject_callback(ctx, uid, cid, &data, None)?;
+    let callback_update_id = inject_callback(ctx, uid, cid, &data, None)?;
     let ev = wait_output(ctx, before, cid, Duration::from_secs(15))?;
     if name == "wrd" {
-        ensure!(wallet_count(ctx, cid)? == 0, "wrd did not remove wallet");
+        wait_wallet_count(
+            ctx,
+            cid,
+            0,
+            Duration::from_secs(15),
+            "wrd did not remove wallet",
+        )?;
         seed_wallet(ctx, cid)?;
         return Ok(json!({"contract":"wallet_token_callback+db_delete+restore","input":data}));
     }
@@ -316,10 +322,12 @@ fn callback_contract(ctx: &ContextState, name: &str, role: &str) -> Result<Value
     ]
     .contains(&name)
     {
-        ensure!(
-            events_since(ctx, before)?.contains("Confirmation expired"),
-            "legacy sensitive callback did not fail closed"
-        );
+        wait_callback_answer(
+            ctx,
+            &format!("opqual-cb-{callback_update_id}"),
+            "Confirmation expired",
+            Duration::from_secs(15),
+        )?;
         if name.contains("forget") {
             ensure!(
                 wallet_count(ctx, cid)? == before_wallet,
@@ -400,7 +408,10 @@ fn nonce_contract(ctx: &ContextState, name: &str, command: &str) -> Result<Value
             "cleanup did not delete old event"
         );
     }
-    Ok(json!({"contract":"bound_nonce_confirmation","input":payload,"confirmation_message_id":mid}))
+    align_runtime_baseline(ctx)?;
+    Ok(
+        json!({"contract":"bound_nonce_confirmation+baseline_restored","input":payload,"confirmation_message_id":mid}),
+    )
 }
 
 fn edge002(ctx: &ContextState) -> Result<Value> {
@@ -443,10 +454,13 @@ fn edge003(ctx: &ContextState) -> Result<Value> {
     let s = event_count(&ctx.events_dir.join("telegram-events.jsonl"))?;
     inject_callback(ctx, SYNTH_USER_ID, SYNTH_CHAT_ID, &data, None)?;
     let _ = wait_output(ctx, s, SYNTH_CHAT_ID, Duration::from_secs(15))?;
-    ensure!(
-        wallet_count(ctx, SYNTH_CHAT_ID)? == 0,
-        "maintenance-safe wrd did not remove wallet"
-    );
+    wait_wallet_count(
+        ctx,
+        SYNTH_CHAT_ID,
+        0,
+        Duration::from_secs(15),
+        "maintenance-safe wrd did not remove wallet",
+    )?;
     seed_wallet(ctx, SYNTH_CHAT_ID)?;
     if setting(ctx, "MAINTENANCE_MODE")? != "false" {
         toggle_via_confirmation(ctx, "MAINTENANCE_MODE", true)?;
@@ -824,10 +838,7 @@ fn webhook_cycle(ctx: &ContextState) -> Result<Value> {
         ("ADMIN_USER_ID", SYNTH_ADMIN_ID.to_string()),
         ("ADMIN_CHAT_ID", SYNTH_ADMIN_ID.to_string()),
         ("USE_WEBHOOK", "true".into()),
-        (
-            "WEBHOOK_DOMAIN",
-            format!("http://{WEBHOOK_CONTAINER}:{WEBHOOK_PORT}"),
-        ),
+        ("WEBHOOK_DOMAIN", WEBHOOK_CONTAINER.into()),
         ("WEBHOOK_PORT", WEBHOOK_PORT.to_string()),
         ("WEBHOOK_BIND", "0.0.0.0".into()),
         ("WEBHOOK_ALLOW_PUBLIC_BIND", "true".into()),
@@ -845,7 +856,7 @@ fn webhook_cycle(ctx: &ContextState) -> Result<Value> {
         ("KAS_PRICE_HISTORY_ENABLED", "false".into()),
         ("SSL_CERT_FILE", "/task/certs/ca.crt".into()),
     ];
-    let insert = args.len() - 2;
+    let insert = args.len() - 1;
     let mut n = 0;
     for (k, v) in envs {
         args.insert(insert + n, "-e".into());
@@ -1043,6 +1054,26 @@ fn wallet_count(ctx: &ContextState, cid: i64) -> Result<u64> {
         ),
     )
 }
+fn wait_wallet_count(
+    ctx: &ContextState,
+    cid: i64,
+    expected: u64,
+    timeout: Duration,
+    context: &str,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let actual = wallet_count(ctx, cid)?;
+        if actual == expected {
+            return Ok(());
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "{context}: expected wallet count {expected}, observed {actual}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 fn setting(ctx: &ContextState, key: &str) -> Result<String> {
     Ok(pg_admin(
         ctx,
@@ -1063,6 +1094,7 @@ fn app_logs() -> Result<String> {
 
 fn inject_message(ctx: &ContextState, uid: i64, cid: i64, text: &str) -> Result<u64> {
     let p = ctx.control_dir.join("telegram-updates.jsonl");
+    wait_update_queue_drained(ctx, &p)?;
     let id = next_update(&p)?;
     append_jsonl(
         &p,
@@ -1078,6 +1110,7 @@ fn inject_callback(
     mid: Option<i64>,
 ) -> Result<u64> {
     let p = ctx.control_dir.join("telegram-updates.jsonl");
+    wait_update_queue_drained(ctx, &p)?;
     let id = next_update(&p)?;
     let m = mid.unwrap_or(id as i64);
     append_jsonl(
@@ -1086,6 +1119,84 @@ fn inject_callback(
     )?;
     Ok(id)
 }
+fn max_update_id(p: &Path) -> Result<u64> {
+    let mut max_id = 0;
+    if p.exists() {
+        for line in fs::read_to_string(p)?.lines() {
+            if let Ok(v) = serde_json::from_str::<Value>(line) {
+                max_id = max_id.max(v.get("update_id").and_then(Value::as_u64).unwrap_or(0));
+            }
+        }
+    }
+    Ok(max_id)
+}
+
+fn output_event_count(ctx: &ContextState) -> Result<usize> {
+    Ok(events(ctx)?
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "sendmessage"
+                    | "editmessagetext"
+                    | "editmessagereplymarkup"
+                    | "answercallbackquery"
+            )
+        })
+        .count())
+}
+
+fn wait_update_queue_drained(ctx: &ContextState, p: &Path) -> Result<()> {
+    let latest = max_update_id(p)?;
+    if latest == 0 {
+        return Ok(());
+    }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stable_count = None;
+    let mut stable_since = Instant::now();
+    loop {
+        let drained = events(ctx)?.into_iter().rev().any(|v| {
+            if v.get("method").and_then(Value::as_str) != Some("getupdates") {
+                return false;
+            }
+            let offset = v
+                .get("offset")
+                .and_then(|x| {
+                    x.as_u64()
+                        .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+                })
+                .unwrap_or(0);
+            offset > latest
+        });
+        if drained {
+            let count = output_event_count(ctx)?;
+            match stable_count {
+                Some(previous) if previous == count => {
+                    if stable_since.elapsed() >= Duration::from_millis(350) {
+                        return Ok(());
+                    }
+                }
+                _ => {
+                    stable_count = Some(count);
+                    stable_since = Instant::now();
+                }
+            }
+        } else {
+            stable_count = None;
+            stable_since = Instant::now();
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "Telegram update queue did not drain through update {latest}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn next_update(p: &Path) -> Result<u64> {
     let mut m = 10000;
     if p.exists() {
@@ -1116,14 +1227,6 @@ fn events(ctx: &ContextState) -> Result<Vec<Value>> {
             .collect(),
     )
 }
-fn events_since(ctx: &ContextState, start: usize) -> Result<String> {
-    Ok(events(ctx)?
-        .into_iter()
-        .skip(start)
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join("\n"))
-}
 fn events_since_file(p: &Path, start: usize) -> Result<String> {
     Ok(fs::read_to_string(p)
         .unwrap_or_default()
@@ -1132,6 +1235,32 @@ fn events_since_file(p: &Path, start: usize) -> Result<String> {
         .collect::<Vec<_>>()
         .join("\n"))
 }
+fn wait_callback_answer(
+    ctx: &ContextState,
+    callback_query_id: &str,
+    needle: &str,
+    timeout: Duration,
+) -> Result<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(event) = events(ctx)?.into_iter().rev().find(|value| {
+            value.get("method").and_then(Value::as_str) == Some("answercallbackquery")
+                && value.get("callback_query_id").and_then(Value::as_str) == Some(callback_query_id)
+                && value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.contains(needle))
+        }) {
+            return Ok(event);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "timeout waiting for callback answer {callback_query_id} containing {needle:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn wait_output(ctx: &ContextState, start: usize, cid: i64, timeout: Duration) -> Result<Value> {
     let d = Instant::now() + timeout;
     loop {

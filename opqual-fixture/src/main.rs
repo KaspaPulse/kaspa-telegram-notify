@@ -14,11 +14,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static JSONL_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Mode {
@@ -73,6 +76,9 @@ fn append_jsonl(path: &Path, mut value: Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let _guard = JSONL_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("JSONL write lock unavailable"))?;
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{}", serde_json::to_string(&value)?)?;
     f.flush()?;
@@ -179,6 +185,18 @@ fn write_http<W: Write>(w: &mut W, status: u16, ctype: &str, body: &[u8]) -> Res
     w.flush()?;
     Ok(())
 }
+fn write_tls_http(
+    io: &mut StreamOwned<ServerConnection, TcpStream>,
+    status: u16,
+    ctype: &str,
+    body: &[u8],
+) -> Result<()> {
+    write_http(io, status, ctype, body)?;
+    io.conn.send_close_notify();
+    io.flush()?;
+    Ok(())
+}
+
 fn request_data(req: &Request) -> Map<String, Value> {
     let ctype = req
         .headers
@@ -252,15 +270,24 @@ fn telegram(cli: &Cli) -> Result<()> {
         &state.events.join("telegram-events.jsonl"),
         json!({"kind":"fixture_started","fixture":"telegram","port":port}),
     )?;
-    for incoming in TcpListener::bind(("0.0.0.0", port))?.incoming() {
-        let tcp = incoming?;
-        let c = Arc::clone(&cfg);
-        let s = state.clone();
-        thread::spawn(move || {
-            if let Err(e) = telegram_conn(tcp, c, s) {
-                eprintln!("telegram fixture: {e:#}")
+    let listener = TcpListener::bind(("0.0.0.0", port))?;
+    listener.set_nonblocking(true)?;
+    while !SHUTDOWN.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((tcp, _)) => {
+                let c = Arc::clone(&cfg);
+                let s = state.clone();
+                thread::spawn(move || {
+                    if let Err(e) = telegram_conn(tcp, c, s) {
+                        eprintln!("telegram fixture: {e:#}")
+                    }
+                });
             }
-        });
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(())
 }
@@ -304,7 +331,7 @@ fn telegram_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, s: TelegramState) -> Re
         summary["status_code"] = json!(200);
         summary["malformed"] = json!(true);
         append_jsonl(&s.events.join("telegram-events.jsonl"), summary)?;
-        return write_http(&mut io, 200, "application/json", b"{not-json");
+        return write_tls_http(&mut io, 200, "application/json", b"{not-json");
     }
     if ["4xx", "5xx", "rate_limit"].contains(&mode) {
         let status = if mode == "rate_limit" {
@@ -393,7 +420,7 @@ fn telegram_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, s: TelegramState) -> Re
                 summary["status_code"] = json!(status);
                 summary["rejected"] = json!(true);
                 append_jsonl(&s.events.join("telegram-events.jsonl"), summary)?;
-                return write_http(&mut io,status,"application/json",serde_json::to_string(&json!({"ok":false,"error_code":400,"description":"Bad Request: message is too long"}))?.as_bytes());
+                return write_tls_http(&mut io,status,"application/json",serde_json::to_string(&json!({"ok":false,"error_code":400,"description":"Bad Request: message is too long"}))?.as_bytes());
             }
             summary["response_message_id"] = json!(mid);
             json!({"message_id":mid,"date":unix_seconds() as i64,"chat":{"id":chat,"type":"private"},"from":bot,"text":text})
@@ -409,13 +436,13 @@ fn telegram_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, s: TelegramState) -> Re
             summary["status_code"] = json!(status);
             summary["rejected"] = json!(true);
             append_jsonl(&s.events.join("telegram-events.jsonl"), summary)?;
-            return write_http(&mut io,status,"application/json",serde_json::to_string(&json!({"ok":false,"error_code":400,"description":"unsupported synthetic Telegram method"}))?.as_bytes());
+            return write_tls_http(&mut io,status,"application/json",serde_json::to_string(&json!({"ok":false,"error_code":400,"description":"unsupported synthetic Telegram method"}))?.as_bytes());
         }
     };
     summary["status_code"] = json!(status);
     summary["rejected"] = json!(false);
     append_jsonl(&s.events.join("telegram-events.jsonl"), summary)?;
-    write_http(
+    write_tls_http(
         &mut io,
         status,
         "application/json",
@@ -431,16 +458,25 @@ fn http_provider(cli: &Cli) -> Result<()> {
         &cli.event_dir.join("http-provider-events.jsonl"),
         json!({"kind":"fixture_started","fixture":"http-providers","port":port}),
     )?;
-    for incoming in TcpListener::bind(("0.0.0.0", port))?.incoming() {
-        let tcp = incoming?;
-        let c = Arc::clone(&cfg);
-        let control = cli.control_dir.clone();
-        let events = cli.event_dir.clone();
-        thread::spawn(move || {
-            if let Err(e) = http_conn(tcp, c, &control, &events) {
-                eprintln!("http fixture: {e:#}")
+    let listener = TcpListener::bind(("0.0.0.0", port))?;
+    listener.set_nonblocking(true)?;
+    while !SHUTDOWN.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((tcp, _)) => {
+                let c = Arc::clone(&cfg);
+                let control = cli.control_dir.clone();
+                let events = cli.event_dir.clone();
+                thread::spawn(move || {
+                    if let Err(e) = http_conn(tcp, c, &control, &events) {
+                        eprintln!("http fixture: {e:#}")
+                    }
+                });
             }
-        });
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(())
 }
@@ -518,9 +554,9 @@ fn http_conn(tcp: TcpStream, cfg: Arc<ServerConfig>, control: &Path, events: &Pa
         json!({"kind":"http_provider_request","host":host,"path":path,"mode":mode,"status":status}),
     )?;
     if mode == "malformed" {
-        write_http(&mut io, status, "application/json", b"{not-json")
+        write_tls_http(&mut io, status, "application/json", b"{not-json")
     } else {
-        write_http(
+        write_tls_http(
             &mut io,
             status,
             "application/json",
@@ -597,15 +633,24 @@ fn kaspa(cli: &Cli) -> Result<()> {
         &cli.event_dir.join("kaspa-events.jsonl"),
         json!({"kind":"fixture_started","protocol":"workflow-rpc-0.18.0/pinned-cfafeb4","port":port}),
     )?;
-    for incoming in TcpListener::bind(("0.0.0.0", port))?.incoming() {
-        let s = incoming?;
-        let c = cli.control_dir.clone();
-        let e = cli.event_dir.clone();
-        thread::spawn(move || {
-            if let Err(x) = kaspa_conn(s, &c, &e) {
-                eprintln!("kaspa fixture: {x:#}")
+    let listener = TcpListener::bind(("0.0.0.0", port))?;
+    listener.set_nonblocking(true)?;
+    while !SHUTDOWN.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let c = cli.control_dir.clone();
+                let e = cli.event_dir.clone();
+                thread::spawn(move || {
+                    if let Err(x) = kaspa_conn(stream, &c, &e) {
+                        eprintln!("kaspa fixture: {x:#}")
+                    }
+                });
             }
-        });
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(())
 }
@@ -823,6 +868,9 @@ fn print_probe(raw: &[u8]) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    SHUTDOWN.store(false, Ordering::SeqCst);
+    ctrlc::set_handler(|| SHUTDOWN.store(true, Ordering::SeqCst))
+        .context("install shutdown signal handler")?;
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("rustls provider already installed"))
@@ -849,5 +897,38 @@ mod tests {
     #[test]
     fn url_decode_form() {
         assert_eq!(url_decode("hello+world%21"), "hello world!");
+    }
+
+    #[test]
+    fn concurrent_jsonl_appends_are_individually_parseable() {
+        let path = Arc::new(std::env::temp_dir().join(format!(
+            "opqual-fixture-jsonl-{}-{}.jsonl",
+            std::process::id(),
+            unix_millis()
+        )));
+        let writers = 12usize;
+        let rows_per_writer = 32usize;
+        let mut handles = Vec::new();
+        for writer in 0..writers {
+            let path = Arc::clone(&path);
+            handles.push(thread::spawn(move || {
+                for row in 0..rows_per_writer {
+                    append_jsonl(&path, json!({"writer":writer,"row":row})).unwrap();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let text = fs::read_to_string(path.as_ref()).unwrap();
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), writers * rows_per_writer);
+        for line in lines {
+            let value: Value = serde_json::from_str(line).unwrap();
+            assert!(value.get("writer").is_some());
+            assert!(value.get("row").is_some());
+            assert!(value.get("timestamp").is_some());
+        }
+        fs::remove_file(path.as_ref()).unwrap();
     }
 }

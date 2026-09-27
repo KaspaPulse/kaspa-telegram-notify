@@ -20,6 +20,11 @@ fn rust_native_opqual_components_exist() {
     ] {
         assert!(Path::new(ROOT).join(rel).is_file(), "missing {rel}");
     }
+    let opqual = read("xtask/src/opqual.rs");
+    let runtime = read("xtask/src/opqual/runtime.rs");
+    assert!(!opqual.contains(r#"\"openssl\""#));
+    assert!(!runtime.contains(r#"\"openssl\""#));
+    assert!(runtime.contains("KeyPair::generate()"));
 }
 
 #[test]
@@ -88,6 +93,9 @@ fn rust_fixtures_cover_required_failure_modes_without_public_transport() {
         assert!(runtime.contains(alias), "missing fixture alias {alias}");
     }
     assert!(!runtime.contains(r#""--publish""#));
+    assert!(fixture.contains("set_nonblocking(true)"));
+    assert!(fixture.contains("SHUTDOWN.load(Ordering::SeqCst)"));
+    assert!(fixture.contains("send_close_notify()"));
 }
 
 #[test]
@@ -146,6 +154,11 @@ fn scenario_runner_is_rust_native_and_never_infers_pass() {
     assert!(runner.contains("full_bot_journeys_completed"));
     assert!(runner.contains("scenario-evidence"));
     assert!(runner.contains("EDGE-001"));
+    assert!(runner.contains("wait_update_queue_drained"));
+    assert!(runner.contains("wait_callback_answer"));
+    assert!(runner.contains("bound_nonce_confirmation+baseline_restored"));
+    assert!(runner.contains("let insert = args.len() - 1;"));
+    assert!(runner.contains(r#"("WEBHOOK_DOMAIN", WEBHOOK_CONTAINER.into())"#));
     let map = read("opqual/scenario-map.csv");
     assert!(map.contains("EDGE-002"));
     assert!(map.contains("FLOW-LIFE-shutdown"));

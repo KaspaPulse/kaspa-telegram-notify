@@ -1,7 +1,11 @@
 use super::*;
 use anyhow::{Context, Result, ensure};
+use rcgen::{
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose,
+};
 use serde_json::json;
-use std::{fs, time::Duration};
+use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
 
 pub(super) fn fixtures(ctx: &ContextState) -> Result<()> {
     ctx.require_phase("migrate")?;
@@ -104,92 +108,50 @@ ON CONFLICT(day) DO NOTHING;
 }
 
 fn ensure_certificates(ctx: &ContextState) -> Result<()> {
-    let ca_key = ctx.certs_dir.join("ca.key");
     let ca_crt = ctx.certs_dir.join("ca.crt");
     let key = ctx.certs_dir.join("server.key");
-    let csr = ctx.certs_dir.join("server.csr");
-    let ext = ctx.certs_dir.join("server.ext");
     let crt = ctx.certs_dir.join("server.crt");
     if ca_crt.is_file() && crt.is_file() && key.is_file() {
         return Ok(());
     }
-    run(
-        "openssl",
-        [
-            "genrsa",
-            "-out",
-            ca_key.to_str().context("ca key path")?,
-            "2048",
-        ],
-    )?;
-    run(
-        "openssl",
-        [
-            "req",
-            "-x509",
-            "-new",
-            "-sha256",
-            "-days",
-            "2",
-            "-key",
-            ca_key.to_str().context("ca key path")?,
-            "-subj",
-            "/CN=Kaspa Pulse OpQual Synthetic CA",
-            "-addext",
-            "basicConstraints=critical,CA:TRUE",
-            "-addext",
-            "keyUsage=critical,keyCertSign,cRLSign",
-            "-out",
-            ca_crt.to_str().context("ca crt path")?,
-        ],
-    )?;
-    run(
-        "openssl",
-        [
-            "genrsa",
-            "-out",
-            key.to_str().context("server key path")?,
-            "2048",
-        ],
-    )?;
-    run(
-        "openssl",
-        [
-            "req",
-            "-new",
-            "-key",
-            key.to_str().context("server key path")?,
-            "-subj",
-            "/CN=api.telegram.org",
-            "-out",
-            csr.to_str().context("csr path")?,
-        ],
-    )?;
-    fs::write(
-        &ext,
-        "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:api.telegram.org,DNS:api.kaspa.org,DNS:api.coingecko.com\n",
-    )?;
-    run(
-        "openssl",
-        [
-            "x509",
-            "-req",
-            "-sha256",
-            "-days",
-            "2",
-            "-in",
-            csr.to_str().context("csr path")?,
-            "-CA",
-            ca_crt.to_str().context("ca path")?,
-            "-CAkey",
-            ca_key.to_str().context("ca key path")?,
-            "-CAcreateserial",
-            "-extfile",
-            ext.to_str().context("ext path")?,
-            "-out",
-            crt.to_str().context("crt path")?,
-        ],
-    )?;
+
+    let mut ca_params = CertificateParams::new(Vec::<String>::new())?;
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "Kaspa Pulse OpQual Synthetic CA");
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+
+    let ca_key = KeyPair::generate()?;
+    let ca_cert = ca_params.self_signed(&ca_key)?;
+    let issuer = Issuer::new(ca_params, ca_key);
+
+    let mut server_params = CertificateParams::new(vec![
+        "api.telegram.org".to_owned(),
+        "api.kaspa.org".to_owned(),
+        "api.coingecko.com".to_owned(),
+    ])?;
+    server_params
+        .distinguished_name
+        .push(DnType::CommonName, "api.telegram.org");
+    server_params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+
+    let server_key = KeyPair::generate()?;
+    let server_cert = server_params.signed_by(&server_key, &issuer)?;
+
+    fs::write(&ca_crt, ca_cert.pem())?;
+    fs::write(&crt, server_cert.pem())?;
+    fs::write(&key, server_key.serialize_pem())?;
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600))?;
+
+    ensure!(
+        fs::metadata(&key)?.permissions().mode() & 0o077 == 0,
+        "synthetic TLS private key permissions are too broad"
+    );
     Ok(())
 }
 pub(super) fn start_fixture(

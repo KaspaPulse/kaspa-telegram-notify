@@ -596,7 +596,7 @@ fn preflight(ctx: &ContextState) -> Result<()> {
     );
     ensure!(env::consts::OS == "linux", "Linux required");
     ensure!(env::consts::ARCH == "x86_64", "x86_64 required");
-    for tool in ["git", "sudo", "docker", "openssl"] {
+    for tool in ["git", "sudo", "docker"] {
         require(tool)?;
     }
     for key in [
