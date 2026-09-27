@@ -724,6 +724,33 @@ fn task_contract(ctx: &ContextState, name: &str) -> Result<Value> {
         reward_task_cycle(ctx)?;
         logs = app_logs()?;
     }
+    if name == "telegram_raw_message" {
+        let start_marker = "[TASK START] telegram_raw_message";
+        let joined_marker = "[TASK MONITOR] telegram_raw_message joined cleanly";
+        let starts_before = logs.matches(start_marker).count();
+        let joins_before = logs.matches(joined_marker).count();
+        inject_message(
+            ctx,
+            SYNTH_USER_ID,
+            SYNTH_CHAT_ID,
+            "opqual raw-message dispatcher probe",
+        )?;
+        wait_update_queue_drained(ctx, &ctx.control_dir.join("telegram-updates.jsonl"))?;
+        wait_until(
+            || {
+                let current = app_logs()?;
+                Ok(current.matches(start_marker).count() > starts_before
+                    && current.matches(joined_marker).count() > joins_before)
+            },
+            200,
+            Duration::from_millis(50),
+            "telegram_raw_message did not execute and join through the dispatcher",
+        )?;
+        return Ok(json!({
+            "contract":"raw_message_update+owned_child_task_started_and_joined",
+            "input":"opqual raw-message dispatcher probe"
+        }));
+    }
     ensure!(
         logs.contains(&format!("[TASK START] {name}")),
         "owned child task not observed: {name}"
@@ -1424,28 +1451,33 @@ fn output_event_count(ctx: &ContextState) -> Result<usize> {
         .count())
 }
 
+fn telegram_getupdates_offset(value: &Value) -> Option<u64> {
+    if value.get("method").and_then(Value::as_str) != Some("getupdates") {
+        return None;
+    }
+    value.get("offset").and_then(|offset| {
+        offset
+            .as_u64()
+            .or_else(|| offset.as_str().and_then(|text| text.parse().ok()))
+    })
+}
+
+fn fresh_poll_proves_queue_drained(events: &[Value], start: usize, latest: u64) -> bool {
+    events.iter().skip(start).any(|value| {
+        telegram_getupdates_offset(value)
+            .is_some_and(|offset| if latest == 0 { true } else { offset > latest })
+    })
+}
+
 fn wait_update_queue_drained(ctx: &ContextState, p: &Path) -> Result<()> {
     let latest = max_update_id(p)?;
-    if latest == 0 {
-        return Ok(());
-    }
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let event_start = events(ctx)?.len();
+    let deadline = Instant::now() + Duration::from_secs(45);
     let mut stable_count = None;
     let mut stable_since = Instant::now();
     loop {
-        let drained = events(ctx)?.into_iter().rev().any(|v| {
-            if v.get("method").and_then(Value::as_str) != Some("getupdates") {
-                return false;
-            }
-            let offset = v
-                .get("offset")
-                .and_then(|x| {
-                    x.as_u64()
-                        .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
-                })
-                .unwrap_or(0);
-            offset > latest
-        });
+        let current_events = events(ctx)?;
+        let drained = fresh_poll_proves_queue_drained(&current_events, event_start, latest);
         if drained {
             let count = output_event_count(ctx)?;
             match stable_count {
@@ -1774,5 +1806,45 @@ mod evidence_identity_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].historical_source_head, "deadbeef");
         assert_eq!(rows[0].row_hash, sha256_bytes(row.as_bytes()));
+    }
+
+    #[test]
+    fn stale_poll_evidence_cannot_prove_current_queue_drained() {
+        let events = vec![
+            json!({"method":"getupdates","offset":10262}),
+            json!({"method":"sendmessage","chat_id":1}),
+        ];
+        assert!(!fresh_poll_proves_queue_drained(
+            &events,
+            events.len(),
+            10261
+        ));
+        let mut with_fresh = events.clone();
+        with_fresh.push(json!({"method":"getupdates","offset":10262}));
+        assert!(fresh_poll_proves_queue_drained(
+            &with_fresh,
+            events.len(),
+            10261
+        ));
+        assert!(!fresh_poll_proves_queue_drained(
+            &with_fresh,
+            events.len(),
+            10262
+        ));
+        with_fresh.push(json!({"method":"getupdates","offset":10263}));
+        assert!(fresh_poll_proves_queue_drained(
+            &with_fresh,
+            events.len(),
+            10262
+        ));
+    }
+
+    #[test]
+    fn initial_empty_queue_requires_a_fresh_poll_but_accepts_offset_zero() {
+        let stale = vec![json!({"method":"getupdates","offset":0})];
+        assert!(!fresh_poll_proves_queue_drained(&stale, stale.len(), 0));
+        let mut fresh = stale.clone();
+        fresh.push(json!({"method":"getupdates","offset":"0"}));
+        assert!(fresh_poll_proves_queue_drained(&fresh, stale.len(), 0));
     }
 }
