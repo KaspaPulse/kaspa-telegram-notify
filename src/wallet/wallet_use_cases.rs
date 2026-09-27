@@ -676,7 +676,13 @@ impl UtxoMonitorService {
                 }
                 Err(error) => {
                     completed_without_errors = false;
-                    tracing::error!("[WORKER] Reward analysis task failed to join: {}", error);
+                    if error.is_cancelled() {
+                        tracing::info!(
+                            "[WORKER] Reward analysis task was cancelled during shutdown."
+                        );
+                    } else {
+                        tracing::error!("[WORKER] Reward analysis task failed to join: {}", error);
+                    }
                 }
             }
         }

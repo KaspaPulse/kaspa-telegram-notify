@@ -94,7 +94,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends postgresql-client
 
       - name: Prepare PostgreSQL test schema
-        run: bash scripts/ci-prepare-postgres.sh
+        run: cargo xtask ci prepare-postgres
 
       - name: Install validation tools
         uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
@@ -103,60 +103,15 @@ jobs:
           fallback: none
 
       - name: Update and validate rusty-kaspa
-        shell: pwsh
-        run: |
-          $allow = "${{ inputs.allow_prerelease }}"
-          if ([string]::IsNullOrWhiteSpace($allow)) {
-            $allow = "false"
-          }
-
-          $args = @("-BaseBranch", "dev")
-          if ($allow -eq "true") {
-            $args += "-AllowPrerelease"
-          }
-
-          pwsh -NoProfile -File "scripts/update-rusty-kaspa-latest.ps1" @args
+        env:
+          ALLOW_PRERELEASE: "${{ inputs.allow_prerelease || 'false' }}"
+        run: >-
+          cargo xtask dependencies rusty-kaspa update
+          --base-branch dev
+          --allow-prerelease "$ALLOW_PRERELEASE"
 
       - name: Publish validated update and open PR
         if: success()
-        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $branch = (git branch --show-current).Trim()
-          if ($branch -eq "dev") {
-            Write-Host "No update branch was created. Already up to date."
-            exit 0
-          }
-
-          git config user.name "kaspa-pulse-auto-updater"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock
-          if (git diff --cached --quiet) {
-            throw "Update branch exists but no Cargo changes are staged."
-          }
-
-          git commit -m "chore(deps): update rusty-kaspa"
-          gh auth setup-git
-
-          $existing = gh pr list --head $branch --base dev --state open --json number --jq ".[0].number"
-          if ($existing) {
-            Write-Host "Open PR already exists: $existing. Refusing to overwrite its branch."
-            exit 0
-          }
-
-          git ls-remote --exit-code --heads origin "refs/heads/$branch" *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Remote update branch '$branch' already exists without an open PR. Refusing automatic overwrite."
-          }
-          $global:LASTEXITCODE = 0
-          git push --set-upstream origin $branch
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to publish update branch '$branch'."
-          }
-
-          gh pr create `
-            --base dev `
-            --head $branch `
-            --title "Auto update rusty-kaspa dependencies" `
-            --body "Automated rusty-kaspa update. The update workflow passed fmt, check, strict Clippy, tests, cargo-audit, cargo-deny, and the project security check before publishing this branch."
+        run: cargo xtask dependencies rusty-kaspa publish --base-branch dev

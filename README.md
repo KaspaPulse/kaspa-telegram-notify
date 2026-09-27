@@ -54,7 +54,7 @@ Telegram delivery worker
 - PostgreSQL **18** validation baseline with PostgreSQL-only SQLx 0.9 feature selection.
 - Teloxide 0.17 and Axum 0.8.
 - Reqwest 0.13 with Rustls.
-- `rusty-kaspa` dependencies pinned to exact version `2.0.1` and immutable upstream revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`.
+- `rusty-kaspa` dependencies are pinned to the latest verified stable release, exact version `2.1.0` and immutable upstream revision `01b532e8b553523216471682649693af92f0fd16` (verified against the upstream GitHub release on 2026-09-27).
 - Debian 13 (Trixie) production container.
 - Non-root container runtime using UID/GID `10001`.
 
@@ -209,6 +209,16 @@ curl http://127.0.0.1:18080/metrics
 ```
 
 Do not expose operational endpoints or the bot service directly to the public internet when a reverse proxy is expected.
+
+---
+
+## Rust-native operational qualification
+
+The isolated EXEC-01 and scenario qualification harness is implemented in Rust under `xtask/src/opqual/` with the local Rust fixture binary in `opqual-fixture/`. The scenario matrix is data-only at `opqual/scenario-map.csv`; no first-party Bash or Python operational harness remains.
+
+The owned executable implementation is Rust-native: the tracked tree contains no first-party Python, PowerShell, Bash, JavaScript, Ruby, or Perl executable implementation. External interfaces, configuration, documentation, SQL migrations, workflow YAML, and data files are not counted as owned executable language implementations.
+
+Build the candidate and fixture, then use `cargo run --locked -p xtask -- opqual ...`. See [docs/OPERATIONAL_QUALIFICATION.md](docs/OPERATIONAL_QUALIFICATION.md) for dry-run, material-run, crash-safe resume, cleanup, and evidence semantics.
 
 ---
 

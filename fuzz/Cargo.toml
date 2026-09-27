@@ -19,3 +19,5 @@ path = "fuzz_targets/text_safety.rs"
 test = false
 doc = false
 bench = false
+
+[workspace]

@@ -14,14 +14,18 @@ ARG TARGETARCH
 # Target caches are architecture-scoped; the final binary is copied to /out because
 # BuildKit cache-mount contents are intentionally not committed to image layers.
 COPY Cargo.toml Cargo.lock ./
+COPY xtask/Cargo.toml ./xtask/Cargo.toml
+COPY opqual-fixture/Cargo.toml ./opqual-fixture/Cargo.toml
 RUN --mount=type=cache,id=kaspa-pulse-cargo-registry-${TARGETARCH},target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=kaspa-pulse-cargo-git-${TARGETARCH},target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=kaspa-pulse-target-${TARGETARCH},target=/app/target,sharing=locked \
-    mkdir src \
+    mkdir -p src xtask/src opqual-fixture/src \
     && printf 'fn main() {}\n' > src/main.rs \
     && touch src/lib.rs \
+    && printf 'fn main() {}\n' > xtask/src/main.rs \
+    && printf 'fn main() {}\n' > opqual-fixture/src/main.rs \
     && cargo build --locked --release --all-features \
-    && rm -rf src
+    && rm -rf src xtask/src opqual-fixture/src
 
 COPY . .
 ARG SOURCE_REVISION=unknown

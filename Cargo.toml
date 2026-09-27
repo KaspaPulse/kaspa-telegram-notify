@@ -21,12 +21,12 @@ async-channel = "2.5.0"
 anyhow = "1.0"
 thiserror = "2.0"
 
-# rusty-kaspa v2.0.1 pinned to its immutable commit; keep all Kaspa git crates aligned.
-kaspa-wrpc-client = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
-kaspa-rpc-core = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
-kaspa-addresses = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
-kaspa-consensus-core = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
-kaspa-hashes = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+# rusty-kaspa v2.1.0 pinned to its immutable release commit; keep all Kaspa git crates aligned.
+kaspa-wrpc-client = { version = "=2.1.0", git = "https://github.com/kaspanet/rusty-kaspa", rev = "01b532e8b553523216471682649693af92f0fd16" }
+kaspa-rpc-core = { version = "=2.1.0", git = "https://github.com/kaspanet/rusty-kaspa", rev = "01b532e8b553523216471682649693af92f0fd16" }
+kaspa-addresses = { version = "=2.1.0", git = "https://github.com/kaspanet/rusty-kaspa", rev = "01b532e8b553523216471682649693af92f0fd16" }
+kaspa-consensus-core = { version = "=2.1.0", git = "https://github.com/kaspanet/rusty-kaspa", rev = "01b532e8b553523216471682649693af92f0fd16" }
+kaspa-hashes = { version = "=2.1.0", git = "https://github.com/kaspanet/rusty-kaspa", rev = "01b532e8b553523216471682649693af92f0fd16" }
 
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "chrono", "json"] }
 
@@ -60,3 +60,7 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[workspace]
+members = ["xtask", "opqual-fixture"]
+resolver = "3"

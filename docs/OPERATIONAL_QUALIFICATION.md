@@ -23,7 +23,7 @@ The harness refuses inherited runtime credential environment variables and valid
 Dry-run first:
 
 ```bash
-./scripts/opqual/run.sh --dry-run
+cargo run --locked -p xtask -- opqual dry-run --binary target/release/kaspa-pulse
 ```
 
 A dry-run performs preflight and prints the plan. It must not create Docker resources, initialize a database, start the candidate, or send signals.
@@ -31,13 +31,13 @@ A dry-run performs preflight and prints the plan. It must not create Docker reso
 Material run:
 
 ```bash
-./scripts/opqual/run.sh
+cargo run --locked -p xtask -- opqual run --binary target/release/kaspa-pulse
 ```
 
 Resume an interrupted material run only after inspecting its state and resources:
 
 ```bash
-./scripts/opqual/run.sh --resume <run-id>
+cargo run --locked -p xtask -- opqual resume <run-id> --binary target/release/kaspa-pulse
 ```
 
 A phase marked `VERIFIED` is skipped only when its current side effects still match. If the receipt and reality disagree, the harness records an `UNKNOWN` resume condition and refuses blind replay.
@@ -53,9 +53,9 @@ The shutdown proof requires the application backend to have been waiting on the 
 
 The restart phase releases the external test lock only after zero-session/zero-lock proof, starts the exact same candidate, requires health/readiness and PostgreSQL connectivity, and executes a synthetic Telegram `/help` smoke.
 
-The scenario runner consumes `fixtures/scenario-map.csv` as mapping input only. It never treats the CSV as PASS evidence. Every executed row ends as `VERIFIED_PASS`, `VERIFIED_FAIL`, `BLOCKED`, or `NOT_APPLICABLE`; unsupported/unproven contracts remain `BLOCKED`.
+The scenario runner consumes `opqual/scenario-map.csv` as mapping input only. It never treats the CSV as PASS evidence. Every executed row ends as `VERIFIED_PASS`, `VERIFIED_FAIL`, `BLOCKED`, or `NOT_APPLICABLE`; unsupported/unproven contracts remain `BLOCKED`.
 
-Some matrix rows may require a narrowly scoped supplemental full-dispatcher cycle after the primary EXEC-01 run. Supplemental receipts are copied into the primary evidence tree and represented by `cumulative-scenario-summary.json`; the original primary `scenario-summary.json` is preserved unchanged. `EDGE-001` uses `edge001-full-cycle.sh` to prove missing and negative HTTP-200 fee payloads through full `main`/dispatcher without rendering invalid values as live estimates.
+The Rust scenario runner also executes the supplemental EDGE-001 full-dispatcher cycle. It proves both missing and negative HTTP-200 fee payloads through the exact main/dispatcher path without rendering invalid values as live estimates, and includes that journey in the final scenario summary.
 ## Evidence and interruption safety
 
 Each material run writes under `evidence/opqual/<run-id>/` and keeps `state.json` plus append-only `operations.jsonl`. Material operations record `PLANNED` before effects and a verified terminal state afterward. Signal state is persisted so a resume never sends SIGTERM twice just because a previous client/session disappeared.

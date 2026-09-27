@@ -254,7 +254,7 @@ fn env_u32(key: &str, default_value: u32) -> u32 {
 fn safe_nonzero(value: u32, default_value: u32) -> NonZeroU32 {
     NonZeroU32::new(value)
         .or_else(|| NonZeroU32::new(default_value))
-        .unwrap_or_else(|| NonZeroU32::new(1).unwrap())
+        .unwrap_or(NonZeroU32::MIN)
 }
 
 fn per_second_quota(key: &str, default_value: u32) -> Quota {

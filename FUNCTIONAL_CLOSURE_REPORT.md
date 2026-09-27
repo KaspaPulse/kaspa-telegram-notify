@@ -78,7 +78,7 @@ accessed or changed; v1.2.6 deployment is blocked despite its passed source/CI g
 Mechanism: migrations create these tables as admin but omit runtime grants. The
 CI preparation script separately supplied several DML grants, masking the gap.
 Related components: settings_repo.rs, wallets_repo.rs, pending_rewards_repo.rs,
-mined_blocks_repo.rs, migrations and scripts/ci-prepare-postgres.sh.
+mined_blocks_repo.rs, migrations, and the Rust-native `cargo xtask ci prepare-postgres` CI preparation command.
 Fix: add the explicit scoped runtime data-write migration; remove runtime DML
 from CI setup so only its test reset privileges remain; keep all runtime schema
 creation disabled. Existing published v1.2.6 history/assets remain unchanged.

@@ -344,7 +344,11 @@ pub fn start_utxo_monitor(
                 match result {
                     Ok(succeeded) => wallet_scan_outcomes.push(succeeded),
                     Err(error) => {
-                        error!("[WORKER] UTXO wallet scan task failed to join: {}", error);
+                        if error.is_cancelled() {
+                            info!("[WORKER] UTXO wallet scan task was cancelled during shutdown.");
+                        } else {
+                            error!("[WORKER] UTXO wallet scan task failed to join: {}", error);
+                        }
                         wallet_scan_outcomes.push(false);
                     }
                 }

@@ -149,11 +149,27 @@ pub struct TrackedTask<T> {
     result: tokio::sync::oneshot::Receiver<Result<T, tokio::task::JoinError>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TrackedTaskError {
+    #[error("tracked task failed: {0}")]
+    Join(#[from] tokio::task::JoinError),
+    #[error("task supervisor join monitor ended before reporting a result")]
+    MonitorLost,
+}
+
+impl TrackedTaskError {
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Join(error) if error.is_cancelled())
+    }
+}
+
 impl<T> TrackedTask<T> {
-    pub async fn join(self) -> Result<T, tokio::task::JoinError> {
-        self.result
-            .await
-            .expect("task supervisor owns the join monitor")
+    pub async fn join(self) -> Result<T, TrackedTaskError> {
+        match self.result.await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(TrackedTaskError::Join(error)),
+            Err(_) => Err(TrackedTaskError::MonitorLost),
+        }
     }
 }
 
@@ -322,7 +338,7 @@ where
 /// only the receivers; the supervisor retains the actual DB-using workers.
 pub struct OwnedTaskSet<T> {
     name: &'static str,
-    results: tokio::task::JoinSet<Result<T, tokio::task::JoinError>>,
+    results: tokio::task::JoinSet<Result<T, TrackedTaskError>>,
 }
 
 impl<T: Send + 'static> OwnedTaskSet<T> {
@@ -342,11 +358,12 @@ impl<T: Send + 'static> OwnedTaskSet<T> {
         }
     }
 
-    pub async fn join_next(&mut self) -> Option<Result<T, tokio::task::JoinError>> {
-        self.results
-            .join_next()
-            .await
-            .map(|result| result.and_then(|inner| inner))
+    pub async fn join_next(&mut self) -> Option<Result<T, TrackedTaskError>> {
+        match self.results.join_next().await {
+            Some(Ok(inner)) => Some(inner),
+            Some(Err(error)) => Some(Err(TrackedTaskError::Join(error))),
+            None => None,
+        }
     }
 }
 

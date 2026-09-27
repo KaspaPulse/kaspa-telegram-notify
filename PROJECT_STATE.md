@@ -93,3 +93,46 @@ MIGRATION_AFTER_FIELD_STALE_REPORTING_ARTIFACT=YES
 EVIDENCE_REPORTING_DEFECT_FOUND=YES_NON_PRODUCTION_FIELD_ATTRIBUTION_ONLY
 CANONICAL_JSON_SERIALIZATION_DEFECT=NO
 PRODUCTION_SCHEMA_DEFECT=NO
+
+## Active Rust-native migration candidate — 2026-09-27
+
+TASK=KASPA_TELEGRAM_NOTIFY_LATEST_KASPA_AND_100_PERCENT_RUST_NATIVE_MIGRATION
+
+This section records the current development candidate and does not supersede the
+verified v1.2.10 Production facts above. No Production redeployment is implied by
+this local candidate state.
+
+IMPLEMENTATION_CHECKPOINT_HEAD=751013bd707bbde665fa7f00bd352d1748f907c8
+IMPLEMENTATION_CHECKPOINT_TREE=cd5e815efde5b246779ab38275efffe2660ef3fe
+KASPA_UPSTREAM_SOURCE=https://github.com/kaspanet/rusty-kaspa/releases/tag/v2.1.0
+KASPA_VERSION=2.1.0
+KASPA_SOURCE_REVISION=01b532e8b553523216471682649693af92f0fd16
+LATEST_APPROPRIATE_KASPA_VERIFIED=YES
+KASPA_COMPATIBILITY=LOCAL_PASS
+
+RUST_NATIVE_TARGET=VERIFIED_LOCAL_TREE
+OWNED_NON_RUST_EXECUTABLE_IMPLEMENTATION_REMAINING=0
+RUST_NATIVE_OPERATIONAL_TOOLING=YES
+EXTERNAL_OPENSSL_RUNTIME_DEPENDENCY=REMOVED
+MATERIAL_OPQUAL_RUN=20260927T031315Z-338779
+MATERIAL_OPQUAL=PASS
+MATERIAL_OPQUAL_VERIFIED_PASS=189
+MATERIAL_OPQUAL_NOT_APPLICABLE=6
+MATERIAL_OPQUAL_VERIFIED_FAIL=0
+MATERIAL_OPQUAL_BLOCKED=0
+MATERIAL_OPQUAL_FULL_BOT_JOURNEYS=150
+MATERIAL_OPQUAL_CLEANUP=PASS
+MATERIAL_OPQUAL_FORCED_KILL=NO
+
+The material qualification covers the isolated PostgreSQL-backed runtime,
+Telegram command/callback/raw-message flows, HTTP/provider interfaces, Kaspa wRPC
+fixture path, lifecycle/shutdown, webhook cycle, job/task coverage, and cleanup.
+The final wrd wallet-removal callback is synchronized against the resulting
+database state rather than an earlier callback acknowledgement, eliminating a
+qualification race without changing the Production wallet-removal path.
+
+REMOTE_PUBLICATION=PR_71
+REMOTE_CI_SOURCE=GitHub PR #71 exact-head checks; durable continuity records the current conclusions.
+PRODUCTION_DEPLOYMENT=UNCHANGED_FROM_REFERENCE_RELEASE_STATE
+TASK_CLOSURE_SOURCE=Durable continuity state after required remote gates and exact-final-main verification.
+REMOTE_FINALIZATION_POLICY=Merge only after exact-head required checks pass; then independently verify the actual resulting main SHA/tree and exact-main CI.
