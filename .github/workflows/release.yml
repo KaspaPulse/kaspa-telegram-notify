@@ -8,6 +8,8 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "Dockerfile"
+      - ".dockerignore"
       - "xtask/src/sbom.rs"
       - ".github/workflows/release.yml"
   workflow_dispatch:
@@ -46,10 +48,16 @@ jobs:
     if: github.event_name == 'pull_request'
     needs: validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
     env:
       VERSION: ${{ needs.validate.outputs.version }}
-      TARGET: x86_64-unknown-linux-gnu
+      TARGET: ${{ matrix.target }}
 
     steps:
       - name: Checkout repository
@@ -69,8 +77,8 @@ jobs:
           cargo install --locked cargo-cyclonedx --version 0.5.9
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          sbom="kaspa-pulse-${VERSION}.cdx.json"
-          sbom_prefix="kaspa-pulse-${VERSION}.cdx"
+          sbom="kaspa-pulse-${VERSION}-${TARGET}.cdx.json"
+          sbom_prefix="kaspa-pulse-${VERSION}-${TARGET}.cdx"
           cargo cyclonedx \
             --format json \
             --spec-version 1.5 \
@@ -82,6 +90,51 @@ jobs:
             "$sbom" \
             --version "$VERSION" \
             --target "$TARGET"
+
+  arm64-release-preflight:
+    name: Validate ARM64 release image
+    if: github.event_name == 'pull_request'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build and verify ARM64 release image
+        shell: bash
+        env:
+          ARM64_IMAGE: kaspa-pulse:release-arm64-preflight-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/arm64 \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --tag "$ARM64_IMAGE" \
+            --load \
+            .
+          test "$(docker image inspect "$ARM64_IMAGE" --format '{{.Architecture}}')" = "arm64"
+          test "$(docker image inspect "$ARM64_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          cid="$(docker create --platform linux/arm64 "$ARM64_IMAGE")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/usr/local/bin/kaspa-pulse" "$RUNNER_TEMP/kaspa-pulse-aarch64"
+          file "$RUNNER_TEMP/kaspa-pulse-aarch64" | grep -F "ARM aarch64"
+          LC_ALL=C grep -aF -q "$GITHUB_SHA" "$RUNNER_TEMP/kaspa-pulse-aarch64"
+          docker rm "$cid" >/dev/null
+          trap - EXIT
 
   verify-e2e-proof:
     name: Verify exact-main Hermetic E2E proof
@@ -173,7 +226,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [validate, verify-e2e-proof]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: write
       id-token: write
@@ -182,13 +235,17 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
       TAG: v${{ needs.validate.outputs.version }}
-      TARGET: x86_64-unknown-linux-gnu
+      X86_TARGET: x86_64-unknown-linux-gnu
+      ARM64_TARGET: aarch64-unknown-linux-gnu
+      ARM64_IMAGE: kaspa-pulse:release-arm64-${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Determine whether this version is already released
@@ -196,6 +253,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "create=false" >> "$GITHUB_OUTPUT"
             echo "$TAG already exists; no new release is needed."
@@ -210,16 +268,50 @@ jobs:
         with:
           toolchain: 1.98.1
 
-      - name: Build locked release binary
+      - name: Set up QEMU
+        if: steps.gate.outputs.create == 'true'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.create == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build locked x86_64 release binary
         if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
           KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cargo build --locked --release --all-features --target "$TARGET"
+          cargo build --locked --release --all-features --target "$X86_TARGET"
+          LC_ALL=C grep -aF -q "$GITHUB_SHA" "target/${X86_TARGET}/release/kaspa-pulse"
 
-      - name: Generate reproducible CycloneDX SBOM
+      - name: Build and extract locked ARM64 release binary
+        if: steps.gate.outputs.create == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/arm64 \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --tag "$ARM64_IMAGE" \
+            --load \
+            .
+          test "$(docker image inspect "$ARM64_IMAGE" --format '{{.Architecture}}')" = "arm64"
+          test "$(docker image inspect "$ARM64_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          mkdir -p "target/${ARM64_TARGET}/release"
+          cid="$(docker create --platform linux/arm64 "$ARM64_IMAGE")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/usr/local/bin/kaspa-pulse" "target/${ARM64_TARGET}/release/kaspa-pulse"
+          chmod 0755 "target/${ARM64_TARGET}/release/kaspa-pulse"
+          file "target/${ARM64_TARGET}/release/kaspa-pulse" | grep -F "ARM aarch64"
+          LC_ALL=C grep -aF -q "$GITHUB_SHA" "target/${ARM64_TARGET}/release/kaspa-pulse"
+          docker rm "$cid" >/dev/null
+          trap - EXIT
+
+      - name: Generate reproducible CycloneDX SBOMs
         if: steps.gate.outputs.create == 'true'
         shell: bash
         run: |
@@ -227,124 +319,246 @@ jobs:
           cargo install --locked cargo-cyclonedx --version 0.5.9
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          sbom="kaspa-pulse-${VERSION}.cdx.json"
-          sbom_prefix="kaspa-pulse-${VERSION}.cdx"
-          cargo cyclonedx \
-            --format json \
-            --spec-version 1.5 \
-            --all-features \
-            --target "$TARGET" \
-            --override-filename "$sbom_prefix" \
-            --verbose
-          cargo xtask sbom finalize \
-            "$sbom" \
-            --version "$VERSION" \
-            --target "$TARGET"
+          for target in "$X86_TARGET" "$ARM64_TARGET"; do
+            sbom="kaspa-pulse-${VERSION}-${target}.cdx.json"
+            sbom_prefix="kaspa-pulse-${VERSION}-${target}.cdx"
+            cargo cyclonedx \
+              --format json \
+              --spec-version 1.5 \
+              --all-features \
+              --target "$target" \
+              --override-filename "$sbom_prefix" \
+              --verbose
+            cargo xtask sbom finalize \
+              "$sbom" \
+              --version "$VERSION" \
+              --target "$target"
+          done
 
-      - name: Assemble deterministic release archive
+      - name: Assemble deterministic release archives
         if: steps.gate.outputs.create == 'true'
         id: artifact
         shell: bash
         run: |
           set -euo pipefail
-          archive="kaspa-pulse-${VERSION}-${TARGET}.tar.gz"
-          sbom="kaspa-pulse-${VERSION}.cdx.json"
-          mkdir -p dist/stage
-          install -m 0755 "target/${TARGET}/release/kaspa-pulse" dist/stage/kaspa-pulse
-          install -m 0644 LICENSE dist/stage/LICENSE
-          install -m 0644 README.md dist/stage/README.md
-          install -m 0644 "$sbom" "dist/${sbom}"
           source_date_epoch="$(git log -1 --format=%ct)"
-          tar --sort=name \
-            --mtime="@${source_date_epoch}" \
-            --owner=0 --group=0 --numeric-owner \
-            -C dist/stage -cf "dist/${archive%.gz}" .
-          gzip -n -9 "dist/${archive%.gz}"
-          rm -rf dist/stage
-          (cd dist && sha256sum "$archive" > "${archive}.sha256")
-          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
-          echo "sbom=${sbom}" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
 
-      - name: Generate SLSA build provenance attestation
+          assemble_target() {
+            target="$1"
+            stage="dist/stage-${target}"
+            archive="kaspa-pulse-${VERSION}-${target}.tar.gz"
+            sbom="kaspa-pulse-${VERSION}-${target}.cdx.json"
+            mkdir -p "$stage"
+            install -m 0755 "target/${target}/release/kaspa-pulse" "$stage/kaspa-pulse"
+            install -m 0644 LICENSE "$stage/LICENSE"
+            install -m 0644 README.md "$stage/README.md"
+            install -m 0644 "$sbom" "dist/${sbom}"
+            tar --sort=name \
+              --mtime="@${source_date_epoch}" \
+              --owner=0 --group=0 --numeric-owner \
+              -C "$stage" -cf "dist/${archive%.gz}" .
+            gzip -n -9 "dist/${archive%.gz}"
+            rm -rf "$stage"
+            (cd dist && sha256sum "$archive" > "${archive}.sha256")
+          }
+
+          assemble_target "$X86_TARGET"
+          assemble_target "$ARM64_TARGET"
+
+          {
+            echo "x86_archive=kaspa-pulse-${VERSION}-${X86_TARGET}.tar.gz"
+            echo "x86_sbom=kaspa-pulse-${VERSION}-${X86_TARGET}.cdx.json"
+            echo "arm64_archive=kaspa-pulse-${VERSION}-${ARM64_TARGET}.tar.gz"
+            echo "arm64_sbom=kaspa-pulse-${VERSION}-${ARM64_TARGET}.cdx.json"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate x86_64 SLSA build provenance attestation
         if: steps.gate.outputs.create == 'true'
-        id: provenance
+        id: provenance-x86
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/${{ steps.artifact.outputs.archive }}
+          subject-path: dist/${{ steps.artifact.outputs.x86_archive }}
 
-      - name: Generate SBOM attestation
+      - name: Generate x86_64 SBOM attestation
         if: steps.gate.outputs.create == 'true'
-        id: sbom-attestation
+        id: sbom-x86
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/${{ steps.artifact.outputs.archive }}
-          sbom-path: dist/${{ steps.artifact.outputs.sbom }}
+          subject-path: dist/${{ steps.artifact.outputs.x86_archive }}
+          sbom-path: dist/${{ steps.artifact.outputs.x86_sbom }}
+
+      - name: Generate ARM64 SLSA build provenance attestation
+        if: steps.gate.outputs.create == 'true'
+        id: provenance-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/${{ steps.artifact.outputs.arm64_archive }}
+
+      - name: Generate ARM64 SBOM attestation
+        if: steps.gate.outputs.create == 'true'
+        id: sbom-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/${{ steps.artifact.outputs.arm64_archive }}
+          sbom-path: dist/${{ steps.artifact.outputs.arm64_sbom }}
 
       - name: Export signed attestation bundles
         if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
-          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
-          ARCHIVE: ${{ steps.artifact.outputs.archive }}
+          X86_PROVENANCE_BUNDLE: ${{ steps.provenance-x86.outputs.bundle-path }}
+          X86_SBOM_BUNDLE: ${{ steps.sbom-x86.outputs.bundle-path }}
+          ARM64_PROVENANCE_BUNDLE: ${{ steps.provenance-arm64.outputs.bundle-path }}
+          ARM64_SBOM_BUNDLE: ${{ steps.sbom-arm64.outputs.bundle-path }}
+          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
+          ARM64_ARCHIVE: ${{ steps.artifact.outputs.arm64_archive }}
         run: |
           set -euo pipefail
-          cp "$PROVENANCE_BUNDLE" "dist/${ARCHIVE}.sigstore.json"
-          cp "$SBOM_BUNDLE" "dist/${ARCHIVE}.sbom.sigstore.json"
+          cp "$X86_PROVENANCE_BUNDLE" "dist/${X86_ARCHIVE}.sigstore.json"
+          cp "$X86_SBOM_BUNDLE" "dist/${X86_ARCHIVE}.sbom.sigstore.json"
+          cp "$ARM64_PROVENANCE_BUNDLE" "dist/${ARM64_ARCHIVE}.sigstore.json"
+          cp "$ARM64_SBOM_BUNDLE" "dist/${ARM64_ARCHIVE}.sbom.sigstore.json"
 
       - name: Export and verify SLSA provenance JSONL
         if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
-          ARCHIVE: ${{ steps.artifact.outputs.archive }}
+          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
+          ARM64_ARCHIVE: ${{ steps.artifact.outputs.arm64_archive }}
         run: |
           set -euo pipefail
-          mkdir -p provenance-download
-          success=false
-          for attempt in 1 2 3 4 5; do
-            rm -f provenance-download/sha256*.jsonl
-            if (cd provenance-download && gh attestation download "../dist/${ARCHIVE}" \
-                --repo "$GITHUB_REPOSITORY" \
-                --predicate-type "https://slsa.dev/provenance/v1"); then
-              success=true
-              break
-            fi
-            sleep $((attempt * 2))
-          done
-          test "$success" = true
-          provenance_file="$(find provenance-download -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)"
-          test -n "$provenance_file"
-          mv "$provenance_file" "dist/${ARCHIVE}.intoto.jsonl"
-          gh attestation verify "dist/${ARCHIVE}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle "dist/${ARCHIVE}.intoto.jsonl" \
-            --source-digest "$GITHUB_SHA" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+
+          export_and_verify() {
+            archive="$1"
+            out="provenance-download/${archive}"
+            mkdir -p "$out"
+            success=false
+            for attempt in 1 2 3 4 5; do
+              rm -f "$out"/sha256*.jsonl
+              if (cd "$out" && gh attestation download "../../dist/${archive}" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --predicate-type "https://slsa.dev/provenance/v1"); then
+                success=true
+                break
+              fi
+              sleep $((attempt * 2))
+            done
+            test "$success" = true
+            provenance_file="$(find "$out" -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)"
+            test -n "$provenance_file"
+            mv "$provenance_file" "dist/${archive}.intoto.jsonl"
+            gh attestation verify "dist/${archive}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "dist/${archive}.intoto.jsonl" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          }
+
+          export_and_verify "$X86_ARCHIVE"
+          export_and_verify "$ARM64_ARCHIVE"
 
       - name: Publish immutable versioned release assets
         if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
-          ARCHIVE: ${{ steps.artifact.outputs.archive }}
-          SBOM: ${{ steps.artifact.outputs.sbom }}
+          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
+          X86_SBOM: ${{ steps.artifact.outputs.x86_sbom }}
+          ARM64_ARCHIVE: ${{ steps.artifact.outputs.arm64_archive }}
+          ARM64_SBOM: ${{ steps.artifact.outputs.arm64_sbom }}
         run: |
           set -euo pipefail
           gh release create "$TAG" \
-            "dist/${ARCHIVE}" \
-            "dist/${ARCHIVE}.sha256" \
-            "dist/${SBOM}" \
-            "dist/${ARCHIVE}.sigstore.json" \
-            "dist/${ARCHIVE}.sbom.sigstore.json" \
-            "dist/${ARCHIVE}.intoto.jsonl" \
+            "dist/${X86_ARCHIVE}" \
+            "dist/${X86_ARCHIVE}.sha256" \
+            "dist/${X86_SBOM}" \
+            "dist/${X86_ARCHIVE}.sigstore.json" \
+            "dist/${X86_ARCHIVE}.sbom.sigstore.json" \
+            "dist/${X86_ARCHIVE}.intoto.jsonl" \
+            "dist/${ARM64_ARCHIVE}" \
+            "dist/${ARM64_ARCHIVE}.sha256" \
+            "dist/${ARM64_SBOM}" \
+            "dist/${ARM64_ARCHIVE}.sigstore.json" \
+            "dist/${ARM64_ARCHIVE}.sbom.sigstore.json" \
+            "dist/${ARM64_ARCHIVE}.intoto.jsonl" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Kaspa Pulse ${TAG}" \
             --generate-notes
 
-      - name: Verify published release manifest
+      - name: Verify published immutable release manifest
         if: steps.gate.outputs.create == 'true'
         shell: bash
+        env:
+          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
+          X86_SBOM: ${{ steps.artifact.outputs.x86_sbom }}
+          ARM64_ARCHIVE: ${{ steps.artifact.outputs.arm64_archive }}
+          ARM64_SBOM: ${{ steps.artifact.outputs.arm64_sbom }}
         run: |
           set -euo pipefail
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json tagName,isDraft,isPrerelease,targetCommitish,assets
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          printf '%s\n' \
+            "$X86_ARCHIVE" \
+            "${X86_ARCHIVE}.sha256" \
+            "$X86_SBOM" \
+            "${X86_ARCHIVE}.sigstore.json" \
+            "${X86_ARCHIVE}.sbom.sigstore.json" \
+            "${X86_ARCHIVE}.intoto.jsonl" \
+            "$ARM64_ARCHIVE" \
+            "${ARM64_ARCHIVE}.sha256" \
+            "$ARM64_SBOM" \
+            "${ARM64_ARCHIVE}.sigstore.json" \
+            "${ARM64_ARCHIVE}.sbom.sigstore.json" \
+            "${ARM64_ARCHIVE}.intoto.jsonl" | sort > "$expected_assets"
+
+          immutable=false
+          manifest=""
+          for _ in $(seq 1 30); do
+            manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish,assets)"
+            immutable="$(jq -r '.isImmutable' <<< "$manifest")"
+            if [[ "$immutable" == "true" ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          jq -e --arg tag "$TAG" --arg sha "$GITHUB_SHA" '
+            .tagName == $tag and
+            .isDraft == false and
+            .isPrerelease == false and
+            .isImmutable == true and
+            .targetCommitish == $sha
+          ' <<< "$manifest" >/dev/null
+          jq -r '.assets[].name' <<< "$manifest" | sort > "$actual_assets"
+          diff -u "$expected_assets" "$actual_assets"
+
+      - name: Verify published ARM64 bytes and provenance
+        if: steps.gate.outputs.create == 'true'
+        shell: bash
+        env:
+          ARM64_ARCHIVE: ${{ steps.artifact.outputs.arm64_archive }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/published-arm64"
+          mkdir -p "$out"
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ARM64_ARCHIVE" \
+            --pattern "${ARM64_ARCHIVE}.sha256" \
+            --pattern "${ARM64_ARCHIVE}.intoto.jsonl" \
+            --dir "$out"
+          (
+            cd "$out"
+            sha256sum --check "${ARM64_ARCHIVE}.sha256"
+            gh attestation verify "$ARM64_ARCHIVE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "${ARM64_ARCHIVE}.intoto.jsonl" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            mkdir extract
+            tar -xzf "$ARM64_ARCHIVE" -C extract
+            file extract/kaspa-pulse | grep -F "ARM aarch64"
+            LC_ALL=C grep -aF -q "$GITHUB_SHA" extract/kaspa-pulse
+          )

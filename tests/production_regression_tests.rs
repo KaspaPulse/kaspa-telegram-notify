@@ -756,6 +756,50 @@ fn build_provenance_must_be_embedded_and_propagated() {
 }
 
 #[test]
+fn signed_release_must_publish_attested_arm64_assets() {
+    let release = read_source(".github/workflows/release.yml");
+
+    for required in [
+        "aarch64-unknown-linux-gnu",
+        "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1",
+        "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+        "--platform linux/arm64",
+        "Generate ARM64 SLSA build provenance attestation",
+        "Generate ARM64 SBOM attestation",
+        "Verify published immutable release manifest",
+        "isImmutable",
+        "Verify published ARM64 bytes and provenance",
+        "gh release download",
+        "ARM aarch64",
+    ] {
+        assert!(
+            release.contains(required),
+            "release workflow missing ARM64 release control: {required}"
+        );
+    }
+
+    assert!(
+        release
+            .matches("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
+            .count()
+            >= 4,
+        "both architectures must receive provenance and SBOM attestations"
+    );
+    assert!(
+        release.contains("${ARM64_ARCHIVE}.intoto.jsonl")
+            && release.contains("${ARM64_ARCHIVE}.sigstore.json")
+            && release.contains("${ARM64_ARCHIVE}.sbom.sigstore.json"),
+        "ARM64 release must publish exported provenance and SBOM bundles"
+    );
+    assert!(
+        release.contains("--source-digest \"$GITHUB_SHA\"")
+            && release
+                .contains("--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\""),
+        "published artifacts must be verified against exact source and canonical release workflow"
+    );
+}
+
+#[test]
 fn production_http_clients_must_be_fallible_and_versioned() {
     let runtime = read_source("src/infrastructure/resilience/runtime.rs");
     let system = read_source("src/infrastructure/external_services/system.rs");
