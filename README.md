@@ -220,6 +220,23 @@ The owned executable implementation is Rust-native: the tracked tree contains no
 
 Build the candidate and fixture, then use `cargo run --locked -p xtask -- opqual ...`. See [docs/OPERATIONAL_QUALIFICATION.md](docs/OPERATIONAL_QUALIFICATION.md) for dry-run, material-run, crash-safe resume, cleanup, and evidence semantics.
 
+### External provider contracts
+
+The required pull-request E2E remains hermetic and secret-free. A separate
+trusted-provider layer validates real external contracts without exposing test
+credentials to pull-request code:
+
+- live Kaspa wRPC runs read-only on trusted `main`, using either an explicit
+  endpoint or the Rusty Kaspa public resolver;
+- Telegram Test Environment validation is manual-only on `main` and uses a
+  dedicated GitHub Environment with dedicated test bot/chat credentials;
+- provider failures never weaken or replace the required Hermetic E2E merge
+  gate.
+
+See [docs/EXTERNAL_CONTRACT_E2E.md](docs/EXTERNAL_CONTRACT_E2E.md) for provider
+selection, Test Environment setup, retry/backoff behavior, evidence, and local
+commands.
+
 ---
 
 ## Quality and supply chain
