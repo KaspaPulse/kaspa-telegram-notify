@@ -761,8 +761,14 @@ fn signed_release_must_publish_attested_arm64_assets() {
 
     for required in [
         "aarch64-unknown-linux-gnu",
-        "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1",
+        "runs-on: ubuntu-24.04-arm",
         "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+        "Build and attest ARM64 release",
+        "Upload verified ARM64 release bundle",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "Download native ARM64 release bundle",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+        "Verify native ARM64 release bundle before publication",
         "--platform linux/arm64",
         "Generate ARM64 SLSA build provenance attestation",
         "Generate ARM64 SBOM attestation",
@@ -778,6 +784,10 @@ fn signed_release_must_publish_attested_arm64_assets() {
         );
     }
 
+    assert!(
+        !release.contains("docker/setup-qemu-action@"),
+        "ARM64 release builds must run on native GitHub-hosted ARM rather than QEMU emulation"
+    );
     assert!(
         release
             .matches("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")

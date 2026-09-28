@@ -13,7 +13,7 @@ Starting with `v1.3.1`, every published Linux release contains parallel `x86_64-
 - a Sigstore bundle for the SBOM attestation (`*.sbom.sigstore.json`);
 - an in-toto/SLSA provenance bundle (`*.intoto.jsonl`).
 
-The ARM64 binary is built inside the protected GitHub Actions release job using the repository Dockerfile under QEMU/Buildx. The workflow verifies that the image is `linux/arm64`, that its OCI revision label equals the exact GitHub commit, and that the extracted ELF embeds the same full source revision before it can be archived or attested.
+The ARM64 binary is built on GitHub's standard native `ubuntu-24.04-arm` hosted runner using the repository Dockerfile and Buildx without CPU emulation. The native ARM builder verifies that the image is `linux/arm64`, that its OCI revision label equals the exact GitHub commit, and that the extracted ELF embeds the same full source revision. On protected main runs the same native builder creates the deterministic ARM64 archive and target SBOM, generates provenance and SBOM attestations in the builder job, verifies the provenance against the exact source and canonical release workflow, and passes the complete verified bundle to the publication job through an immutable GitHub Actions artifact.
 
 The release workflow uses GitHub OIDC and ephemeral Sigstore signing through GitHub Artifact Attestations. No long-lived release signing private key is stored in the repository.
 
@@ -54,12 +54,12 @@ The release pipeline:
 
 - builds with the repository-pinned Rust toolchain and `Cargo.lock` using `--locked`;
 - preflights both target-specific CycloneDX SBOMs on release-affecting pull requests;
-- preflights the ARM64 Docker/QEMU build on release-affecting pull requests;
+- preflights the ARM64 Docker build on GitHub's native `ubuntu-24.04-arm` runner on release-affecting pull requests;
 - embeds the exact GitHub source revision into both release binaries;
 - uses deterministic archive order, ownership, timestamp, and gzip metadata;
 - generates a target-specific CycloneDX SBOM from the locked dependency graph;
 - normalizes each CycloneDX serial number deterministically from repository, commit, version, target, and specification version;
-- generates separate SLSA provenance and SBOM attestations for x86_64 and ARM64 before publication;
+- generates separate SLSA provenance and SBOM attestations for x86_64 and ARM64 before publication, with ARM64 attestations produced in the native ARM builder job;
 - downloads and verifies the SLSA provenance bundle for each artifact before creating the GitHub Release;
 - publishes both target artifact sets in one GitHub Release tied to the exact workflow commit;
 - requires the published release to report `isImmutable=true` and the exact expected asset manifest;
