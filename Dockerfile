@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Keep the human-readable tag for Dependabot while pinning the immutable image digest.
-FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS builder
+FROM rust:1.99.0-slim-trixie@sha256:01dd4f9c24801cfc8ba9cf8a5dd6dcca451cd17d1ae73574edc22591de6e6816 AS builder
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends pkg-config libssl-dev ca-certificates \
