@@ -132,6 +132,7 @@ pub fn emit_supply(root: impl AsRef<Path>) -> Result<()> {
 pub fn verify_all(root: impl AsRef<Path>) -> Result<()> {
     let root = root.as_ref();
     crate::security::environment_boundary(root)?;
+    crate::security::metadata(root)?;
     crate::security::kaspa_pins(root, None, None)?;
     crate::security::advisories(root, 45)?;
     crate::security::action_pins(root)?;

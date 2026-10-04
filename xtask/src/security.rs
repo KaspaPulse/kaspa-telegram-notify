@@ -668,6 +668,170 @@ pub fn documentation(root: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
+fn yaml_scalar(document: &str, key: &str) -> Result<String> {
+    for line in document.lines() {
+        let body = line.trim();
+        let Some((candidate, raw_value)) = body.split_once(':') else {
+            continue;
+        };
+        if candidate != key {
+            continue;
+        }
+        let raw_value = raw_value.split(" #").next().unwrap_or_default().trim();
+        let value = raw_value.trim_matches(|ch| ch == '"' || ch == '\'');
+        ensure!(
+            !value.is_empty(),
+            "security-insights.yml scalar field {key} must not be empty"
+        );
+        return Ok(value.to_owned());
+    }
+    bail!("security-insights.yml missing scalar field {key}")
+}
+
+pub fn metadata(root: impl AsRef<Path>) -> Result<()> {
+    let root = root.as_ref();
+    let insights = read_text(root, "security-insights.yml")?;
+    validate_public_topology_text("security-insights.yml", &insights)?;
+
+    ensure!(
+        !insights.contains('\t') && !insights.contains('\r'),
+        "security-insights.yml must use portable LF/space indentation"
+    );
+    for (index, line) in insights.lines().enumerate() {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        ensure!(
+            indent % 2 == 0,
+            "security-insights.yml line {} uses non-canonical indentation",
+            index + 1
+        );
+        let body = line.trim_start();
+        ensure!(
+            body.starts_with("- ") || body.contains(':'),
+            "security-insights.yml line {} is not a valid constrained YAML mapping/list entry",
+            index + 1
+        );
+    }
+
+    ensure!(
+        yaml_scalar(&insights, "schema-version")? == "2.2.0",
+        "security-insights.yml must use approved schema-version 2.2.0"
+    );
+    for key in ["last-updated", "last-reviewed"] {
+        let value = yaml_scalar(&insights, key)?;
+        NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+            .with_context(|| format!("security-insights.yml {key} must be YYYY-MM-DD"))?;
+    }
+    for section in [
+        "header:",
+        "project:",
+        "repository:",
+        "  release:",
+        "    attestations:",
+        "  security:",
+        "    assessments:",
+    ] {
+        ensure!(
+            insights.lines().any(|line| line == section),
+            "security-insights.yml missing required section {section}"
+        );
+    }
+
+    let cargo: TomlValue = read_text(root, "Cargo.toml")?
+        .parse()
+        .context("invalid Cargo.toml")?;
+    let version = cargo
+        .get("package")
+        .and_then(TomlValue::as_table)
+        .and_then(|table| table.get("version"))
+        .and_then(TomlValue::as_str)
+        .context("Cargo.toml missing package.version")?;
+    let tag = format!("v{version}");
+    let release_prefix =
+        format!("https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/{tag}/");
+    let expected_attestations = [
+        format!(
+            "{release_prefix}kaspa-pulse-{version}-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        ),
+        format!(
+            "{release_prefix}kaspa-pulse-{version}-aarch64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        ),
+    ];
+    for expected in &expected_attestations {
+        ensure!(
+            insights.contains(expected),
+            "security-insights.yml missing current release provenance: {expected}"
+        );
+    }
+
+    let release_locations: BTreeSet<String> = insights
+        .lines()
+        .filter_map(|line| {
+            let value = line
+                .trim()
+                .strip_prefix("location: \"")?
+                .strip_suffix('"')?;
+            value
+                .contains("/releases/download/")
+                .then(|| value.to_owned())
+        })
+        .collect();
+    let expected_release_locations: BTreeSet<String> =
+        expected_attestations.iter().cloned().collect();
+    ensure!(
+        release_locations == expected_release_locations,
+        "security-insights.yml release provenance set diverges from the current package version/architectures"
+    );
+    ensure!(
+        insights
+            .matches("predicate-uri: \"https://slsa.dev/provenance/v1\"")
+            .count()
+            == expected_attestations.len(),
+        "security-insights.yml provenance records must use the SLSA provenance predicate"
+    );
+
+    let stable_scorecard = "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/.github/workflows/scorecard.yml";
+    ensure!(
+        insights.contains(&format!("evidence: \"{stable_scorecard}\"")),
+        "security-insights.yml assessment evidence must use the stable Scorecard workflow location"
+    );
+    ensure!(
+        !insights.contains("/actions/runs/"),
+        "security-insights.yml must not hardcode ephemeral workflow run IDs"
+    );
+
+    for path in [
+        "CODE_OF_CONDUCT.md",
+        "README.md",
+        ".github/workflows/release.yml",
+        "SUPPLY_CHAIN.md",
+        "SECURITY.md",
+        "CONTRIBUTING.md",
+        "SECURITY_ADVISORIES.md",
+        ".github/workflows/scorecard.yml",
+    ] {
+        ensure!(
+            root.join(path).is_file(),
+            "security metadata authority path is missing: {path}"
+        );
+    }
+    ensure!(
+        insights.contains("https://github.com/KaspaPulse/kaspa-telegram-notify"),
+        "security-insights.yml repository identity is missing"
+    );
+    ensure!(
+        !Regex::new(r"(?i)\bSLSA\s+(?:level\s*)?[1-9]\b")?.is_match(&insights),
+        "security-insights.yml must not claim an external SLSA level"
+    );
+
+    println!(
+        "security-metadata-check: PASS schema=2.2.0 release={tag} architectures=x86_64,aarch64 evidence=stable-scorecard-workflow"
+    );
+    Ok(())
+}
+
 const SCORECARD_EXCLUDED_RULE_IDS: [&str; 3] =
     ["BranchProtectionID", "CIIBestPracticesID", "CodeReviewID"];
 
@@ -1199,6 +1363,130 @@ scanners = ["OSV", "CARGO_DENY"]
         )
         .unwrap();
         assert!(advisories(dir.path(), 45).is_err());
+    }
+
+    fn write_metadata_fixture(root: &Path) {
+        fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"1.3.2\"\nedition = \"2024\"\nrust-version = \"1.97.1\"\n",
+        )
+        .unwrap();
+        for path in [
+            "CODE_OF_CONDUCT.md",
+            "README.md",
+            "SUPPLY_CHAIN.md",
+            "SECURITY.md",
+            "CONTRIBUTING.md",
+            "SECURITY_ADVISORIES.md",
+        ] {
+            fs::write(root.join(path), "# Fixture\n").unwrap();
+        }
+        fs::write(
+            root.join(".github/workflows/release.yml"),
+            "name: Release\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".github/workflows/scorecard.yml"),
+            "name: OpenSSF Scorecard\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("security-insights.yml"),
+            r#"header:
+  schema-version: "2.2.0"
+  last-updated: "2026-10-04"
+  last-reviewed: "2026-10-04"
+  url: "https://raw.githubusercontent.com/KaspaPulse/kaspa-telegram-notify/main/security-insights.yml"
+project:
+  name: "Kaspa Pulse"
+  documentation:
+    code-of-conduct: "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/CODE_OF_CONDUCT.md"
+repository:
+  url: "https://github.com/KaspaPulse/kaspa-telegram-notify"
+  documentation:
+    contributing-guide: "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/CONTRIBUTING.md"
+    dependency-management-policy: "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/SECURITY_ADVISORIES.md"
+    security-policy: "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/SECURITY.md"
+  release:
+    automated-pipeline: true
+    attestations:
+      - name: "SLSA build provenance (Linux x86_64)"
+        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.3.2/kaspa-pulse-1.3.2-x86_64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        predicate-uri: "https://slsa.dev/provenance/v1"
+      - name: "SLSA build provenance (Linux aarch64)"
+        location: "https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.3.2/kaspa-pulse-1.3.2-aarch64-unknown-linux-gnu.tar.gz.intoto.jsonl"
+        predicate-uri: "https://slsa.dev/provenance/v1"
+  security:
+    assessments:
+      self:
+        evidence: "https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/.github/workflows/scorecard.yml"
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn metadata_contract_fails_closed_on_release_evidence_or_policy_drift() {
+        let valid = tempfile::tempdir().unwrap();
+        write_metadata_fixture(valid.path());
+        metadata(valid.path()).expect("canonical metadata fixture must pass");
+
+        for (from, to) in [
+            ("/releases/download/v1.3.2/", "/releases/download/v1.3.1/"),
+            (
+                "KaspaPulse/kaspa-telegram-notify",
+                "OtherOwner/other-repository",
+            ),
+            (
+                "blob/main/.github/workflows/scorecard.yml",
+                "actions/runs/123456789",
+            ),
+            (
+                "predicate-uri: \"https://slsa.dev/provenance/v1\"",
+                "predicate-uri: \"https://example.invalid/provenance\"",
+            ),
+        ] {
+            write_metadata_fixture(valid.path());
+            let path = valid.path().join("security-insights.yml");
+            let contents = fs::read_to_string(&path).unwrap().replace(from, to);
+            fs::write(&path, contents).unwrap();
+            assert!(
+                metadata(valid.path()).is_err(),
+                "metadata drift passed: {from}"
+            );
+        }
+
+        write_metadata_fixture(valid.path());
+        let path = valid.path().join("security-insights.yml");
+        let contents = fs::read_to_string(&path).unwrap().replace(
+            "      - name: \"SLSA build provenance (Linux aarch64)\"\n        location: \"https://github.com/KaspaPulse/kaspa-telegram-notify/releases/download/v1.3.2/kaspa-pulse-1.3.2-aarch64-unknown-linux-gnu.tar.gz.intoto.jsonl\"\n        predicate-uri: \"https://slsa.dev/provenance/v1\"\n",
+            "",
+        );
+        fs::write(&path, contents).unwrap();
+        assert!(metadata(valid.path()).is_err());
+
+        write_metadata_fixture(valid.path());
+        let path = valid.path().join("security-insights.yml");
+        let mut contents = fs::read_to_string(&path).unwrap();
+        contents.push_str("  comment: \"SLSA Level 3 certified\"\n");
+        fs::write(&path, contents).unwrap();
+        assert!(metadata(valid.path()).is_err());
+
+        write_metadata_fixture(valid.path());
+        let path = valid.path().join("security-insights.yml");
+        let mut contents = fs::read_to_string(&path).unwrap();
+        contents.push_str("  comment: \"/home/private-user/runtime\"\n");
+        fs::write(&path, contents).unwrap();
+        assert!(metadata(valid.path()).is_err());
+
+        write_metadata_fixture(valid.path());
+        let path = valid.path().join("security-insights.yml");
+        let mut contents = fs::read_to_string(&path).unwrap();
+        contents.push_str("\tinvalid: true\n");
+        fs::write(&path, contents).unwrap();
+        assert!(metadata(valid.path()).is_err());
     }
 
     #[test]
