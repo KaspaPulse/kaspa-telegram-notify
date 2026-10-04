@@ -57,6 +57,7 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum SecurityCommand {
     EnvironmentBoundary,
+    Documentation,
     KaspaPins {
         #[arg(long)]
         expected_version: Option<String>,
@@ -180,6 +181,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Security { command } => match command {
             SecurityCommand::EnvironmentBoundary => security::environment_boundary("."),
+            SecurityCommand::Documentation => security::documentation("."),
             SecurityCommand::KaspaPins {
                 expected_version,
                 expected_rev,

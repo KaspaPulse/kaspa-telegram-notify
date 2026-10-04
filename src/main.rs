@@ -533,7 +533,10 @@ async fn main() -> anyhow::Result<()> {
         market_provider.clone(),
     ));
 
-    let bot = Bot::new(startup.bot_token.clone());
+    let bot = match startup.telegram_api_url.clone() {
+        Some(url) => Bot::new(startup.bot_token.clone()).set_api_url(url),
+        None => Bot::new(startup.bot_token.clone()),
+    };
     let admin_user_id = startup.admin_user_id;
     let admin_chat_id = startup.admin_chat_id;
     let mut telegram_command_sync_errors = 0usize;

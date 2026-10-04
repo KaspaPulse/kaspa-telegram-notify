@@ -19,6 +19,7 @@ pub struct StartupConfig {
     pub verbose_logs: bool,
     pub allow_runtime_schema_ensure: bool,
     pub bot_token: String,
+    pub telegram_api_url: Option<reqwest::Url>,
     pub admin_user_id: u64,
     pub admin_chat_id: i64,
     pub use_webhook: bool,
@@ -39,6 +40,39 @@ impl StartupConfig {
         let node_url = required(&mut lookup, "NODE_URL_01")?;
         let bot_token = required(&mut lookup, "BOT_TOKEN")?;
         let app_env = optional(&mut lookup, "APP_ENV").unwrap_or_else(|| "production".to_string());
+        let telegram_api_url = optional(&mut lookup, "TELEGRAM_API_URL")
+            .map(|raw| {
+                raw.parse::<reqwest::Url>()
+                    .with_context(|| "TELEGRAM_API_URL must be a valid absolute URL")
+            })
+            .transpose()?;
+
+        if !app_env.eq_ignore_ascii_case("ci") && telegram_api_url.is_some() {
+            bail!("TELEGRAM_API_URL is test-only and requires APP_ENV=ci");
+        }
+
+        if app_env.eq_ignore_ascii_case("ci") {
+            let url = telegram_api_url
+                .as_ref()
+                .context("APP_ENV=ci requires TELEGRAM_API_URL")?;
+            let host = url
+                .host_str()
+                .and_then(|value| value.parse::<IpAddr>().ok())
+                .context("APP_ENV=ci requires TELEGRAM_API_URL to use a numeric loopback host")?;
+            if url.scheme() != "http"
+                || !host.is_loopback()
+                || url.port().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                bail!(
+                    "APP_ENV=ci requires an explicit http loopback TELEGRAM_API_URL with no credentials"
+                );
+            }
+            if !bot_token.ends_with(":TEST_PLACEHOLDER_TOKEN_NOT_REAL") {
+                bail!("APP_ENV=ci requires the documented synthetic BOT_TOKEN fixture");
+            }
+        }
 
         let db_max_connections = parse_u32_range(
             optional(&mut lookup, "DB_MAX_CONNECTIONS").as_deref(),
@@ -132,6 +166,7 @@ impl StartupConfig {
             verbose_logs,
             allow_runtime_schema_ensure,
             bot_token,
+            telegram_api_url,
             admin_user_id,
             admin_chat_id,
             use_webhook,
@@ -245,19 +280,68 @@ mod tests {
             ("DATABASE_URL", "postgres://localhost/kaspa"),
             ("NODE_URL_01", "wss://node.example.invalid/json"),
             ("BOT_TOKEN", "123456:test"),
-            ("ADMIN_ID", "484901117"),
+            ("ADMIN_USER_ID", "42"),
+            ("ADMIN_CHAT_ID", "42"),
         ]
     }
 
     #[test]
-    fn legacy_admin_id_populates_private_admin_identity() {
+    fn explicit_private_admin_identity_is_loaded() {
         let config = load(&required_values()).expect("valid config");
 
-        assert_eq!(config.admin_user_id, 484_901_117);
-        assert_eq!(config.admin_chat_id, 484_901_117);
+        assert_eq!(config.admin_user_id, 42);
+        assert_eq!(config.admin_chat_id, 42);
         assert_eq!(config.db_max_connections, 10);
         assert!(!config.use_webhook);
         assert!(config.webhook.is_none());
+    }
+
+    #[test]
+    fn legacy_admin_id_still_populates_private_admin_identity() {
+        let values = [
+            ("DATABASE_URL", "postgres://localhost/kaspa"),
+            ("NODE_URL_01", "wss://node.example.invalid/json"),
+            ("BOT_TOKEN", "123456:test"),
+            ("ADMIN_ID", "42"),
+        ];
+        let config = load(&values).expect("valid legacy config");
+        assert_eq!(config.admin_user_id, 42);
+        assert_eq!(config.admin_chat_id, 42);
+    }
+
+    #[test]
+    fn ci_requires_loopback_telegram_api_and_synthetic_token() {
+        let mut values = required_values();
+        values.retain(|(key, _)| *key != "BOT_TOKEN");
+        values.extend([
+            ("BOT_TOKEN", "1234567890:TEST_PLACEHOLDER_TOKEN_NOT_REAL"),
+            ("APP_ENV", "ci"),
+        ]);
+
+        let missing = load(&values).expect_err("CI without an API override must fail");
+        assert!(missing.to_string().contains("TELEGRAM_API_URL"));
+
+        values.push(("TELEGRAM_API_URL", "http://203.0.113.1:9/"));
+        let non_loopback = load(&values).expect_err("CI must reject non-loopback API hosts");
+        assert!(non_loopback.to_string().contains("loopback"));
+
+        values.pop();
+        values.push(("TELEGRAM_API_URL", "http://127.0.0.1:9/"));
+        let config = load(&values).expect("loopback-only CI Telegram API is valid");
+        assert!(config.telegram_api_url.is_some());
+    }
+
+    #[test]
+    fn telegram_api_override_is_forbidden_outside_ci() {
+        let mut values = required_values();
+        values.push(("TELEGRAM_API_URL", "http://127.0.0.1:9/"));
+
+        let error = load(&values).expect_err("non-CI API override must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("TELEGRAM_API_URL is test-only and requires APP_ENV=ci")
+        );
     }
 
     #[test]

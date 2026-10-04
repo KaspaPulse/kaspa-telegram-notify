@@ -2,23 +2,32 @@
 
 Task family: Kaspa Telegram operational qualification (`EXEC-01`).
 
-The harness provides a reproducible, resumable, fail-closed way to qualify the exact Kaspa Pulse candidate on `kas` without using Production, real users, real Telegram traffic, real wallets, public listeners, or Production credentials.
+The harness provides a reproducible, resumable, fail-closed way to qualify the exact Kaspa Pulse candidate in an isolated, trusted, non-production development environment without using production systems, real users, real Telegram traffic, real wallets, public listeners, or production credentials.
 
 ## Scope and safety boundary
 
-- Development/qualification host: `kas` only, as required by `AGENTS.md`.
+- Run qualification only in an isolated, trusted, non-production development environment.
 - Default task identity: `kaspa-telegram-opqual-v1`.
 - Docker network: `kp-opqual-v1`, internal-only, no host port publishing.
 - PostgreSQL 18 database: `kaspa_opqual_v1`.
 - Runtime role: `kaspa_pulse_app`.
 - PostgreSQL application name: `kaspa-opqual-v1`.
-- All containers, network and volume carry the task label and are ownership-checked before mutation or cleanup.
+- All containers, network, and volume carry the task label and are ownership-checked before mutation or cleanup.
 - Synthetic Telegram identities and generated/synthetic Kaspa data only.
 - Provider fixtures run locally on the internal Docker network and do not require Internet access.
-- Merge, release, deploy, Production and DNS are outside this harness.
+- Merge, release, deployment, and production operations are outside this harness.
 
 The harness refuses inherited runtime credential environment variables and validates the expected source commit and qualified binary SHA-256 before material work.
+
 ## One-command usage
+
+Local qualification requires an explicit non-production boundary opt-in:
+
+```bash
+export KASPA_PULSE_OPQUAL_ENV=ISOLATED_NON_PRODUCTION
+```
+
+This opt-in does not weaken the harness: inherited runtime credentials are still refused, provider fixtures remain internal, and task-owned resources remain isolated and ownership-checked.
 
 Dry-run first:
 
@@ -41,13 +50,14 @@ cargo run --locked -p xtask -- opqual resume <run-id> --binary target/release/ka
 ```
 
 A phase marked `VERIFIED` is skipped only when its current side effects still match. If the receipt and reality disagree, the harness records an `UNKNOWN` resume condition and refuses blind replay.
+
 ## Execution model
 
 The one-command lifecycle is:
 
 `preflight → provision → migrate → fixtures → start-app → create-lock → EXEC-01 shutdown proof → restart → scenarios → cleanup → final evidence`.
 
-`EXEC-01` uses the real Telegram delivery worker. The external observer owns the conflicting advisory lock; the application claims a synthetic delivery row and must block inside its real `pg_advisory_xact_lock(chat_id)` path. Only then does the harness send SIGTERM to the exact task-owned application container/PID.
+`EXEC-01` uses the real Telegram delivery worker against synthetic task-owned state. The external observer owns the conflicting advisory lock; the application claims a synthetic delivery row and must block inside its real `pg_advisory_xact_lock(chat_id)` path. Only then does the harness send SIGTERM to the exact task-owned application container/PID.
 
 The shutdown proof requires the application backend to have been waiting on the advisory lock, the external lock to remain held while shutdown is observed, application sessions and application locks to reach zero, clean process exit, no SIGKILL success path, and no admission of new post-SIGTERM queue work.
 
@@ -56,13 +66,14 @@ The restart phase releases the external test lock only after zero-session/zero-l
 The scenario runner consumes `opqual/scenario-map.csv` as mapping input only. It never treats the CSV as PASS evidence. Every executed row ends as `VERIFIED_PASS`, `VERIFIED_FAIL`, `BLOCKED`, or `NOT_APPLICABLE`; unsupported/unproven contracts remain `BLOCKED`.
 
 The Rust scenario runner also executes the supplemental EDGE-001 full-dispatcher cycle. It proves both missing and negative HTTP-200 fee payloads through the exact main/dispatcher path without rendering invalid values as live estimates, and includes that journey in the final scenario summary.
+
 ## Evidence and interruption safety
 
 Each material run writes under `evidence/opqual/<run-id>/` and keeps `state.json` plus append-only `operations.jsonl`. Material operations record `PLANNED` before effects and a verified terminal state afterward. Signal state is persisted so a resume never sends SIGTERM twice just because a previous client/session disappeared.
 
 Successful runs produce source/binary identities, environment and Docker inventories, network map, migration receipt, synthetic identity manifest, fixture hashes, application stdout/stderr, PostgreSQL activity/lock timelines, signal timeline, shutdown and restart verification, scenario results, cleanup receipt, `FINAL_RESULT.json`, and `SHA256SUMS.txt`.
 
-Test CA private keys are ephemeral runtime inputs and are deleted during cleanup; final evidence must contain no Production credentials or real-user data.
+Test CA private keys are ephemeral runtime inputs and are deleted during cleanup; final evidence must contain no production credentials or real-user data.
 
 ## Result meanings
 
@@ -74,4 +85,4 @@ Test CA private keys are ephemeral runtime inputs and are deleted during cleanup
 
 ## Troubleshooting
 
-If a material phase fails, preserve its evidence and do not change the expected candidate to make the harness pass. If tool safety blocks an effect, classify the runtime execution as blocked and continue non-blocked harness validation only. Never route around tool-safety, reuse a Production database, publish ports, or clean unrelated resources.
+If a material phase fails, preserve its evidence and do not change the expected candidate to make the harness pass. If tool safety blocks an effect, classify the runtime execution as blocked and continue non-blocked harness validation only. Never route around tool safety, reuse a production database, publish ports, or clean unrelated resources.

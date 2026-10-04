@@ -103,12 +103,64 @@ pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
     let msrv = policy_str(policy, "msrv")?;
     let toolchain = policy_str(policy, "toolchain")?;
     let slsa_claim = policy_str(policy, "slsa_claim")?;
+    let environment = policy
+        .get("environment_boundary")
+        .and_then(TomlValue::as_table)
+        .context("proof policy missing [environment_boundary]")?;
+    let ci_identity = policy
+        .get("ci_identity")
+        .and_then(TomlValue::as_table)
+        .context("proof policy missing [ci_identity]")?;
+    let advisory_count = policy
+        .get("advisory_exception")
+        .and_then(TomlValue::as_array)
+        .context("proof policy missing advisory_exception records")?
+        .len();
+
+    let env_str = |key: &str| -> Result<&str> {
+        environment
+            .get(key)
+            .and_then(TomlValue::as_str)
+            .with_context(|| format!("environment_boundary missing {key}"))
+    };
+    ensure!(env_str("production_source_mutation")? == "FORBIDDEN");
+    ensure!(env_str("production_source_build")? == "FORBIDDEN");
+    ensure!(env_str("production_as_ci_runner")? == "FORBIDDEN");
+    ensure!(env_str("local_build_role")? == "QUALIFICATION_ONLY");
+    ensure!(env_str("canonical_release_artifact")? == "PUBLISHED_ATTESTED_GITHUB_RELEASE");
+    ensure!(env_str("private_host_identity_in_public_policy")? == "FORBIDDEN");
+
+    let ci_str = |key: &str| -> Result<&str> {
+        ci_identity
+            .get(key)
+            .and_then(TomlValue::as_str)
+            .with_context(|| format!("ci_identity missing {key}"))
+    };
+    ensure!(ci_str("fixture_kind")? == "SYNTHETIC");
+    ensure!(ci_str("external_telegram_access")? == "FORBIDDEN");
+    ensure!(ci_str("real_user_lookup")? == "FORBIDDEN");
+    ensure!(ci_str("real_message_delivery")? == "FORBIDDEN");
 
     let required_ci_text = read(root, required_ci)?;
     require_contains(
         &required_ci_text,
         "cargo xtask proof verify",
         "required Rust-only proof CI gate",
+    )?;
+    require_contains(
+        &required_ci_text,
+        "cargo xtask security environment-boundary",
+        "structured environment-boundary CI gate",
+    )?;
+    require_contains(
+        &required_ci_text,
+        "cargo xtask security documentation",
+        "documentation-contract CI gate",
+    )?;
+    require_contains(
+        &required_ci_text,
+        "cargo xtask security advisories --max-age-days 45",
+        "canonical advisory CI gate",
     )?;
 
     let msrv_ci_text = read(root, msrv_ci)?;
@@ -206,6 +258,26 @@ pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
             "ci_workflow": msrv_ci,
             "matrix": "kaspa-pulse --all-targets --all-features",
             "status": "EXPLICIT_AND_TESTED"
+        },
+        "environment_boundary": {
+            "production_source_mutation": env_str("production_source_mutation")?,
+            "production_source_build": env_str("production_source_build")?,
+            "production_as_ci_runner": env_str("production_as_ci_runner")?,
+            "local_build_role": env_str("local_build_role")?,
+            "canonical_release_artifact": env_str("canonical_release_artifact")?,
+            "private_host_identity_in_public_policy": env_str("private_host_identity_in_public_policy")?
+        },
+        "ci_identity": {
+            "fixture_kind": ci_str("fixture_kind")?,
+            "telegram_api_url": ci_str("telegram_api_url")?,
+            "external_telegram_access": ci_str("external_telegram_access")?,
+            "real_user_lookup": ci_str("real_user_lookup")?,
+            "real_message_delivery": ci_str("real_message_delivery")?
+        },
+        "advisory_policy": {
+            "canonical_record_count": advisory_count,
+            "authority": "proof/policy.toml",
+            "scanner_projection": "FAIL_CLOSED"
         },
         "action_references": actions,
         "proof_artifacts": [

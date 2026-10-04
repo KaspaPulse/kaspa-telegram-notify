@@ -1,5 +1,5 @@
-schema_version = "1.1.0"
-policy_version = 2
+schema_version = "1.2.0"
+policy_version = 3
 proof_artifact_dir = "target/proof"
 targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 msrv = "1.97.1"
@@ -8,6 +8,158 @@ slsa_claim = "NOT_ASSERTED"
 policy_owner = "KaspaPulse repository owner"
 required_ci_workflow = ".github/workflows/security.yml"
 msrv_ci_workflow = ".github/workflows/rust-ci.yml"
+
+[environment_boundary]
+production_source_mutation = "FORBIDDEN"
+production_source_build = "FORBIDDEN"
+production_as_ci_runner = "FORBIDDEN"
+local_build_role = "QUALIFICATION_ONLY"
+canonical_release_artifact = "PUBLISHED_ATTESTED_GITHUB_RELEASE"
+private_host_identity_in_public_policy = "FORBIDDEN"
+
+[ci_identity]
+fixture_kind = "SYNTHETIC"
+admin_user_id = "9000000000000000000"
+admin_chat_id = "9000000000000000000"
+telegram_api_url = "http://127.0.0.1:9/"
+external_telegram_access = "FORBIDDEN"
+real_user_lookup = "FORBIDDEN"
+real_message_delivery = "FORBIDDEN"
+
+[[advisory_exception]]
+id = "RUSTSEC-2025-0052"
+package = "async-std 1.13.2"
+dependency_path = "async-std -> workflow-core 0.18.0 -> pinned rusty-kaspa 2.1.0 graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "RUNTIME_TRANSITIVE"
+target_reachability = "SUPPORTED_LINUX_TARGETS_TRANSITIVE"
+security_impact = "UNMAINTAINED_UPSTREAM_DEPENDENCY"
+justification = "Reviewed 2026-10-04: async-std 1.13.2 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; the application has no direct async-std dependency and no compatible stable upstream path removes it."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the pinned rusty-kaspa dependency path no longer resolves async-std or a compatible maintained path becomes available."
+upstream_blocker_if_any = "Pinned rusty-kaspa 2.1.0 workflow dependency graph."
+scanners = ["OSV", "CARGO_AUDIT", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2021-0145"
+package = "atty 0.2.14"
+dependency_path = "atty -> hexplay 0.3.0 -> pinned Kaspa/workflow graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "RUNTIME_TRANSITIVE"
+target_reachability = "WINDOWS_SPECIFIC_UNSOUNDNESS_NOT_PRODUCTION_LINUX"
+security_impact = "UNSOUNDNESS_PLATFORM_LIMITED"
+justification = "Reviewed 2026-10-04: atty 0.2.14 is transitive through hexplay 0.3.0 in the pinned Kaspa/workflow graph; the published unsoundness is Windows-specific, production qualification is Linux, and no patched atty release exists."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the transitive atty path disappears or a compatible maintained replacement is adopted upstream."
+upstream_blocker_if_any = "Transitive hexplay path in the pinned upstream graph."
+scanners = ["OSV"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2024-0375"
+package = "atty 0.2.14"
+dependency_path = "atty -> hexplay 0.3.0 -> pinned Kaspa/workflow graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "RUNTIME_TRANSITIVE"
+target_reachability = "SUPPORTED_LINUX_TARGETS_TRANSITIVE"
+security_impact = "UNMAINTAINED_UPSTREAM_DEPENDENCY"
+justification = "Reviewed 2026-10-04: atty 0.2.14 is unmaintained and reaches the application only through hexplay 0.3.0 in the pinned Kaspa/workflow graph; there is no direct application dependency or compatible maintained upstream replacement."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the upstream dependency path no longer resolves atty."
+upstream_blocker_if_any = "Transitive hexplay path in the pinned upstream graph."
+scanners = ["OSV", "CARGO_AUDIT", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2024-0388"
+package = "derivative 2.2.0"
+dependency_path = "derivative -> ark-crypto-primitives 0.6.0 -> ark-groth16 0.6.0 -> kaspa-txscript 2.1.0"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "BUILD_AND_RUNTIME_GRAPH_TRANSITIVE"
+target_reachability = "PINNED_KASPA_TXSCRIPT_GRAPH"
+security_impact = "UNMAINTAINED_UPSTREAM_DEPENDENCY"
+justification = "Reviewed 2026-10-04: derivative 2.2.0 is transitive through ark-crypto-primitives 0.6.0 and ark-groth16 0.6.0 into kaspa-txscript 2.1.0; the application does not select derivative directly and no compatible stable upstream path removes it."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the pinned Kaspa/Arkworks path no longer resolves derivative."
+upstream_blocker_if_any = "Pinned kaspa-txscript 2.1.0 Arkworks dependency path."
+scanners = ["OSV", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2024-0384"
+package = "instant 0.1.13"
+dependency_path = "instant -> workflow-core 0.18.0 -> pinned rusty-kaspa 2.1.0 graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "RUNTIME_TRANSITIVE"
+target_reachability = "SUPPORTED_LINUX_TARGETS_TRANSITIVE"
+security_impact = "UNMAINTAINED_UPSTREAM_DEPENDENCY"
+justification = "Reviewed 2026-10-04: instant 0.1.13 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; it is not a direct application dependency and no compatible stable upstream path removes it."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the pinned upstream workflow dependency path no longer resolves instant."
+upstream_blocker_if_any = "Pinned rusty-kaspa 2.1.0 workflow dependency graph."
+scanners = ["OSV", "CARGO_AUDIT", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2024-0436"
+package = "paste 1.0.15"
+dependency_path = "paste -> pinned Kaspa RPC/notify crates and kaspa-txscript/RISC0 graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "BUILD_AND_RUNTIME_GRAPH_TRANSITIVE"
+target_reachability = "PINNED_KASPA_GRAPH"
+security_impact = "UNMAINTAINED_UPSTREAM_DEPENDENCY"
+justification = "Reviewed 2026-10-04: paste 1.0.15 is transitive through pinned Kaspa RPC/notify crates and the kaspa-txscript RISC0 path; the application does not select paste directly and current stable upstream dependencies still resolve it."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when the pinned upstream dependency graph no longer resolves paste."
+upstream_blocker_if_any = "Pinned rusty-kaspa 2.1.0 RPC/notify and txscript dependency paths."
+scanners = ["OSV", "CARGO_AUDIT", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2024-0370"
+package = "proc-macro-error 1.0.4"
+dependency_path = "proc-macro-error -> kaspa-rpc-macros/workflow-core-macros -> pinned Kaspa/workflow graph"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "BUILD_TIME_TRANSITIVE"
+target_reachability = "COMPILE_TIME_ONLY"
+security_impact = "UNMAINTAINED_BUILD_DEPENDENCY"
+justification = "Reviewed 2026-10-04: proc-macro-error 1.0.4 is a compile-time transitive dependency through kaspa-rpc-macros and workflow-core-macros in the pinned Kaspa/workflow graph; there is no direct application dependency or compatible stable upstream replacement."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when upstream macros migrate away from proc-macro-error."
+upstream_blocker_if_any = "Pinned Kaspa/workflow macro dependency graph."
+scanners = ["OSV", "CARGO_AUDIT", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2026-0173"
+package = "proc-macro-error2 2.0.1"
+dependency_path = "proc-macro-error2 -> aquamarine 0.6.0 -> teloxide 0.17.0 -> kaspa-pulse"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "BUILD_TIME_TRANSITIVE"
+target_reachability = "COMPILE_TIME_ONLY"
+security_impact = "UNMAINTAINED_BUILD_DEPENDENCY"
+justification = "Reviewed 2026-10-04: proc-macro-error2 2.0.1 is compile-time only through teloxide 0.17.0 and aquamarine 0.6.0; the application does not select it directly, and the current published dependency path has no compatible maintained replacement."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception when Teloxide/Aquamarine replace or remove proc-macro-error2."
+upstream_blocker_if_any = "Current Teloxide 0.17.0 -> Aquamarine 0.6.0 dependency path."
+scanners = ["OSV", "CARGO_DENY"]
+
+[[advisory_exception]]
+id = "RUSTSEC-2026-0306"
+package = "faster-hex 0.9.0"
+dependency_path = "faster-hex -> multiple pinned rusty-kaspa 2.1.0 crates"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "RUNTIME_TRANSITIVE"
+target_reachability = "PINNED_KASPA_HEX_PATHS_REVIEWED"
+security_impact = "AVX2_DECODE_OVERREAD_IN_UNCHECKED_PATH"
+justification = "Reviewed 2026-10-04: faster-hex 0.9.0 is constrained by pinned rusty-kaspa v2.1.0; reviewed selected Kaspa call sites use checked hex_decode rather than direct hex_decode_unchecked, while the fixed 0.10.1 line is outside the upstream requirement."
+reviewed_at = "2026-10-04"
+expires_at = "2026-10-15"
+remediation_trigger = "Remove the exception as soon as rusty-kaspa permits faster-hex 0.10.1 or newer, or if reachability changes."
+upstream_blocker_if_any = "Pinned rusty-kaspa 2.1.0 constrains faster-hex to the 0.9.x line."
+scanners = ["OSV"]
 
 [[native_approval]]
 name = "aws-lc-rs"

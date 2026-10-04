@@ -268,14 +268,14 @@ fn optional_env(key: &str) -> Option<String> {
 }
 
 fn approved_execution_environment(
-    host: &str,
+    local_boundary: Option<&str>,
     github_actions: bool,
     repository: Option<&str>,
     runner_os: Option<&str>,
     runner_arch: Option<&str>,
 ) -> Option<&'static str> {
-    if host.split('.').next() == Some("kas") {
-        return Some("LOCAL_KAS");
+    if !github_actions && local_boundary == Some("ISOLATED_NON_PRODUCTION") {
+        return Some("LOCAL_NON_PRODUCTION");
     }
     if github_actions
         && repository == Some("KaspaPulse/kaspa-telegram-notify")
@@ -288,16 +288,15 @@ fn approved_execution_environment(
 }
 
 fn current_execution_environment() -> Result<&'static str> {
-    let host = hostname();
     approved_execution_environment(
-        &host,
+        optional_env("KASPA_PULSE_OPQUAL_ENV").as_deref(),
         env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true"),
         env::var("GITHUB_REPOSITORY").ok().as_deref(),
         env::var("RUNNER_OS").ok().as_deref(),
         env::var("RUNNER_ARCH").ok().as_deref(),
     )
     .context(
-        "opqual requires host kas or the canonical GitHub Actions Linux/X64 repository context",
+        "opqual requires explicit ISOLATED_NON_PRODUCTION local opt-in or the canonical GitHub Actions Linux/X64 repository context",
     )
 }
 
@@ -1244,12 +1243,18 @@ mod evidence_identity_tests {
     #[test]
     fn execution_environment_is_fail_closed_and_ci_specific() {
         assert_eq!(
-            approved_execution_environment("kas", false, None, None, None),
-            Some("LOCAL_KAS")
+            approved_execution_environment(
+                Some("ISOLATED_NON_PRODUCTION"),
+                false,
+                None,
+                None,
+                None,
+            ),
+            Some("LOCAL_NON_PRODUCTION")
         );
         assert_eq!(
             approved_execution_environment(
-                "fv-az123",
+                None,
                 true,
                 Some("KaspaPulse/kaspa-telegram-notify"),
                 Some("Linux"),
@@ -1258,22 +1263,17 @@ mod evidence_identity_tests {
             Some("GITHUB_ACTIONS")
         );
         for candidate in [
+            approved_execution_environment(None, false, None, None, None),
+            approved_execution_environment(Some("production"), false, None, None, None),
             approved_execution_environment(
-                "fv-az123",
-                false,
-                Some("KaspaPulse/kaspa-telegram-notify"),
-                Some("Linux"),
-                Some("X64"),
-            ),
-            approved_execution_environment(
-                "fv-az123",
+                None,
                 true,
                 Some("attacker/fork"),
                 Some("Linux"),
                 Some("X64"),
             ),
             approved_execution_environment(
-                "fv-az123",
+                None,
                 true,
                 Some("KaspaPulse/kaspa-telegram-notify"),
                 Some("Windows"),

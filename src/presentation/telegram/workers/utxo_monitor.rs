@@ -389,27 +389,27 @@ mod tests {
     #[test]
     fn groups_same_wallet_for_multiple_chats() {
         let grouped = group_wallet_subscribers(vec![
-            wallet("kaspa:wallet_a", 484901117),
-            wallet("kaspa:wallet_a", 1307244272),
-            wallet("kaspa:wallet_a", 1792588801),
+            wallet("kaspa:wallet_a", 1001),
+            wallet("kaspa:wallet_a", 1002),
+            wallet("kaspa:wallet_a", 1003),
         ]);
 
         let subscribers = grouped.get("kaspa:wallet_a").expect("wallet_a exists");
 
-        assert_eq!(subscribers, &vec![484901117, 1307244272, 1792588801]);
+        assert_eq!(subscribers, &vec![1001, 1002, 1003]);
     }
 
     #[test]
     fn deduplicates_duplicate_chat_ids_for_same_wallet() {
         let grouped = group_wallet_subscribers(vec![
-            wallet("kaspa:wallet_a", 484901117),
-            wallet("kaspa:wallet_a", 484901117),
-            wallet("kaspa:wallet_a", 1307244272),
+            wallet("kaspa:wallet_a", 1001),
+            wallet("kaspa:wallet_a", 1001),
+            wallet("kaspa:wallet_a", 1002),
         ]);
 
         let subscribers = grouped.get("kaspa:wallet_a").expect("wallet_a exists");
 
-        assert_eq!(subscribers, &vec![484901117, 1307244272]);
+        assert_eq!(subscribers, &vec![1001, 1002]);
     }
 
     #[test]
