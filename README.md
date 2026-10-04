@@ -148,7 +148,7 @@ Schema changes belong in `migrations/`. Runtime schema creation is disabled by d
 ALLOW_RUNTIME_SCHEMA_ENSURE=false
 ```
 
-Use an administrative database role only for migrations or privileged maintenance.
+Use an administrative database role only for migrations or privileged maintenance. See [docs/security/DATABASE_SECURITY.md](docs/security/DATABASE_SECURITY.md) for the repository database-security policy and operational commands.
 
 ---
 
@@ -250,7 +250,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 ```
 
-Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main`/`dev` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
+Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
 
 ### Fail-closed Rust-only governance
 
@@ -281,6 +281,8 @@ cargo machete
 cargo tree --locked -d
 ```
 
+See [docs/security/CONTROL_MAP.md](docs/security/CONTROL_MAP.md) for the evidence-backed repository control map and [docs/FUZZING.md](docs/FUZZING.md) for the reproducible fuzzing workflow.
+
 Additional controls:
 
 - GitHub Actions are pinned to immutable commit SHAs.
@@ -306,7 +308,9 @@ See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md) for documented upstream/tra
 
 ## Repository hygiene
 
-The repository ignores local secrets, database dumps, backups, logs, panic marker files, generated exports, and Rust build output.
+The canonical tracked tree contains source, tests, migrations, CI/release policy, deterministic offline SQLx metadata, and maintained project documentation. Runtime evidence, task-continuity ledgers, checkpoints, historical closure/status snapshots, local machine paths, database dumps, backups, logs, panic markers, generated exports, release scratch files, and Rust build output do **not** belong in the public source tree.
+
+Current project state is established from protected `main` plus the relevant live CI, release, deployment, and runtime evidence; historical task state is not a repository source of truth.
 
 If a real secret was ever committed, removing the latest file is not enough: rotate the credential immediately and rewrite Git history when the exposure requires it.
 

@@ -810,6 +810,57 @@ fn signed_release_must_publish_attested_arm64_assets() {
 }
 
 #[test]
+fn release_must_wait_for_exact_main_push_gates() {
+    let release = read_source(".github/workflows/release.yml");
+
+    for workflow in [
+        "rust-ci.yml",
+        "security.yml",
+        "codeql.yml",
+        "secret-scan.yml",
+        "dependency-review.yml",
+        "workflow-lint.yml",
+        "hermetic-e2e.yml",
+    ] {
+        assert!(
+            release.contains(workflow),
+            "release barrier missing required workflow: {workflow}"
+        );
+    }
+
+    assert!(release.contains(".head_sha == env.GITHUB_SHA"));
+    assert!(release.contains(".head_branch == \"main\""));
+    assert!(release.contains(".event == \"push\""));
+    assert!(release.contains("test \"$run_sha\" = \"$GITHUB_SHA\""));
+    assert!(release.contains("test \"$run_branch\" = \"main\""));
+    assert!(release.contains("test \"$run_event\" = \"push\""));
+}
+
+#[test]
+fn dependency_review_must_requalify_exact_main_push() {
+    let workflow = read_source(".github/workflows/dependency-review.yml");
+
+    assert!(workflow.contains("push:"));
+    assert!(workflow.contains("branches: [main]"));
+    assert!(workflow.contains("BASE_REF: ${{ github.event.before }}"));
+    assert!(
+        workflow.contains("test \"$BASE_REF\" != \"0000000000000000000000000000000000000000\"")
+    );
+    assert!(workflow.contains("base-ref: ${{ github.event_name == 'push' && github.event.before"));
+    assert!(workflow.contains("head-ref: ${{ github.event_name == 'push' && github.sha"));
+}
+
+#[test]
+fn rusty_kaspa_updater_must_target_protected_main() {
+    let workflow = read_source(".github/workflows/auto-rusty-kaspa-update.yml");
+
+    assert!(workflow.contains("ref: main"));
+    assert!(workflow.contains("--base-branch main"));
+    assert!(!workflow.contains("ref: dev"));
+    assert!(!workflow.contains("--base-branch dev"));
+}
+
+#[test]
 fn production_http_clients_must_be_fallible_and_versioned() {
     let runtime = read_source("src/infrastructure/resilience/runtime.rs");
     let system = read_source("src/infrastructure/external_services/system.rs");

@@ -21,7 +21,6 @@
         "LICENSE",
         "SECURITY.md",
         "SUPPLY_CHAIN.md",
-        "PROJECT_STATE.md",
         ".gitignore",
         ".gitattributes",
         ".editorconfig"
@@ -53,7 +52,6 @@
         "LICENSE",
         "SECURITY.md",
         "SUPPLY_CHAIN.md",
-        "PROJECT_STATE.md",
         ".gitignore",
         ".gitattributes",
         ".editorconfig"

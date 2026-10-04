@@ -273,9 +273,7 @@ pub fn secret_scan() -> Result<()> {
         ".env.example",
         ".gitignore",
         "README.md",
-        "DATABASE_SECURITY.md",
         "SECURITY_ADVISORIES.md",
-        "SECURITY_CHECKLIST_ASVS.md",
     ]
     .into_iter()
     .collect();
@@ -429,7 +427,6 @@ pub fn clean_history(confirm: &str, push: bool) -> Result<()> {
     process::run("git", ["reflog", "expire", "--expire=now", "--all"])?;
     process::run("git", ["gc", "--prune=now", "--aggressive"])?;
     if push {
-        process::run("git", ["push", "origin", "dev", "--force-with-lease"])?;
         process::run("git", ["push", "origin", "main", "--force-with-lease"])?;
     }
     println!("history-cleanup: PASS backup={bundle} pushed={push}");

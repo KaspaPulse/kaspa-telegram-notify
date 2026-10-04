@@ -2,7 +2,9 @@ name: Dependency Review
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -18,6 +20,16 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Validate exact-main comparison base
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          test -n "$BASE_REF"
+          test "$BASE_REF" != "0000000000000000000000000000000000000000"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,6 +38,8 @@ jobs:
       - name: Review dependency changes
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
+          base-ref: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          head-ref: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.head.sha }}
           fail-on-severity: moderate
           fail-on-scopes: runtime, development, unknown
           allow-licenses: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, Unlicense, BSD-3-Clause, BSD-2-Clause, 0BSD, ISC, CC0-1.0, Unicode-3.0, Zlib, MPL-2.0, LGPL-3.0-only, CDLA-Permissive-2.0

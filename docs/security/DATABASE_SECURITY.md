@@ -1,4 +1,4 @@
-# Database Security Plan
+# Database Security
 
 ## Production policy
 
@@ -45,3 +45,4 @@ SQL:
 - Do not commit database passwords.
 - Do not use the PostgreSQL superuser for runtime.
 - Keep backups encrypted or stored in a private location.
+- Database dumps, backup archives, restore scratch files, and runtime evidence are local/private operational artifacts and must not be committed to the repository.

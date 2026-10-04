@@ -1,11 +1,11 @@
-# KASPA_TELEGRAM_AUTOMERGE_V2 - mandatory dependency security runs on every PR and main/dev push.
+# KASPA_TELEGRAM_AUTOMERGE_V2 - mandatory dependency security runs on every PR and main push.
 name: Dependency & Supply Chain Security
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 0"

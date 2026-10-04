@@ -75,10 +75,10 @@ jobs:
           --health-retries 20
 
     steps:
-      - name: Checkout dev without persisted credentials
+      - name: Checkout protected main without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: dev
+          ref: main
           fetch-depth: 0
           persist-credentials: false
 
@@ -107,11 +107,11 @@ jobs:
           ALLOW_PRERELEASE: "${{ inputs.allow_prerelease || 'false' }}"
         run: >-
           cargo xtask dependencies rusty-kaspa update
-          --base-branch dev
+          --base-branch main
           --allow-prerelease "$ALLOW_PRERELEASE"
 
       - name: Publish validated update and open PR
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cargo xtask dependencies rusty-kaspa publish --base-branch dev
+        run: cargo xtask dependencies rusty-kaspa publish --base-branch main
