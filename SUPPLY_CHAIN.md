@@ -76,7 +76,7 @@ Reviewed RustSec/OSV exceptions are canonicalized as structured records in `proo
 
 ## Continuous Rust-only and native trust proof
 
-`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.2.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
+`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.3.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
 - `rust-only-proof.json` classifies every tracked/relevant artifact by ownership, role, path, file class, executability, origin, and target relevance; any unknown classification fails the gate;
 - `native-dependency-inventory.json` records all production-reachable custom build scripts by digest and classifies the union of Cargo `links`, `-sys` names, and build scripts with compiler/link/process/native-source capability signals. Each candidate has exact locked identity, dependency path, resolved features, discovery signals, target-aware native activation, approval, and validity predicates;
 - `supply-chain-proof.json` records the pinned workflow/action policy, dependency/advisory controls, explicit MSRV policy, SBOM/provenance/attestation controls, and input digests.

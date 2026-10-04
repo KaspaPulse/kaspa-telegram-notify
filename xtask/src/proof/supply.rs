@@ -97,12 +97,174 @@ fn require_contains(text: &str, needle: &str, description: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_toolchain_contract(root: &Path, policy: &TomlValue) -> Result<()> {
+    let product_msrv = policy_str(policy, "msrv")?;
+    let xtask_msrv = policy_str(policy, "xtask_msrv")?;
+    let opqual_msrv = policy_str(policy, "opqual_fixture_msrv")?;
+    let toolchain = policy_str(policy, "toolchain")?;
+    let fuzz_nightly = policy_str(policy, "fuzz_nightly")?;
+    let docker_builder = policy_str(policy, "docker_builder_image")?;
+
+    for (path, needle, description) in [
+        (
+            "Cargo.toml".to_string(),
+            format!("rust-version = \"{product_msrv}\""),
+            "product package MSRV".to_string(),
+        ),
+        (
+            "xtask/Cargo.toml".to_string(),
+            format!("rust-version = \"{xtask_msrv}\""),
+            "xtask package MSRV".to_string(),
+        ),
+        (
+            "opqual-fixture/Cargo.toml".to_string(),
+            format!("rust-version = \"{opqual_msrv}\""),
+            "opqual-fixture package MSRV".to_string(),
+        ),
+        (
+            "rust-toolchain.toml".to_string(),
+            format!("channel = \"{toolchain}\""),
+            "primary development toolchain".to_string(),
+        ),
+        (
+            "Dockerfile".to_string(),
+            format!("FROM {docker_builder} AS builder"),
+            "verified Docker builder image".to_string(),
+        ),
+        (
+            "README.md".to_string(),
+            format!("Rust-{toolchain}-orange"),
+            "README primary toolchain badge".to_string(),
+        ),
+    ] {
+        require_contains(&read(root, &path)?, &needle, &description)?;
+    }
+
+    let fuzz = read(root, ".github/workflows/fuzz.yml")?;
+    require_contains(
+        &fuzz,
+        &format!("toolchain: {fuzz_nightly}"),
+        "pinned fuzz nightly",
+    )?;
+    require_contains(
+        &fuzz,
+        &format!("cargo +{fuzz_nightly} fuzz run"),
+        "fuzz nightly execution",
+    )?;
+
+    for workflow in [
+        ".github/workflows/rust-ci.yml",
+        ".github/workflows/security.yml",
+        ".github/workflows/hermetic-e2e.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/scorecard.yml",
+        ".github/workflows/workflow-lint.yml",
+        ".github/workflows/auto-rusty-kaspa-update.yml",
+        ".github/workflows/external-contract-e2e.yml",
+    ] {
+        require_contains(
+            &read(root, workflow)?,
+            &format!("toolchain: {toolchain}"),
+            &format!("primary toolchain in {workflow}"),
+        )?;
+    }
+
+    let ci = read(root, ".github/workflows/rust-ci.yml")?;
+    for (needle, description) in [
+        (
+            format!(
+                "cargo +{product_msrv} check --locked --package kaspa-pulse --all-targets --all-features"
+            ),
+            "product MSRV compile verification",
+        ),
+        (
+            format!(
+                "cargo +{product_msrv} test --locked --package kaspa-pulse --all-targets --all-features"
+            ),
+            "product MSRV functional verification",
+        ),
+        (
+            format!(
+                "cargo +{xtask_msrv} check --locked --package xtask --all-targets --all-features"
+            ),
+            "xtask MSRV compile verification",
+        ),
+        (
+            format!(
+                "cargo +{xtask_msrv} test --locked --package xtask --all-targets --all-features"
+            ),
+            "xtask MSRV functional verification",
+        ),
+        (
+            format!(
+                "cargo +{opqual_msrv} check --locked --package opqual-fixture --all-targets --all-features"
+            ),
+            "opqual-fixture MSRV compile verification",
+        ),
+        (
+            format!(
+                "cargo +{opqual_msrv} test --locked --package opqual-fixture --all-targets --all-features"
+            ),
+            "opqual-fixture MSRV functional verification",
+        ),
+        (
+            "cargo hack check --rust-version --workspace --all-targets --all-features --locked"
+                .to_string(),
+            "cargo-hack rust-version contract",
+        ),
+    ] {
+        require_contains(&ci, &needle, description)?;
+    }
+
+    let release = read(root, ".github/workflows/release.yml")?;
+    for (needle, description) in [
+        ("queue: max", "release concurrency queue"),
+        (
+            "Classify release state before artifact generation",
+            "early release-state gate",
+        ),
+        (
+            "RELEASE_LOOKUP_CLASSIFICATION_SELF_TEST=PASS",
+            "release-state negative self-test",
+        ),
+        (
+            "RELEASE_BARRIER_NEGATIVE_TEST=PASS",
+            "release-barrier negative self-test",
+        ),
+        (
+            "gh release create \"$TAG\" --draft",
+            "draft release creation",
+        ),
+        (
+            "gh release edit \"$TAG\" --draft=false",
+            "draft publication boundary",
+        ),
+        (
+            "gh release verify \"$TAG\"",
+            "GitHub-native release attestation verification",
+        ),
+        (
+            "gh release verify-asset \"$TAG\"",
+            "GitHub-native asset verification",
+        ),
+    ] {
+        require_contains(&release, needle, description)?;
+    }
+
+    Ok(())
+}
+
 pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
     let required_ci = policy_str(policy, "required_ci_workflow")?;
     let msrv_ci = policy_str(policy, "msrv_ci_workflow")?;
     let msrv = policy_str(policy, "msrv")?;
+    let xtask_msrv = policy_str(policy, "xtask_msrv")?;
+    let opqual_msrv = policy_str(policy, "opqual_fixture_msrv")?;
     let toolchain = policy_str(policy, "toolchain")?;
+    let fuzz_nightly = policy_str(policy, "fuzz_nightly")?;
+    let docker_builder = policy_str(policy, "docker_builder_image")?;
     let slsa_claim = policy_str(policy, "slsa_claim")?;
+    validate_toolchain_contract(root, policy)?;
     let environment = policy
         .get("environment_boundary")
         .and_then(TomlValue::as_table)
@@ -166,8 +328,8 @@ pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
     let msrv_ci_text = read(root, msrv_ci)?;
     require_contains(
         &msrv_ci_text,
-        &format!("toolchain: {msrv}"),
-        "explicit MSRV toolchain",
+        &format!("rustup toolchain install {msrv} --profile minimal"),
+        "explicit product MSRV toolchain installation",
     )?;
     require_contains(
         &msrv_ci_text,
@@ -231,6 +393,11 @@ pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
         "osv-scanner.toml",
         "SECURITY_ADVISORIES.md",
         "rust-toolchain.toml",
+        "Dockerfile",
+        "README.md",
+        "xtask/Cargo.toml",
+        "opqual-fixture/Cargo.toml",
+        ".github/workflows/fuzz.yml",
     ] {
         inputs.insert(path.to_owned(), digest(root, path)?);
     }
@@ -250,14 +417,20 @@ pub fn document(root: &Path, policy: &TomlValue) -> Result<JsonValue> {
             "provenance": "PASS",
             "attestation_verification": "PASS",
             "slsa_claim": slsa_claim,
-            "slsa_level_claimed": false
+            "slsa_level_claimed": false,
+            "toolchain_contract": "PASS",
+            "release_workflow_contract": "PASS"
         },
         "msrv_policy": {
             "crate_msrv": msrv,
+            "xtask_msrv": xtask_msrv,
+            "opqual_fixture_msrv": opqual_msrv,
             "development_toolchain": toolchain,
+            "fuzz_nightly": fuzz_nightly,
+            "docker_builder_image": docker_builder,
             "ci_workflow": msrv_ci,
-            "matrix": "kaspa-pulse --all-targets --all-features",
-            "status": "EXPLICIT_AND_TESTED"
+            "matrix": "workspace package-scoped --all-targets --all-features",
+            "status": "EXPLICIT_AND_FUNCTIONALLY_TESTED"
         },
         "environment_boundary": {
             "production_source_mutation": env_str("production_source_mutation")?,
@@ -312,5 +485,131 @@ mod tests {
     #[test]
     fn floating_action_ref_is_rejected() {
         assert!(!full_sha_reference("actions/checkout@v7"));
+    }
+    fn write_toolchain_fixture(root: &Path) {
+        fs::create_dir_all(root.join("proof")).unwrap();
+        fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        fs::create_dir_all(root.join("xtask")).unwrap();
+        fs::create_dir_all(root.join("opqual-fixture")).unwrap();
+        fs::write(
+            root.join("proof/policy.toml"),
+            r#"schema_version = "1.3.0"
+policy_version = 4
+msrv = "1.97.1"
+xtask_msrv = "1.98.1"
+opqual_fixture_msrv = "1.98.1"
+toolchain = "1.99.0"
+fuzz_nightly = "nightly-2026-08-01"
+docker_builder_image = "rust:1.99.0-slim-trixie@sha256:test"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"x\"\nversion=\"0.1.0\"\nrust-version = \"1.97.1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("xtask/Cargo.toml"),
+            "[package]\nname=\"xtask\"\nversion=\"0.1.0\"\nrust-version = \"1.98.1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("opqual-fixture/Cargo.toml"),
+            "[package]\nname=\"opqual-fixture\"\nversion=\"0.1.0\"\nrust-version = \"1.98.1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.99.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM rust:1.99.0-slim-trixie@sha256:test AS builder\n",
+        )
+        .unwrap();
+        fs::write(root.join("README.md"), "Rust-1.99.0-orange\n").unwrap();
+        fs::write(
+            root.join(".github/workflows/fuzz.yml"),
+            "toolchain: nightly-2026-08-01\nrun: cargo +nightly-2026-08-01 fuzz run x\n",
+        )
+        .unwrap();
+        for name in [
+            "security.yml",
+            "hermetic-e2e.yml",
+            "scorecard.yml",
+            "workflow-lint.yml",
+            "auto-rusty-kaspa-update.yml",
+            "external-contract-e2e.yml",
+        ] {
+            fs::write(
+                root.join(".github/workflows").join(name),
+                "toolchain: 1.99.0\n",
+            )
+            .unwrap();
+        }
+        fs::write(
+            root.join(".github/workflows/rust-ci.yml"),
+            concat!(
+                "toolchain: 1.99.0\n",
+                "cargo +1.97.1 check --locked --package kaspa-pulse --all-targets --all-features\n",
+                "cargo +1.97.1 test --locked --package kaspa-pulse --all-targets --all-features\n",
+                "cargo +1.98.1 check --locked --package xtask --all-targets --all-features\n",
+                "cargo +1.98.1 test --locked --package xtask --all-targets --all-features\n",
+                "cargo +1.98.1 check --locked --package opqual-fixture --all-targets --all-features\n",
+                "cargo +1.98.1 test --locked --package opqual-fixture --all-targets --all-features\n",
+                "cargo hack check --rust-version --workspace --all-targets --all-features --locked\n"
+            ),
+        ).unwrap();
+        fs::write(
+            root.join(".github/workflows/release.yml"),
+            concat!(
+                "toolchain: 1.99.0\nqueue: max\n",
+                "Classify release state before artifact generation\n",
+                "RELEASE_LOOKUP_CLASSIFICATION_SELF_TEST=PASS\n",
+                "RELEASE_BARRIER_NEGATIVE_TEST=PASS\n",
+                "gh release create \"$TAG\" --draft\n",
+                "gh release edit \"$TAG\" --draft=false\n",
+                "gh release verify \"$TAG\"\n",
+                "gh release verify-asset \"$TAG\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn toolchain_contract_fails_closed_on_primary_or_msrv_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        write_toolchain_fixture(dir.path());
+        let policy: TomlValue = fs::read_to_string(dir.path().join("proof/policy.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        validate_toolchain_contract(dir.path(), &policy)
+            .expect("canonical toolchain fixture must pass");
+
+        fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.98.1\"\n",
+        )
+        .unwrap();
+        assert!(validate_toolchain_contract(dir.path(), &policy).is_err());
+
+        write_toolchain_fixture(dir.path());
+        fs::write(
+            dir.path().join("xtask/Cargo.toml"),
+            "[package]\nname=\"xtask\"\nversion=\"0.1.0\"\nrust-version = \"1.97.1\"\n",
+        )
+        .unwrap();
+        assert!(validate_toolchain_contract(dir.path(), &policy).is_err());
+
+        write_toolchain_fixture(dir.path());
+        fs::write(
+            dir.path().join("Dockerfile"),
+            "FROM rust:1.99.0-slim-trixie@sha256:wrong AS builder\n",
+        )
+        .unwrap();
+        assert!(validate_toolchain_contract(dir.path(), &policy).is_err());
     }
 }

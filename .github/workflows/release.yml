@@ -19,6 +19,7 @@ permissions: read-all
 concurrency:
   group: signed-release-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validate:
@@ -65,10 +66,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.98.1
+      - name: Install Rust 1.99.0
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
 
       - name: Generate and validate reproducible CycloneDX SBOM
         shell: bash
@@ -131,6 +132,103 @@ jobs:
           docker rm "$cid" >/dev/null
           trap - EXIT
 
+
+  release-state:
+    name: Classify release state before artifact generation
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      state: ${{ steps.gate.outputs.state }}
+      generate: ${{ steps.gate.outputs.generate }}
+    env:
+      TAG: v${{ needs.validate.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Classify release state before artifact generation
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          classify_release_state() {
+            local status="$1"
+            local draft="$2"
+            local immutable="$3"
+            case "$status" in
+              404) printf '%s\n' 'absent|true' ;;
+              200)
+                if [[ "$draft" == "true" ]]; then
+                  printf '%s\n' 'draft|true'
+                elif [[ "$immutable" == "true" ]]; then
+                  printf '%s\n' 'immutable|false'
+                else
+                  echo "Published non-immutable release state is not admissible." >&2
+                  return 70
+                fi
+                ;;
+              *)
+                echo "Release lookup failed with unclassified HTTP state: $status" >&2
+                return 71
+                ;;
+            esac
+          }
+
+          test "$(classify_release_state 404 false false)" = "absent|true"
+          test "$(classify_release_state 200 true false)" = "draft|true"
+          test "$(classify_release_state 200 false true)" = "immutable|false"
+          if classify_release_state 200 false false >/dev/null 2>&1; then
+            exit 1
+          fi
+          if classify_release_state 500 false false >/dev/null 2>&1; then
+            exit 1
+          fi
+          echo "RELEASE_LOOKUP_CLASSIFICATION_SELF_TEST=PASS"
+
+          body="$RUNNER_TEMP/release-state.json"
+          err="$RUNNER_TEMP/release-state.err"
+          set +e
+          gh api "/repos/$GITHUB_REPOSITORY/releases/tags/$TAG" >"$body" 2>"$err"
+          rc=$?
+          set -e
+
+          status=""
+          draft=false
+          immutable=false
+          if [[ "$rc" -eq 0 ]]; then
+            status=200
+            jq -e --arg tag "$TAG" '.tag_name == $tag' "$body" >/dev/null
+            draft="$(jq -r '.draft' "$body")"
+            immutable="$(jq -r '.immutable // false' "$body")"
+          elif grep -Fq "HTTP 404" "$err"; then
+            releases="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft,isImmutable,isPrerelease)"
+            match="$(jq -c --arg tag "$TAG" '[.[] | select(.tagName == $tag)][0] // null' <<< "$releases")"
+            if [[ "$match" == "null" ]]; then
+              status=404
+            else
+              status=200
+              draft="$(jq -r '.isDraft' <<< "$match")"
+              immutable="$(jq -r '.isImmutable' <<< "$match")"
+            fi
+          else
+            cat "$err" >&2
+            echo "Release lookup failed closed; refusing to interpret an API/auth/transport error as NOT_FOUND." >&2
+            exit 1
+          fi
+
+          classification="$(classify_release_state "$status" "$draft" "$immutable")"
+          state="${classification%%|*}"
+          generate="${classification##*|}"
+          {
+            echo "state=$state"
+            echo "generate=$generate"
+          } >> "$GITHUB_OUTPUT"
+          echo "release-state=$state generate=$generate tag=$TAG"
+
   verify-e2e-proof:
     name: Verify exact-main CI and Hermetic E2E proof
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -155,6 +253,45 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
+
+          gate_state() {
+            local sha="$1"
+            jq -r --arg sha "$sha" '
+              [.workflow_runs[] |
+               select(.head_sha == $sha and
+                      .head_branch == "main" and
+                      .event == "push")]
+              | sort_by(.run_number)
+              | reverse
+              | .[0] // null
+              | if . == null then "MISSING"
+                elif .status != "completed" then "WAITING"
+                elif .conclusion == "success" then "SUCCESS"
+                else "FAIL:" + (.conclusion // "unknown")
+                end
+            '
+          }
+
+          good='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"main","event":"push","status":"completed","conclusion":"success"}]}'
+          wrong_sha='{"workflow_runs":[{"run_number":1,"head_sha":"def","head_branch":"main","event":"push","status":"completed","conclusion":"success"}]}'
+          wrong_branch='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"dev","event":"push","status":"completed","conclusion":"success"}]}'
+          wrong_event='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"main","event":"pull_request","status":"completed","conclusion":"success"}]}'
+          incomplete='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"main","event":"push","status":"in_progress","conclusion":null}]}'
+          failed='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"main","event":"push","status":"completed","conclusion":"failure"}]}'
+          cancelled='{"workflow_runs":[{"run_number":1,"head_sha":"abc","head_branch":"main","event":"push","status":"completed","conclusion":"cancelled"}]}'
+          duplicate_latest_failed='{"workflow_runs":[{"run_number":2,"head_sha":"abc","head_branch":"main","event":"push","status":"completed","conclusion":"failure"},{"run_number":1,"head_sha":"abc","head_branch":"main","event":"push","status":"completed","conclusion":"success"}]}'
+
+          test "$(gate_state abc <<< "$good")" = "SUCCESS"
+          test "$(gate_state abc <<< "$wrong_sha")" = "MISSING"
+          test "$(gate_state abc <<< "$wrong_branch")" = "MISSING"
+          test "$(gate_state abc <<< "$wrong_event")" = "MISSING"
+          test "$(gate_state abc <<< "$incomplete")" = "WAITING"
+          test "$(gate_state abc <<< "$failed")" = "FAIL:failure"
+          test "$(gate_state abc <<< "$cancelled")" = "FAIL:cancelled"
+          test "$(gate_state abc <<< '{"workflow_runs":[]}')" = "MISSING"
+          test "$(gate_state abc <<< "$duplicate_latest_failed")" = "FAIL:failure"
+          echo "RELEASE_BARRIER_NEGATIVE_TEST=PASS"
+
           workflows=(
             rust-ci.yml
             security.yml
@@ -173,7 +310,10 @@ jobs:
                 [.workflow_runs[] |
                  select(.head_sha == env.GITHUB_SHA and
                         .head_branch == "main" and
-                        .event == "push")][0] // null
+                        .event == "push")]
+                | sort_by(.run_number)
+                | reverse
+                | .[0] // null
               ' <<< "$runs")"
               if [[ "$latest" == "null" ]]; then
                 sleep 15
@@ -216,7 +356,10 @@ jobs:
             latest="$(jq -c '
               [.workflow_runs[] |
                select(.head_sha == env.GITHUB_SHA and .head_branch == "main" and
-                      .event == "push")][0] // null
+                      .event == "push")]
+              | sort_by(.run_number)
+              | reverse
+              | .[0] // null
             ' <<< "$runs")"
             if [[ "$latest" == "null" ]]; then
               sleep 15
@@ -269,10 +412,37 @@ jobs:
           actual="$(sha256sum "$proof" | awk '{print $1}')"
           test "$expected" = "$actual"
 
+
+  existing-release:
+    name: Verify existing immutable release
+    if: needs.release-state.outputs.state == 'immutable'
+    needs: [validate, verify-e2e-proof, release-state]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      TAG: v${{ needs.validate.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Verify existing immutable release and skip artifact generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish)"
+          jq -e --arg tag "$TAG" '
+            .tagName == $tag and
+            .isDraft == false and
+            .isPrerelease == false and
+            .isImmutable == true
+          ' <<< "$manifest" >/dev/null
+          echo "$TAG is already immutable; exact-main gates passed and all release artifact generation is skipped."
+
   arm64-release-build:
     name: Build and attest ARM64 release
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [validate, verify-e2e-proof]
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.release-state.outputs.generate == 'true' }}
+    needs: [validate, verify-e2e-proof, release-state]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
@@ -296,10 +466,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust 1.98.1
+      - name: Install Rust 1.99.0
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -432,8 +602,8 @@ jobs:
 
   release:
     name: Build, attest, and publish
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [validate, verify-e2e-proof, arm64-release-build]
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.release-state.outputs.generate == 'true' }}
+    needs: [validate, verify-e2e-proof, release-state, arm64-release-build]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -458,29 +628,13 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Determine whether this version is already released
-        id: gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "create=false" >> "$GITHUB_OUTPUT"
-            echo "$TAG already exists; no new release is needed."
-          else
-            echo "create=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is not published; release construction will proceed."
-          fi
-
-      - name: Install Rust 1.98.1
-        if: steps.gate.outputs.create == 'true'
+      - name: Install Rust 1.99.0
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
 
 
       - name: Build locked x86_64 release binary
-        if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
           KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}
@@ -491,7 +645,6 @@ jobs:
 
 
       - name: Generate reproducible x86_64 CycloneDX SBOM
-        if: steps.gate.outputs.create == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -513,7 +666,6 @@ jobs:
             --target "$X86_TARGET"
 
       - name: Assemble deterministic x86_64 release archive
-        if: steps.gate.outputs.create == 'true'
         id: artifact
         shell: bash
         run: |
@@ -541,14 +693,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Generate x86_64 SLSA build provenance attestation
-        if: steps.gate.outputs.create == 'true'
         id: provenance-x86
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/${{ steps.artifact.outputs.x86_archive }}
 
       - name: Generate x86_64 SBOM attestation
-        if: steps.gate.outputs.create == 'true'
         id: sbom-x86
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -557,7 +707,6 @@ jobs:
 
 
       - name: Export signed x86_64 attestation bundles
-        if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
           X86_PROVENANCE_BUNDLE: ${{ steps.provenance-x86.outputs.bundle-path }}
@@ -569,7 +718,6 @@ jobs:
           cp "$X86_SBOM_BUNDLE" "dist/${X86_ARCHIVE}.sbom.sigstore.json"
 
       - name: Export and verify x86_64 SLSA provenance JSONL
-        if: steps.gate.outputs.create == 'true'
         shell: bash
         env:
           X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
@@ -599,14 +747,12 @@ jobs:
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
 
       - name: Download native ARM64 release bundle
-        if: steps.gate.outputs.create == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: arm64-release-${{ github.sha }}
           path: dist
 
       - name: Verify native ARM64 release bundle before publication
-        if: steps.gate.outputs.create == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -628,42 +774,44 @@ jobs:
           test -s "dist/${ARM64_ARCHIVE}.sigstore.json"
           test -s "dist/${ARM64_ARCHIVE}.sbom.sigstore.json"
 
-      - name: Publish immutable versioned release assets
-        if: steps.gate.outputs.create == 'true'
+      - name: Create or recover draft release
         shell: bash
         env:
-          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
-          X86_SBOM: ${{ steps.artifact.outputs.x86_sbom }}
+          RELEASE_STATE: ${{ needs.release-state.outputs.state }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" \
-            "dist/${X86_ARCHIVE}" \
-            "dist/${X86_ARCHIVE}.sha256" \
-            "dist/${X86_SBOM}" \
-            "dist/${X86_ARCHIVE}.sigstore.json" \
-            "dist/${X86_ARCHIVE}.sbom.sigstore.json" \
-            "dist/${X86_ARCHIVE}.intoto.jsonl" \
-            "dist/${ARM64_ARCHIVE}" \
-            "dist/${ARM64_ARCHIVE}.sha256" \
-            "dist/${ARM64_SBOM}" \
-            "dist/${ARM64_ARCHIVE}.sigstore.json" \
-            "dist/${ARM64_ARCHIVE}.sbom.sigstore.json" \
-            "dist/${ARM64_ARCHIVE}.intoto.jsonl" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Kaspa Pulse ${TAG}" \
-            --generate-notes
+          case "$RELEASE_STATE" in
+            absent)
+              gh release create "$TAG" --draft \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --title "Kaspa Pulse ${TAG}" \
+                --generate-notes
+              ;;
+            draft)
+              manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish)"
+              jq -e --arg tag "$TAG" --arg sha "$GITHUB_SHA" '
+                .tagName == $tag and
+                .isDraft == true and
+                .isPrerelease == false and
+                .isImmutable == false and
+                .targetCommitish == $sha
+              ' <<< "$manifest" >/dev/null
+              ;;
+            *)
+              echo "Unexpected release state for construction: $RELEASE_STATE" >&2
+              exit 1
+              ;;
+          esac
 
-      - name: Verify published immutable release manifest
-        if: steps.gate.outputs.create == 'true'
+      - name: Upload exact verified release assets to draft
         shell: bash
         env:
           X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
           X86_SBOM: ${{ steps.artifact.outputs.x86_sbom }}
         run: |
           set -euo pipefail
-          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
-          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          expected="$RUNNER_TEMP/expected-release-assets.txt"
           printf '%s\n' \
             "$X86_ARCHIVE" \
             "${X86_ARCHIVE}.sha256" \
@@ -676,20 +824,53 @@ jobs:
             "$ARM64_SBOM" \
             "${ARM64_ARCHIVE}.sigstore.json" \
             "${ARM64_ARCHIVE}.sbom.sigstore.json" \
-            "${ARM64_ARCHIVE}.intoto.jsonl" | sort > "$expected_assets"
+            "${ARM64_ARCHIVE}.intoto.jsonl" | sort > "$expected"
 
-          immutable=false
+          existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          while IFS= read -r name; do
+            path="dist/$name"
+            test -s "$path"
+            if grep -Fxq "$name" <<< "$existing"; then
+              tmp="$(mktemp -d)"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$tmp"
+              cmp -- "$path" "$tmp/$name"
+              rm -rf "$tmp"
+            else
+              gh release upload "$TAG" "$path" --repo "$GITHUB_REPOSITORY"
+            fi
+          done < "$expected"
+
+      - name: Verify complete draft release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$RUNNER_TEMP/expected-release-assets.txt"
+          actual="$RUNNER_TEMP/actual-draft-assets.txt"
+          manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish,assets)"
+          jq -e --arg tag "$TAG" --arg sha "$GITHUB_SHA" '
+            .tagName == $tag and
+            .isDraft == true and
+            .isPrerelease == false and
+            .isImmutable == false and
+            .targetCommitish == $sha
+          ' <<< "$manifest" >/dev/null
+          jq -r '.assets[].name' <<< "$manifest" | sort > "$actual"
+          diff -u "$expected" "$actual"
+
+      - name: Publish verified immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
           manifest=""
           for _ in $(seq 1 30); do
-            manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish,assets)"
-            immutable="$(jq -r '.isImmutable' <<< "$manifest")"
-            if [[ "$immutable" == "true" ]]; then
+            manifest="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,isImmutable,targetCommitish,assets)"
+            if [[ "$(jq -r '.isImmutable' <<< "$manifest")" == "true" ]]; then
               break
             fi
             sleep 2
           done
-
           jq -e --arg tag "$TAG" --arg sha "$GITHUB_SHA" '
             .tagName == $tag and
             .isDraft == false and
@@ -697,32 +878,68 @@ jobs:
             .isImmutable == true and
             .targetCommitish == $sha
           ' <<< "$manifest" >/dev/null
-          jq -r '.assets[].name' <<< "$manifest" | sort > "$actual_assets"
-          diff -u "$expected_assets" "$actual_assets"
 
-      - name: Verify published ARM64 bytes and provenance
-        if: steps.gate.outputs.create == 'true'
+          expected="$RUNNER_TEMP/expected-release-assets.txt"
+          actual="$RUNNER_TEMP/actual-published-assets.txt"
+          jq -r '.assets[].name' <<< "$manifest" | sort > "$actual"
+          diff -u "$expected" "$actual"
+
+      - name: Verify GitHub-native immutable release attestation
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/published-arm64"
+          verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if gh release verify "$TAG" --repo "$GITHUB_REPOSITORY"; then
+              verified=true
+              break
+            fi
+            sleep $((attempt * 2))
+          done
+          test "$verified" = true
+
+      - name: Re-download and verify exact published release bytes
+        shell: bash
+        env:
+          X86_ARCHIVE: ${{ steps.artifact.outputs.x86_archive }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/published-release"
           mkdir -p "$out"
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --pattern "$X86_ARCHIVE" \
+            --pattern "${X86_ARCHIVE}.sha256" \
+            --pattern "${X86_ARCHIVE}.intoto.jsonl" \
             --pattern "$ARM64_ARCHIVE" \
             --pattern "${ARM64_ARCHIVE}.sha256" \
             --pattern "${ARM64_ARCHIVE}.intoto.jsonl" \
             --dir "$out"
+
           (
             cd "$out"
+            sha256sum --check "${X86_ARCHIVE}.sha256"
             sha256sum --check "${ARM64_ARCHIVE}.sha256"
+
+            gh release verify-asset "$TAG" "$X86_ARCHIVE" --repo "$GITHUB_REPOSITORY"
+            gh release verify-asset "$TAG" "$ARM64_ARCHIVE" --repo "$GITHUB_REPOSITORY"
+
+            gh attestation verify "$X86_ARCHIVE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "${X86_ARCHIVE}.intoto.jsonl" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
             gh attestation verify "$ARM64_ARCHIVE" \
               --repo "$GITHUB_REPOSITORY" \
               --bundle "${ARM64_ARCHIVE}.intoto.jsonl" \
               --source-digest "$GITHUB_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-            mkdir extract
-            tar -xzf "$ARM64_ARCHIVE" -C extract
-            file extract/kaspa-pulse | grep -F "ARM aarch64"
-            LC_ALL=C grep -aF -q "$GITHUB_SHA" extract/kaspa-pulse
+
+            mkdir x86 arm64
+            tar -xzf "$X86_ARCHIVE" -C x86
+            tar -xzf "$ARM64_ARCHIVE" -C arm64
+            file x86/kaspa-pulse | grep -E 'x86-64|x86_64'
+            file arm64/kaspa-pulse | grep -F 'ARM aarch64'
+            LC_ALL=C grep -aF -q "$GITHUB_SHA" x86/kaspa-pulse
+            LC_ALL=C grep -aF -q "$GITHUB_SHA" arm64/kaspa-pulse
           )

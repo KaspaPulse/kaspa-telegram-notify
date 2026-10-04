@@ -31,7 +31,7 @@ fn proof_policy(root: &Path) -> Result<TomlValue> {
         "unsupported proof policy schema version"
     );
     ensure!(
-        policy.get("policy_version").and_then(TomlValue::as_integer) == Some(3),
+        policy.get("policy_version").and_then(TomlValue::as_integer) == Some(4),
         "unsupported proof policy version"
     );
     Ok(policy)
@@ -149,7 +149,7 @@ pub fn environment_boundary(root: impl AsRef<Path>) -> Result<()> {
         );
     }
 
-    println!("environment-boundary-check: PASS schema=1.2.0 policy=3");
+    println!("environment-boundary-check: PASS schema=1.3.0 policy=4");
     Ok(())
 }
 
@@ -904,8 +904,8 @@ mod tests {
     }
 
     fn canonical_environment_policy() -> String {
-        r#"schema_version = "1.2.0"
-policy_version = 3
+        r#"schema_version = "1.3.0"
+policy_version = 4
 required_ci_workflow = ".github/workflows/security.yml"
 msrv_ci_workflow = ".github/workflows/rust-ci.yml"
 
@@ -982,7 +982,7 @@ TELEGRAM_API_URL: "http://127.0.0.1:9/"
                 r#"fixture_kind = "SYNTHETIC""#,
                 r#"fixture_kind = "UNKNOWN""#,
             ),
-            (r#"schema_version = "1.2.0""#, r#"schema_version = "9.9.9""#),
+            (r#"schema_version = "1.3.0""#, r#"schema_version = "9.9.9""#),
         ] {
             let dir = tempfile::tempdir().unwrap();
             write_environment_fixture(dir.path(), &baseline.replace(from, to));
@@ -1025,18 +1025,18 @@ TELEGRAM_API_URL: "http://127.0.0.1:9/"
         .unwrap();
         fs::write(
             root.join("rust-toolchain.toml"),
-            "[toolchain]\nchannel = \"1.98.1\"\n",
+            "[toolchain]\nchannel = \"1.99.0\"\n",
         )
         .unwrap();
         fs::write(
             root.join("README.md"),
-            "[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg)](https://www.rust-lang.org/)\n[Security](SECURITY.md)\n",
+            "[![Rust](https://img.shields.io/badge/Rust-1.99.0-orange.svg)](https://www.rust-lang.org/)\n[Security](SECURITY.md)\n",
         )
         .unwrap();
         fs::write(root.join("SECURITY.md"), "# Security\n").unwrap();
         fs::write(
             root.join("SUPPLY_CHAIN.md"),
-            "The proof schema is pinned to `1.2.0`.\n",
+            "The proof schema is pinned to `1.3.0`.\n",
         )
         .unwrap();
         fs::write(root.join("CONTRIBUTING.md"), "# Contributing\n").unwrap();
@@ -1079,7 +1079,7 @@ TELEGRAM_API_URL: "http://127.0.0.1:9/"
         write_documentation_fixture(valid.path());
         fs::write(
             valid.path().join("README.md"),
-            "[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg)](https://www.rust-lang.org/)\n[Missing](MISSING.md)\n",
+            "[![Rust](https://img.shields.io/badge/Rust-1.99.0-orange.svg)](https://www.rust-lang.org/)\n[Missing](MISSING.md)\n",
         )
         .unwrap();
         assert!(documentation(valid.path()).is_err());
@@ -1122,8 +1122,8 @@ TELEGRAM_API_URL: "http://127.0.0.1:9/"
         fs::write(
             root.join("proof/policy.toml"),
             format!(
-                r#"schema_version = "1.2.0"
-policy_version = 3
+                r#"schema_version = "1.3.0"
+policy_version = 4
 
 [[advisory_exception]]
 id = "RUSTSEC-2099-0001"

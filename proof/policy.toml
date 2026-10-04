@@ -1,9 +1,13 @@
-schema_version = "1.2.0"
-policy_version = 3
+schema_version = "1.3.0"
+policy_version = 4
 proof_artifact_dir = "target/proof"
 targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 msrv = "1.97.1"
-toolchain = "1.98.1"
+toolchain = "1.99.0"
+xtask_msrv = "1.98.1"
+opqual_fixture_msrv = "1.98.1"
+fuzz_nightly = "nightly-2026-08-01"
+docker_builder_image = "rust:1.99.0-slim-trixie@sha256:01dd4f9c24801cfc8ba9cf8a5dd6dcca451cd17d1ae73574edc22591de6e6816"
 slsa_claim = "NOT_ASSERTED"
 policy_owner = "KaspaPulse repository owner"
 required_ci_workflow = ".github/workflows/security.yml"

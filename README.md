@@ -4,7 +4,7 @@
 
 ### Community mining alerts for Kaspa solo miners
 
-[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.99.0-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 [![CI](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/rust-ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/KaspaPulse/kaspa-telegram-notify?style=for-the-badge)](https://github.com/KaspaPulse/kaspa-telegram-notify/releases)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
