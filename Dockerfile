@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Keep the human-readable tag for Dependabot while pinning the immutable image digest.
-FROM rust:1.98.1-slim-trixie@sha256:ce84a5edd80c5f91e05c5533b1e53eb1da54028f33734dc06aa6b49fa190462d AS builder
+FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS builder
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends pkg-config libssl-dev ca-certificates \
@@ -38,7 +38,7 @@ RUN --mount=type=cache,id=kaspa-pulse-cargo-registry-${TARGETARCH},target=/usr/l
     && cargo build --locked --release --all-features \
     && install -D -m 0755 target/release/kaspa-pulse /out/kaspa-pulse
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS runtime
 
 ARG SOURCE_REVISION=unknown
 
