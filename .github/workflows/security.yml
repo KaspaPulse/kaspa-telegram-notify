@@ -37,6 +37,12 @@ jobs:
       - name: Validate advisory exception policy
         run: cargo xtask security advisories --max-age-days 45
 
+      - name: Enforce generic production/non-production boundary
+        run: cargo xtask security environment-boundary
+
+      - name: Verify documentation and governance path contracts
+        run: cargo xtask security documentation
+
       - name: Enforce immutable rusty-kaspa dependency pins
         run: cargo xtask security kaspa-pins
 

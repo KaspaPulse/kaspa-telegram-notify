@@ -21,46 +21,135 @@ fn read_text(root: &Path, relative: &str) -> Result<String> {
     fs::read_to_string(root.join(relative)).with_context(|| format!("failed to read {relative}"))
 }
 
+fn proof_policy(root: &Path) -> Result<TomlValue> {
+    let policy: TomlValue = read_text(root, "proof/policy.toml")?
+        .parse()
+        .context("failed to parse proof/policy.toml")?;
+    ensure!(
+        policy.get("schema_version").and_then(TomlValue::as_str)
+            == Some(crate::proof::PROOF_SCHEMA_VERSION),
+        "unsupported proof policy schema version"
+    );
+    ensure!(
+        policy.get("policy_version").and_then(TomlValue::as_integer) == Some(3),
+        "unsupported proof policy version"
+    );
+    Ok(policy)
+}
+
+fn required_policy_str<'a>(
+    table: &'a toml::map::Map<String, TomlValue>,
+    key: &str,
+) -> Result<&'a str> {
+    table
+        .get(key)
+        .and_then(TomlValue::as_str)
+        .with_context(|| format!("proof policy missing string field {key}"))
+}
+
+fn require_policy_value(
+    table: &toml::map::Map<String, TomlValue>,
+    key: &str,
+    expected: &str,
+) -> Result<()> {
+    let actual = required_policy_str(table, key)?;
+    ensure!(
+        actual == expected,
+        "proof policy {key} must be {expected}, got {actual}"
+    );
+    Ok(())
+}
+
 pub fn environment_boundary(root: impl AsRef<Path>) -> Result<()> {
     let root = root.as_ref();
-    const MARKER: &str = "KAS_DNS_ENVIRONMENT_BOUNDARY_V1";
-    let required: [(&str, &[&str]); 2] = [
-        (
-            "AGENTS.md",
-            &[
-                MARKER,
-                "`kas` is the only development host.",
-                "`dns` is the production host and is not a development environment.",
-                "All source edits, dependency resolution, local Git operations, builds, tests, security scans, packaging, and release-artifact creation MUST run on `kas`.",
-                "`dns` MUST NOT be configured or used as a CI runner.",
-                "No source build is permitted on `dns` as part of deployment.",
-                "Do not repair source code in place on production.",
-            ],
-        ),
-        (
-            "CONTRIBUTING.md",
-            &[
-                MARKER,
-                "Development host: `kas` only.",
-                "Production host: `dns` is deployment/verification only.",
-            ],
-        ),
-    ];
+    let policy = proof_policy(root)?;
+    let boundary = policy
+        .get("environment_boundary")
+        .and_then(TomlValue::as_table)
+        .context("proof policy missing [environment_boundary]")?;
 
-    for (file, needles) in required {
-        let text = read_text(root, file)?;
-        let missing: Vec<_> = needles
-            .iter()
-            .copied()
-            .filter(|needle| !text.contains(needle))
-            .collect();
+    for (key, expected) in [
+        ("production_source_mutation", "FORBIDDEN"),
+        ("production_source_build", "FORBIDDEN"),
+        ("production_as_ci_runner", "FORBIDDEN"),
+        ("local_build_role", "QUALIFICATION_ONLY"),
+        (
+            "canonical_release_artifact",
+            "PUBLISHED_ATTESTED_GITHUB_RELEASE",
+        ),
+        ("private_host_identity_in_public_policy", "FORBIDDEN"),
+    ] {
+        require_policy_value(boundary, key, expected)?;
+    }
+
+    let identity = policy
+        .get("ci_identity")
+        .and_then(TomlValue::as_table)
+        .context("proof policy missing [ci_identity]")?;
+    for (key, expected) in [
+        ("fixture_kind", "SYNTHETIC"),
+        ("external_telegram_access", "FORBIDDEN"),
+        ("real_user_lookup", "FORBIDDEN"),
+        ("real_message_delivery", "FORBIDDEN"),
+    ] {
+        require_policy_value(identity, key, expected)?;
+    }
+
+    let admin_user_id = required_policy_str(identity, "admin_user_id")?
+        .parse::<i64>()
+        .context("ci_identity.admin_user_id must be a positive i64")?;
+    let admin_chat_id = required_policy_str(identity, "admin_chat_id")?
+        .parse::<i64>()
+        .context("ci_identity.admin_chat_id must be a positive i64")?;
+    ensure!(
+        admin_user_id > 0 && admin_chat_id == admin_user_id,
+        "CI synthetic admin identity must be a positive private-chat identity"
+    );
+
+    let api_url = required_policy_str(identity, "telegram_api_url")?;
+    let socket = api_url
+        .strip_prefix("http://")
+        .and_then(|value| value.strip_suffix('/'))
+        .context("CI Telegram API URL must use http://<loopback>:<port>/")?
+        .parse::<std::net::SocketAddr>()
+        .context("CI Telegram API URL must contain a numeric loopback socket address")?;
+    ensure!(
+        socket.ip().is_loopback() && socket.port() > 0,
+        "CI Telegram API URL must be loopback-only"
+    );
+
+    for workflow in [
+        ".github/workflows/rust-ci.yml",
+        ".github/workflows/auto-rusty-kaspa-update.yml",
+    ] {
+        let text = read_text(root, workflow)?;
+        for (key, value) in [
+            (
+                "ADMIN_USER_ID",
+                required_policy_str(identity, "admin_user_id")?,
+            ),
+            (
+                "ADMIN_CHAT_ID",
+                required_policy_str(identity, "admin_chat_id")?,
+            ),
+            ("TELEGRAM_API_URL", api_url),
+        ] {
+            ensure!(
+                text.contains(&format!("{key}: \"{value}\"")),
+                "{workflow} {key} diverges from canonical CI identity policy"
+            );
+        }
         ensure!(
-            missing.is_empty(),
-            "environment-boundary-check: {file} missing required policy: {missing:?}"
+            text.contains("TEST_PLACEHOLDER_TOKEN_NOT_REAL"),
+            "{workflow} must use the documented synthetic BOT_TOKEN fixture"
+        );
+        ensure!(
+            !text.contains("ADMIN_ID:"),
+            "{workflow} must use explicit synthetic user/chat identity fields"
         );
     }
 
-    println!("environment-boundary-check: PASS");
+    println!("environment-boundary-check: PASS schema=1.2.0 policy=3");
     Ok(())
 }
 
@@ -225,82 +314,142 @@ fn date_from_toml(value: &TomlValue, advisory: &str) -> Result<NaiveDate> {
 pub fn advisories(root: impl AsRef<Path>, max_age_days: i64) -> Result<()> {
     ensure!(max_age_days > 0, "--max-age-days must be positive");
     let root = root.as_ref();
-    let audit = read_text(root, ".cargo/audit.toml")?;
-    let osv_text = read_text(root, "osv-scanner.toml")?;
-    let report = read_text(root, "SECURITY_ADVISORIES.md")?;
-
+    let policy = proof_policy(root)?;
+    let canonical = policy
+        .get("advisory_exception")
+        .and_then(TomlValue::as_array)
+        .context("proof policy must define [[advisory_exception]] records")?;
     let rustsec = Regex::new(r"RUSTSEC-\d{4}-\d{4}")?;
-    let ignored_ids: BTreeSet<_> = rustsec
-        .find_iter(&audit)
-        .map(|m| m.as_str().to_owned())
-        .collect();
-    let undocumented: Vec<_> = ignored_ids
-        .iter()
-        .filter(|id| !report.contains(id.as_str()))
-        .cloned()
-        .collect();
-    ensure!(
-        undocumented.is_empty(),
-        "undocumented cargo-audit ignored RustSec IDs: {}",
-        undocumented.join(", ")
-    );
-
-    let review_pattern = Regex::new(r"Last automated review:\s*\*\*(\d{4}-\d{2}-\d{2})\*\*")?;
-    let reviewed = review_pattern
-        .captures(&report)
-        .and_then(|captures| captures.get(1))
-        .context("SECURITY_ADVISORIES.md is missing 'Last automated review: **YYYY-MM-DD**'")?;
-    let reviewed = NaiveDate::parse_from_str(reviewed.as_str(), "%Y-%m-%d")
-        .context("invalid security advisory review date")?;
     let today = Utc::now().date_naive();
-    let age_days = (today - reviewed).num_days();
+    let latest_allowed = today + ChronoDuration::days(max_age_days);
+
+    let mut canonical_ids = BTreeSet::new();
+    let mut records = BTreeMap::new();
+    let mut expected_osv = BTreeSet::new();
+    let mut expected_audit = BTreeSet::new();
+    let mut expected_deny = BTreeSet::new();
+
+    for (index, entry) in canonical.iter().enumerate() {
+        let table = entry
+            .as_table()
+            .with_context(|| format!("advisory_exception #{} must be a table", index + 1))?;
+        let advisory = required_policy_str(table, "id")?;
+        ensure!(
+            rustsec
+                .find(advisory)
+                .is_some_and(|found| found.as_str() == advisory),
+            "advisory_exception #{} has invalid id {advisory}",
+            index + 1
+        );
+        ensure!(
+            canonical_ids.insert(advisory.to_owned()),
+            "duplicate canonical advisory exception: {advisory}"
+        );
+
+        for field in [
+            "package",
+            "dependency_path",
+            "direct_or_transitive",
+            "runtime_or_build_time",
+            "target_reachability",
+            "security_impact",
+            "justification",
+            "reviewed_at",
+            "expires_at",
+            "remediation_trigger",
+            "upstream_blocker_if_any",
+        ] {
+            ensure!(
+                !required_policy_str(table, field)?.trim().is_empty(),
+                "{advisory} canonical field {field} must not be empty"
+            );
+        }
+
+        let reviewed =
+            NaiveDate::parse_from_str(required_policy_str(table, "reviewed_at")?, "%Y-%m-%d")
+                .with_context(|| format!("{advisory} reviewed_at must be YYYY-MM-DD"))?;
+        let expiry =
+            NaiveDate::parse_from_str(required_policy_str(table, "expires_at")?, "%Y-%m-%d")
+                .with_context(|| format!("{advisory} expires_at must be YYYY-MM-DD"))?;
+        let age_days = (today - reviewed).num_days();
+        ensure!(age_days >= 0, "{advisory} review date is in the future");
+        ensure!(
+            age_days <= max_age_days,
+            "{advisory} review is {age_days} days old; maximum is {max_age_days}"
+        );
+        ensure!(
+            expiry >= today,
+            "canonical exception expired for {advisory} on {expiry}"
+        );
+        ensure!(
+            expiry <= latest_allowed,
+            "canonical exception for {advisory} expires beyond the {max_age_days}-day window"
+        );
+
+        let scanners = table
+            .get("scanners")
+            .and_then(TomlValue::as_array)
+            .context("canonical advisory scanners must be an array")?;
+        ensure!(
+            !scanners.is_empty(),
+            "{advisory} must name at least one scanner"
+        );
+        for scanner in scanners {
+            match scanner.as_str().context("scanner name must be a string")? {
+                "OSV" => {
+                    expected_osv.insert(advisory.to_owned());
+                }
+                "CARGO_AUDIT" => {
+                    expected_audit.insert(advisory.to_owned());
+                }
+                "CARGO_DENY" => {
+                    expected_deny.insert(advisory.to_owned());
+                }
+                other => bail!("unknown scanner {other} for {advisory}"),
+            }
+        }
+        records.insert(advisory.to_owned(), table);
+    }
+
+    let scanner_ids = |text: &str| -> BTreeSet<String> {
+        rustsec
+            .find_iter(text)
+            .map(|item| item.as_str().to_owned())
+            .collect()
+    };
+
+    let audit = read_text(root, ".cargo/audit.toml")?;
+    let deny = read_text(root, "deny.toml")?;
     ensure!(
-        age_days >= 0,
-        "security advisory review date is in the future"
+        scanner_ids(&audit) == expected_audit,
+        "cargo-audit ignore set diverges from canonical advisory policy"
     );
     ensure!(
-        age_days <= max_age_days,
-        "security advisory review is {age_days} days old; maximum allowed age is {max_age_days} days"
+        scanner_ids(&deny) == expected_deny,
+        "cargo-deny ignore set diverges from canonical advisory policy"
     );
 
+    let osv_text = read_text(root, "osv-scanner.toml")?;
     let osv: TomlValue = osv_text.parse().context("cannot parse osv-scanner.toml")?;
     let entries = osv
         .get("IgnoredVulns")
         .and_then(TomlValue::as_array)
         .context("osv-scanner.toml IgnoredVulns must be an array of tables")?;
-
-    let latest_allowed = today + ChronoDuration::days(max_age_days);
-    let mut osv_ids = BTreeSet::new();
-    for (index, entry) in entries.iter().enumerate() {
-        let table = entry
-            .as_table()
-            .with_context(|| format!("IgnoredVulns entry #{} must be a table", index + 1))?;
-        let advisory = table
-            .get("id")
-            .and_then(TomlValue::as_str)
-            .with_context(|| format!("IgnoredVulns entry #{} must define id", index + 1))?;
+    let mut actual_osv = BTreeSet::new();
+    for entry in entries {
+        let table = entry.as_table().context("OSV exception must be a table")?;
+        let advisory = required_policy_str(table, "id")?;
         ensure!(
-            rustsec
-                .find(advisory)
-                .is_some_and(|found| found.as_str() == advisory),
-            "IgnoredVulns entry #{} must use a concrete RUSTSEC-YYYY-NNNN id",
-            index + 1
-        );
-        ensure!(
-            osv_ids.insert(advisory.to_owned()),
+            actual_osv.insert(advisory.to_owned()),
             "duplicate OSV ignored advisory: {advisory}"
         );
+        let canonical = records
+            .get(advisory)
+            .with_context(|| format!("OSV exception {advisory} is not canonical"))?;
         ensure!(
-            report.contains(advisory),
-            "OSV ignored advisory is not documented in SECURITY_ADVISORIES.md: {advisory}"
-        );
-        let reason = table
-            .get("reason")
-            .and_then(TomlValue::as_str)
-            .unwrap_or_default();
-        ensure!(
-            reason.trim().chars().count() >= 40,
-            "{advisory} reason must contain at least 40 non-whitespace characters"
+            required_policy_str(table, "reason")?
+                == required_policy_str(canonical, "justification")?,
+            "OSV reason diverges from canonical justification for {advisory}"
         );
         let expiry = date_from_toml(
             table
@@ -309,20 +458,212 @@ pub fn advisories(root: impl AsRef<Path>, max_age_days: i64) -> Result<()> {
             advisory,
         )?;
         ensure!(
-            expiry >= today,
-            "OSV exception expired for {advisory} on {expiry}"
+            expiry.format("%Y-%m-%d").to_string() == required_policy_str(canonical, "expires_at")?,
+            "OSV expiry diverges from canonical expiry for {advisory}"
         );
+    }
+    ensure!(
+        actual_osv == expected_osv,
+        "OSV ignore set diverges from canonical advisory policy"
+    );
+
+    let report = read_text(root, "SECURITY_ADVISORIES.md")?;
+    ensure!(
+        scanner_ids(&report) == canonical_ids,
+        "SECURITY_ADVISORIES.md must contain exactly the current canonical advisory IDs"
+    );
+
+    println!(
+        "security-advisory-check: PASS canonical={} osv={} audit={} deny={}",
+        canonical_ids.len(),
+        expected_osv.len(),
+        expected_audit.len(),
+        expected_deny.len()
+    );
+    Ok(())
+}
+
+fn validate_public_topology_text(relative: &str, text: &str) -> Result<()> {
+    let named_host =
+        Regex::new(r"(?im)^\s*(?:[-*]\s*)?(?:development|production|qualification)\s+host\s*[:=]")?;
+    let private_ipv4 = Regex::new(
+        r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b",
+    )?;
+    let private_home = Regex::new(r"(?:/home/|/Users/)[A-Za-z0-9._-]+/")?;
+    ensure!(
+        !named_host.is_match(text),
+        "{relative} exposes a host-specific operational identity"
+    );
+    ensure!(
+        !private_ipv4.is_match(text),
+        "{relative} exposes an RFC1918 address"
+    );
+    ensure!(
+        !private_home.is_match(text),
+        "{relative} exposes a private home-directory path"
+    );
+    Ok(())
+}
+
+pub fn documentation(root: impl AsRef<Path>) -> Result<()> {
+    let root = root.as_ref();
+
+    for relative in [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        "SECURITY.md",
+        "SUPPLY_CHAIN.md",
+        "docs/OPERATIONAL_QUALIFICATION.md",
+    ] {
+        validate_public_topology_text(relative, &read_text(root, relative)?)?;
+    }
+
+    let markdown_link = Regex::new(r"\[[^\]]+\]\(([^)]+)\)")?;
+    for relative in [
+        "README.md",
+        "SECURITY.md",
+        "SUPPLY_CHAIN.md",
+        "CONTRIBUTING.md",
+        "AGENTS.md",
+    ] {
+        let text = read_text(root, relative)?;
+        for captures in markdown_link.captures_iter(&text) {
+            let raw = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
+            if raw.starts_with("http://")
+                || raw.starts_with("https://")
+                || raw.starts_with("mailto:")
+                || raw.starts_with('#')
+            {
+                continue;
+            }
+            let path = raw.split('#').next().unwrap_or_default();
+            ensure!(
+                !path.is_empty() && root.join(path).exists(),
+                "{relative} contains dangling local link: {raw}"
+            );
+        }
+    }
+
+    let insights = read_text(root, "security-insights.yml")?;
+    let blob_path =
+        Regex::new(r#"https://github\.com/KaspaPulse/kaspa-telegram-notify/blob/main/([^"\s]+)"#)?;
+    for captures in blob_path.captures_iter(&insights) {
+        let path = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
         ensure!(
-            expiry <= latest_allowed,
-            "OSV exception for {advisory} expires {expiry}, more than {max_age_days} days from today"
+            root.join(path).exists(),
+            "security-insights.yml references missing repository path: {path}"
         );
     }
 
+    let surfaces: JsonValue =
+        serde_json::from_str(&read_text(root, "opqual/scenario-surfaces-v1.json")?)
+            .context("invalid opqual/scenario-surfaces-v1.json")?;
+    let policies = surfaces
+        .get("policies")
+        .and_then(JsonValue::as_object)
+        .context("scenario surfaces missing policies")?;
+    for (name, policy) in policies {
+        for key in ["critical_exact", "proven_irrelevant_exact"] {
+            let values = policy
+                .get(key)
+                .and_then(JsonValue::as_array)
+                .with_context(|| format!("scenario policy {name} missing {key}"))?;
+            for value in values {
+                let path = value.as_str().with_context(|| {
+                    format!("scenario policy {name}.{key} must contain strings")
+                })?;
+                ensure!(
+                    root.join(path).is_file(),
+                    "scenario policy {name}.{key} references missing file: {path}"
+                );
+            }
+        }
+        for key in ["critical_prefixes", "proven_irrelevant_prefixes"] {
+            let values = policy
+                .get(key)
+                .and_then(JsonValue::as_array)
+                .with_context(|| format!("scenario policy {name} missing {key}"))?;
+            for value in values {
+                let path = value.as_str().with_context(|| {
+                    format!("scenario policy {name}.{key} must contain strings")
+                })?;
+                ensure!(
+                    root.join(path.trim_end_matches('/')).is_dir(),
+                    "scenario policy {name}.{key} references missing directory: {path}"
+                );
+            }
+        }
+    }
+
+    let policy = proof_policy(root)?;
+    for key in ["required_ci_workflow", "msrv_ci_workflow"] {
+        let path = policy
+            .get(key)
+            .and_then(TomlValue::as_str)
+            .with_context(|| format!("proof policy missing {key}"))?;
+        ensure!(
+            root.join(path).is_file(),
+            "proof policy {key} path is missing: {path}"
+        );
+    }
+
+    let toolchain: TomlValue = read_text(root, "rust-toolchain.toml")?
+        .parse()
+        .context("invalid rust-toolchain.toml")?;
+    let channel = toolchain
+        .get("toolchain")
+        .and_then(TomlValue::as_table)
+        .and_then(|table| table.get("channel"))
+        .and_then(TomlValue::as_str)
+        .context("rust-toolchain.toml missing toolchain.channel")?;
+    let cargo: TomlValue = read_text(root, "Cargo.toml")?
+        .parse()
+        .context("invalid Cargo.toml")?;
+    let msrv = cargo
+        .get("package")
+        .and_then(TomlValue::as_table)
+        .and_then(|table| table.get("rust-version"))
+        .and_then(TomlValue::as_str)
+        .context("Cargo.toml missing package.rust-version")?;
+    let readme = read_text(root, "README.md")?;
+    let badge = Regex::new(r"Rust-([0-9]+\.[0-9]+\.[0-9]+)-orange")?;
+    let displayed = badge
+        .captures(&readme)
+        .and_then(|captures| captures.get(1))
+        .map(|m| m.as_str())
+        .context("README Rust badge version is missing")?;
+    ensure!(
+        displayed == channel,
+        "README Rust badge {displayed} does not match rust-toolchain.toml {channel}"
+    );
+    ensure!(
+        readme.matches(channel).count() == 1,
+        "README must display the primary Rust toolchain version exactly once"
+    );
+    if msrv != channel {
+        ensure!(
+            !readme.contains(msrv),
+            "README must refer to Cargo.toml for MSRV instead of duplicating the numeric value"
+        );
+    }
+    ensure!(
+        !readme.contains("latest verified stable release"),
+        "README must not contain a time-sensitive latest-stable dependency claim"
+    );
+
+    let supply = read_text(root, "SUPPLY_CHAIN.md")?;
+    ensure!(
+        supply.contains(&format!(
+            "schema is pinned to `{}`",
+            crate::proof::PROOF_SCHEMA_VERSION
+        )),
+        "SUPPLY_CHAIN.md proof schema statement is stale"
+    );
+
     println!(
-        "security-advisory-check: PASS ({} cargo-audit ignores documented; {} time-bounded OSV exceptions validated; review age {} days)",
-        ignored_ids.len(),
-        osv_ids.len(),
-        age_days
+        "documentation-contract-check: PASS toolchain={channel} schema={}",
+        crate::proof::PROOF_SCHEMA_VERSION
     );
     Ok(())
 }
@@ -560,6 +901,304 @@ mod tests {
         let document: JsonValue =
             serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(document["runs"][0]["results"], serde_json::json!([]));
+    }
+
+    fn canonical_environment_policy() -> String {
+        r#"schema_version = "1.2.0"
+policy_version = 3
+required_ci_workflow = ".github/workflows/security.yml"
+msrv_ci_workflow = ".github/workflows/rust-ci.yml"
+
+[environment_boundary]
+production_source_mutation = "FORBIDDEN"
+production_source_build = "FORBIDDEN"
+production_as_ci_runner = "FORBIDDEN"
+local_build_role = "QUALIFICATION_ONLY"
+canonical_release_artifact = "PUBLISHED_ATTESTED_GITHUB_RELEASE"
+private_host_identity_in_public_policy = "FORBIDDEN"
+
+[ci_identity]
+fixture_kind = "SYNTHETIC"
+admin_user_id = "9000000000000000000"
+admin_chat_id = "9000000000000000000"
+telegram_api_url = "http://127.0.0.1:9/"
+external_telegram_access = "FORBIDDEN"
+real_user_lookup = "FORBIDDEN"
+real_message_delivery = "FORBIDDEN"
+"#
+        .to_string()
+    }
+
+    fn write_environment_fixture(root: &Path, policy: &str) {
+        fs::create_dir_all(root.join("proof")).unwrap();
+        fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        fs::write(root.join("proof/policy.toml"), policy).unwrap();
+        let workflow = r#"BOT_TOKEN: "1234567890:TEST_PLACEHOLDER_TOKEN_NOT_REAL"
+ADMIN_USER_ID: "9000000000000000000"
+ADMIN_CHAT_ID: "9000000000000000000"
+TELEGRAM_API_URL: "http://127.0.0.1:9/"
+"#;
+        fs::write(root.join(".github/workflows/rust-ci.yml"), workflow).unwrap();
+        fs::write(
+            root.join(".github/workflows/auto-rusty-kaspa-update.yml"),
+            workflow,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn environment_policy_is_fail_closed_against_weakened_or_unknown_state() {
+        let baseline = canonical_environment_policy();
+        let valid = tempfile::tempdir().unwrap();
+        write_environment_fixture(valid.path(), &baseline);
+        environment_boundary(valid.path()).expect("canonical policy must pass");
+
+        for (from, to) in [
+            (
+                r#"production_source_mutation = "FORBIDDEN""#,
+                r#"production_source_mutation = "ALLOWED""#,
+            ),
+            (
+                r#"production_source_build = "FORBIDDEN""#,
+                r#"production_source_build = "ALLOWED""#,
+            ),
+            (
+                r#"production_as_ci_runner = "FORBIDDEN""#,
+                r#"production_as_ci_runner = "ALLOWED""#,
+            ),
+            (
+                r#"canonical_release_artifact = "PUBLISHED_ATTESTED_GITHUB_RELEASE""#,
+                r#"canonical_release_artifact = "LOCAL_REBUILD""#,
+            ),
+            (
+                r#"private_host_identity_in_public_policy = "FORBIDDEN""#,
+                r#"private_host_identity_in_public_policy = "ALLOWED""#,
+            ),
+            (
+                r#"external_telegram_access = "FORBIDDEN""#,
+                r#"external_telegram_access = "ALLOWED""#,
+            ),
+            (
+                r#"fixture_kind = "SYNTHETIC""#,
+                r#"fixture_kind = "UNKNOWN""#,
+            ),
+            (r#"schema_version = "1.2.0""#, r#"schema_version = "9.9.9""#),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write_environment_fixture(dir.path(), &baseline.replace(from, to));
+            assert!(
+                environment_boundary(dir.path()).is_err(),
+                "weakened policy unexpectedly passed: {from} -> {to}"
+            );
+        }
+
+        let missing = tempfile::tempdir().unwrap();
+        write_environment_fixture(
+            missing.path(),
+            &baseline.replace(
+                r#"production_source_build = "FORBIDDEN"
+"#,
+                "",
+            ),
+        );
+        assert!(environment_boundary(missing.path()).is_err());
+    }
+
+    fn write_documentation_fixture(root: &Path) {
+        write_environment_fixture(root, &canonical_environment_policy());
+        fs::write(
+            root.join(".github/workflows/security.yml"),
+            "name: Security\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("docs/example.md"), "# Example\n").unwrap();
+        fs::write(
+            root.join("docs/OPERATIONAL_QUALIFICATION.md"),
+            "# Operational qualification\nRun only in an isolated non-production environment.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nrust-version = \"1.97.1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.98.1\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("README.md"),
+            "[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg)](https://www.rust-lang.org/)\n[Security](SECURITY.md)\n",
+        )
+        .unwrap();
+        fs::write(root.join("SECURITY.md"), "# Security\n").unwrap();
+        fs::write(
+            root.join("SUPPLY_CHAIN.md"),
+            "The proof schema is pinned to `1.2.0`.\n",
+        )
+        .unwrap();
+        fs::write(root.join("CONTRIBUTING.md"), "# Contributing\n").unwrap();
+        fs::write(root.join("AGENTS.md"), "# Agents\n").unwrap();
+        fs::write(
+            root.join("security-insights.yml"),
+            "policy: \"https://github.com/KaspaPulse/kaspa-telegram-notify/blob/main/SECURITY.md\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("opqual")).unwrap();
+        fs::write(
+            root.join("opqual/scenario-surfaces-v1.json"),
+            r#"{
+  "policies": {
+    "fixture": {
+      "critical_exact": ["README.md"],
+      "critical_prefixes": ["docs/"],
+      "proven_irrelevant_exact": ["SECURITY.md"],
+      "proven_irrelevant_prefixes": [".github/workflows/"]
+    }
+  }
+}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn documentation_contract_fails_closed_on_dynamic_or_path_drift() {
+        let valid = tempfile::tempdir().unwrap();
+        write_documentation_fixture(valid.path());
+        documentation(valid.path()).expect("canonical documentation fixture must pass");
+
+        fs::write(
+            valid.path().join("README.md"),
+            "[![Rust](https://img.shields.io/badge/Rust-1.98.0-orange.svg)](https://www.rust-lang.org/)\n[Security](SECURITY.md)\n",
+        )
+        .unwrap();
+        assert!(documentation(valid.path()).is_err());
+
+        write_documentation_fixture(valid.path());
+        fs::write(
+            valid.path().join("README.md"),
+            "[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg)](https://www.rust-lang.org/)\n[Missing](MISSING.md)\n",
+        )
+        .unwrap();
+        assert!(documentation(valid.path()).is_err());
+
+        write_documentation_fixture(valid.path());
+        fs::write(
+            valid.path().join("opqual/scenario-surfaces-v1.json"),
+            r#"{
+  "policies": {
+    "fixture": {
+      "critical_exact": ["MISSING.md"],
+      "critical_prefixes": ["docs/"],
+      "proven_irrelevant_exact": ["SECURITY.md"],
+      "proven_irrelevant_prefixes": [".github/workflows/"]
+    }
+  }
+}"#,
+        )
+        .unwrap();
+        assert!(documentation(valid.path()).is_err());
+
+        write_documentation_fixture(valid.path());
+        fs::write(
+            valid.path().join("AGENTS.md"),
+            "# Agents\nProduction host: private-prod.internal\n",
+        )
+        .unwrap();
+        assert!(documentation(valid.path()).is_err());
+    }
+
+    fn write_advisory_fixture(root: &Path) {
+        let today = Utc::now().date_naive();
+        let expiry = today + ChronoDuration::days(30);
+        fs::create_dir_all(root.join("proof")).unwrap();
+        fs::create_dir_all(root.join(".cargo")).unwrap();
+        let reason = format!(
+            "Reviewed {}: synthetic transitive fixture remains accepted only for fail-closed scanner consistency testing.",
+            today.format("%Y-%m-%d")
+        );
+        fs::write(
+            root.join("proof/policy.toml"),
+            format!(
+                r#"schema_version = "1.2.0"
+policy_version = 3
+
+[[advisory_exception]]
+id = "RUSTSEC-2099-0001"
+package = "fixture 1.0.0"
+dependency_path = "fixture -> test"
+direct_or_transitive = "TRANSITIVE"
+runtime_or_build_time = "BUILD_TIME_TRANSITIVE"
+target_reachability = "TEST_ONLY"
+security_impact = "TEST_FIXTURE"
+justification = "{reason}"
+reviewed_at = "{reviewed}"
+expires_at = "{expiry}"
+remediation_trigger = "Delete the synthetic fixture after the test."
+upstream_blocker_if_any = "Synthetic test fixture."
+scanners = ["OSV", "CARGO_DENY"]
+"#,
+                reviewed = today.format("%Y-%m-%d"),
+                expiry = expiry.format("%Y-%m-%d"),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join(".cargo/audit.toml"),
+            "[advisories]\nignore = []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("deny.toml"),
+            "[advisories]\nignore = [\"RUSTSEC-2099-0001\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("osv-scanner.toml"),
+            format!(
+                "[[IgnoredVulns]]\nid = \"RUSTSEC-2099-0001\"\nignoreUntil = {}\nreason = {:?}\n",
+                expiry.format("%Y-%m-%d"),
+                reason
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("SECURITY_ADVISORIES.md"),
+            "# Active\n\n### RUSTSEC-2099-0001 — fixture\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn advisory_policy_fails_closed_on_scanner_or_expiry_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        write_advisory_fixture(dir.path());
+        advisories(dir.path(), 45).expect("canonical advisory fixture must pass");
+
+        fs::write(
+            dir.path().join("deny.toml"),
+            "[advisories]\nignore = [\"RUSTSEC-2099-0001\", \"RUSTSEC-2099-0002\"]\n",
+        )
+        .unwrap();
+        assert!(advisories(dir.path(), 45).is_err());
+
+        write_advisory_fixture(dir.path());
+        let osv_path = dir.path().join("osv-scanner.toml");
+        let osv = fs::read_to_string(&osv_path).unwrap();
+        let tomorrow = (Utc::now().date_naive() + ChronoDuration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let expiry_pattern = Regex::new(r"ignoreUntil = \d{4}-\d{2}-\d{2}").unwrap();
+        fs::write(
+            &osv_path,
+            expiry_pattern
+                .replace(&osv, format!("ignoreUntil = {tomorrow}"))
+                .as_ref(),
+        )
+        .unwrap();
+        assert!(advisories(dir.path(), 45).is_err());
     }
 
     #[test]

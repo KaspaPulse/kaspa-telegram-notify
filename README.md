@@ -1,118 +1,47 @@
 <div align="center">
 
 # 🦀 Kaspa Pulse
-### Community Mining Alerts for Kaspa Solo Miners
+
+### Community mining alerts for Kaspa solo miners
 
 [![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
-[![Edition](https://img.shields.io/badge/Rust%20Edition-2024-orange.svg?style=for-the-badge&logo=rust)](https://doc.rust-lang.org/edition-guide/rust-2024/)
-[![Kaspa](https://img.shields.io/badge/Kaspa-Network-70D4CB.svg?style=for-the-badge)](https://kaspa.org/)
-[![Database](https://img.shields.io/badge/Database-PostgreSQL-336791.svg?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
+[![CI](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/rust-ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/KaspaPulse/kaspa-telegram-notify?style=for-the-badge)](https://github.com/KaspaPulse/kaspa-telegram-notify/releases)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 
-A production-oriented Telegram bot for tracking Kaspa wallets, confirmed solo-mining rewards, wallet balances, BlockDAG/network metrics, and mining alerts.
+A Rust service that tracks Kaspa wallets and solo-mining rewards, persists state in PostgreSQL, and delivers operational and mining alerts through Telegram.
 
 </div>
 
----
+## What it does
 
-## Overview
+Kaspa Pulse connects to a Kaspa node over wRPC/WebSocket, maintains wallet and reward state in PostgreSQL, evaluates confirmed mining rewards and BlockDAG acceptance, and queues Telegram delivery with retry and deduplication controls.
 
-Kaspa Pulse is a Rust application that connects to a Kaspa node through wRPC/WebSocket and stores wallet, reward, deduplication, event, and delivery state in PostgreSQL.
+It is intended for operators who want a small, auditable notification service rather than a general-purpose mining platform.
 
-The repository intentionally uses a small auditable stack. It does **not** add Node.js, npm, TypeScript, ESLint, or a JavaScript web framework because the application does not contain a JavaScript/TypeScript runtime that needs them.
+## Key capabilities
 
-### Production flow
+- Track multiple Kaspa wallets with per-user isolation.
+- Detect and confirm solo-mining rewards.
+- Analyze BlockDAG acceptance and network state.
+- Persist wallet, event, deduplication, and delivery state in PostgreSQL.
+- Deliver Telegram alerts through a durable queue with retry/backoff.
+- Expose local health, readiness, and metrics endpoints.
+- Apply actor-scoped authorization and rate limits to administrative actions.
+- Run reproducible Rust-native operational qualification and security gates.
+- Produce immutable GitHub release artifacts with checksums, SBOMs, provenance, and attestations.
 
-```text
-Telegram user
-    ↓
-Command / wallet input
-    ↓
-Validation + actor-scoped rate limits
-    ↓
-PostgreSQL wallet state
-    ↓
-UTXO monitor
-    ↓
-Reward confirmation gate
-    ↓
-DAG analysis
-    ↓
-Event log + wallet-scoped deduplication
-    ↓
-telegram_delivery_queue
-    ↓
-Telegram delivery worker
+## Quick start
+
+Use the repository-pinned Rust toolchain. The product MSRV is declared in `Cargo.toml`.
+
+Copy the example configuration:
+
+```bash
+cp .env.example .env
 ```
 
----
-
-## Current platform baseline
-
-- Rust **1.98.1** is the pinned development/CI toolchain in `rust-toolchain.toml`; crate MSRV remains **1.97.1** in `Cargo.toml`.
-- Rust **Edition 2024**.
-- PostgreSQL **18** validation baseline with PostgreSQL-only SQLx 0.9 feature selection.
-- Teloxide 0.17 and Axum 0.8.
-- Reqwest 0.13 with Rustls.
-- `rusty-kaspa` dependencies are pinned to the latest verified stable release, exact version `2.1.0` and immutable upstream revision `01b532e8b553523216471682649693af92f0fd16` (verified against the upstream GitHub release on 2026-09-27).
-- Debian 13 (Trixie) production container.
-- Non-root container runtime using UID/GID `10001`.
-
-The crate has `publish = false` to prevent accidental publication to crates.io.
-
----
-
-## Features
-
-### Wallet and mining monitoring
-
-- Add, remove, and list Kaspa wallets.
-- Track wallet balances and UTXOs.
-- Detect coinbase mining rewards.
-- Wait for the configured reward-confirmation threshold.
-- Analyze BlockDAG acceptance.
-- Persist mined-block history.
-- Apply wallet-scoped deduplication.
-- Queue Telegram delivery in PostgreSQL with retry/backoff state.
-
-### Operational safety
-
-- Private-chat admin authorization.
-- Actor-scoped command and callback rate limits.
-- One-time CSPRNG confirmation nonces for sensitive admin actions.
-- SHA-256-indexed confirmation state.
-- Fail-closed behavior on sensitive database paths.
-- Privacy-aware logging and input limits.
-- Local health, readiness, and Prometheus-style metrics endpoints.
-- Graceful shutdown handling.
-- Panic/restart marker support.
-
-### Alert controls
-
-```text
-/pause       = pause live monitoring
-/mute_alerts = keep monitoring but suppress outgoing mining alerts
-```
-
----
-
-## Requirements
-
-- Rust 1.98.1 for the pinned development/CI toolchain (MSRV: 1.97.1).
-- PostgreSQL 18 recommended.
-- A reachable Kaspa wRPC endpoint.
-- A Telegram bot token.
-- Docker/Compose only for container deployment.
-
-Use the repository-pinned Rust toolchain rather than relying on a machine-global default.
-
----
-
-## Environment setup
-
-Copy `.env.example` to `.env` and replace every placeholder. Never commit `.env`.
-
-Minimum production configuration:
+Set at least:
 
 ```env
 BOT_TOKEN=PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE
@@ -123,206 +52,138 @@ NODE_URL_01=wss://your-kaspa-node.example.com/json
 DATABASE_URL=postgres://kaspa_pulse_app:PUT_APP_PASSWORD_HERE@127.0.0.1:5433/kaspa_dev?sslmode=disable
 
 APP_ENV=production
-RUST_LOG=info
 SQLX_OFFLINE=true
 ALLOW_RUNTIME_SCHEMA_ENSURE=false
-
 ENABLE_TELEGRAM_DELIVERY_QUEUE=true
 ENABLE_ALERT_DELIVERY=true
-MIN_REWARD_CONFIRMATIONS=10
 ```
 
-`ADMIN_ID` remains a backward-compatible fallback. New deployments should use explicit `ADMIN_USER_ID` and `ADMIN_CHAT_ID`; admin commands require the configured private admin chat.
+`ADMIN_ID` remains a backward-compatible fallback. New configurations should use the explicit user/chat identity fields.
 
-See `.env.example` for health/readiness, timeouts, market history, webhook, retention, and monitoring settings.
+See [.env.example](.env.example) for the complete typed configuration surface.
 
----
+## Architecture
 
-## Database policy
-
-Production runtime must use a least-privilege application role such as `kaspa_pulse_app`. Do not run the application as the PostgreSQL `postgres` superuser.
-
-Schema changes belong in `migrations/`. Runtime schema creation is disabled by default:
-
-```env
-ALLOW_RUNTIME_SCHEMA_ENSURE=false
+```text
+Telegram
+   │
+   ▼
+command / callback boundary
+   │
+   ▼
+application use cases ───────► Kaspa wRPC
+   │
+   ▼
+PostgreSQL
+   │
+   ├── wallet and reward state
+   ├── deduplication and events
+   └── durable Telegram delivery queue
 ```
 
-Use an administrative database role only for migrations or privileged maintenance. See [docs/security/DATABASE_SECURITY.md](docs/security/DATABASE_SECURITY.md) for the repository database-security policy and operational commands.
-
----
+The owned executable implementation is Rust. Third-party native/FFI dependencies are permitted only when discovered, classified, and explicitly approved by repository policy.
 
 ## Running locally
 
+Core developer checks:
+
 ```bash
 cargo fmt --all -- --check
 cargo check --locked --all-targets --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
+```
+
+Run the application after configuring the required environment:
+
+```bash
 cargo run --locked --release
 ```
 
----
+Database schema changes belong in `migrations/`. Production runtime should use a least-privilege PostgreSQL role; see [Database security](docs/security/DATABASE_SECURITY.md).
 
-## Container deployment
+## Container testing
 
-Build the production image:
-
-```bash
-docker build --pull -t kaspa-pulse:latest .
-```
-
-Start with Compose:
+Local container builds are **qualification artifacts only**:
 
 ```bash
+docker build --pull -t kaspa-pulse:local .
 docker compose up -d --build
 ```
 
-The production image:
+These commands are useful for validating container/runtime behavior. They do **not** create a canonical project release and a locally rebuilt binary or image must not substitute for published release bytes.
 
-- uses a Rust 1.98.1 / Debian 13 Trixie builder;
-- uses a Debian 13 Trixie slim runtime;
-- runs as non-root UID/GID `10001`;
-- keeps the panic-recovery marker under `/var/lib/kaspa-pulse`;
-- includes only the compiled binary and required runtime CA certificates.
+The container runs non-root on Debian Trixie, uses a multi-stage Rust build, and keeps operational endpoints suitable for loopback or reverse-proxy use.
 
-Compose additionally enables an init process, drops Linux capabilities, sets `no-new-privileges`, limits JSON log rotation, and binds the published webhook port to host loopback by default.
+## Operational qualification
 
----
+The Rust-native qualification harness lives under `xtask/src/opqual/`, with deterministic scenario inputs under `opqual/`.
 
-## Health and metrics
+It uses task-owned synthetic identities/data and isolated resources. Local material qualification requires an explicit non-production opt-in and remains fail closed on inherited credentials or ambiguous resource ownership.
 
-When enabled, the service exposes local endpoints such as:
+See [Operational qualification](docs/OPERATIONAL_QUALIFICATION.md) for dry-run, material-run, resume, cleanup, and evidence semantics.
 
-```text
-/healthz
-/readyz
-/metrics
-```
+## Production releases
 
-Example checks:
+The canonical project artifact source is the protected, attested GitHub Actions release workflow.
 
-```bash
-curl http://127.0.0.1:18080/healthz
-curl http://127.0.0.1:18080/readyz
-curl http://127.0.0.1:18080/metrics
-```
+Production deployment must use the **exact published artifact bytes** after verifying:
 
-Do not expose operational endpoints or the bot service directly to the public internet when a reverse proxy is expected.
+- SHA-256 checksum;
+- expected source commit;
+- canonical signer workflow;
+- artifact attestation/provenance;
+- target architecture and release manifest as applicable.
 
----
+A local build is never a release substitute.
 
-## Rust-native operational qualification
+Browse [GitHub Releases](https://github.com/KaspaPulse/kaspa-telegram-notify/releases) and read [Supply-chain security and release verification](SUPPLY_CHAIN.md) before deploying a published artifact.
 
-The isolated EXEC-01 and scenario qualification harness is implemented in Rust under `xtask/src/opqual/` with the local Rust fixture binary in `opqual-fixture/`. The scenario matrix is data-only at `opqual/scenario-map.csv`; no first-party Bash or Python operational harness remains.
+## Release verification
 
-The owned executable implementation is Rust-native: the tracked tree contains no first-party Python, PowerShell, Bash, JavaScript, Ruby, or Perl executable implementation. External interfaces, configuration, documentation, SQL migrations, workflow YAML, and data files are not counted as owned executable language implementations.
+For a downloaded release archive, verify its checksum and GitHub attestation as documented in [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md). Verification is fail closed: do not install or run an artifact when its checksum, source identity, signer workflow, or attestation cannot be established.
 
-Build the candidate and fixture, then use `cargo run --locked -p xtask -- opqual ...`. See [docs/OPERATIONAL_QUALIFICATION.md](docs/OPERATIONAL_QUALIFICATION.md) for dry-run, material-run, crash-safe resume, cleanup, and evidence semantics.
+The project records provenance but does not claim an external SLSA level solely because attestations exist.
 
-### External provider contracts
+## Security
 
-The required pull-request E2E remains hermetic and secret-free. A separate
-trusted-provider layer validates real external contracts without exposing test
-credentials to pull-request code:
+Repository security controls include:
 
-- live Kaspa wRPC runs read-only on trusted `main`, using either an explicit
-  endpoint or the Rusty Kaspa public resolver;
-- Telegram Test Environment validation is manual-only on `main` and uses a
-  dedicated GitHub Environment with dedicated test bot/chat credentials;
-- provider failures never weaken or replace the required Hermetic E2E merge
-  gate.
+- locked Rust builds and strict Clippy;
+- CodeQL and secret scanning;
+- OSV, Cargo Audit, and Cargo Deny dependency checks;
+- immutable GitHub Action references;
+- dependency review;
+- fuzzing and hermetic E2E coverage;
+- machine-readable Rust/native/supply-chain proof artifacts;
+- time-bounded, fail-closed advisory exceptions.
 
-See [docs/EXTERNAL_CONTRACT_E2E.md](docs/EXTERNAL_CONTRACT_E2E.md) for provider
-selection, Test Environment setup, retry/backoff behavior, evidence, and local
-commands.
+The canonical machine-readable policy is `proof/policy.toml`. Active exception rationale is summarized in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
 
----
+Report unpatched vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
-## Quality and supply chain
+## Documentation
 
-Pull requests that change the Rust application run the core quality gate:
+- [Supply-chain verification](SUPPLY_CHAIN.md)
+- [Security policy](SECURITY.md)
+- [Active advisory exceptions](SECURITY_ADVISORIES.md)
+- [Security control map](docs/security/CONTROL_MAP.md)
+- [Database security](docs/security/DATABASE_SECURITY.md)
+- [Operational qualification](docs/OPERATIONAL_QUALIFICATION.md)
+- [Fuzzing](docs/FUZZING.md)
+- [External contract E2E](docs/EXTERNAL_CONTRACT_E2E.md)
 
-```bash
-cargo fmt --all -- --check
-cargo check --locked --all-targets --all-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
-```
+## Contributing
 
-Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
-
-### Fail-closed Rust-only governance
-
-The repository distinguishes **owned source** from the complete transitive dependency stack. The owned executable implementation is required to be Rust-only; third-party native/FFI dependencies are allowed only when they are discovered, classified, and explicitly approved by policy. The project does **not** claim that every transitive dependency is pure Rust.
-
-Run the repository-native proof gate with:
-
-```bash
-cargo xtask proof verify
-```
-
-The proof schema is pinned to `1.1.0`. The gate discovers tracked and relevant untracked artifacts, classifies ownership/role/path/file class/executability/origin/target relevance, fails on unknown classifications, and emits deterministic machine-readable evidence under `target/proof/`. Native proof discovery also records every production-reachable custom build script by digest and requires explicit policy approval for any package exposed by Cargo `links`, a `-sys` name, or compiler/link/process/native-source capability signals in `build.rs`.
-
-- `rust-only-proof.json` — fail-closed owned-source classification;
-- `native-dependency-inventory.json` — target-specific classified native/link/build-script trust surface, including whether native code is active for each supported target and complete custom-build-script coverage;
-- `supply-chain-proof.json` — CI, action-pin, MSRV, advisory, SBOM, provenance, and attestation policy evidence.
-
-The required security workflow runs `cargo xtask proof verify` and uploads the three JSON artifacts. Negative tests intentionally prove that unknown languages, executable helpers, generated/vendor artifacts, non-Rust shebangs, and unknown native dependencies fail closed. Rust `1.97.1` remains the declared crate MSRV and is tested explicitly in CI against the supported `kaspa-pulse --all-targets --all-features` matrix; Rust `1.98.1` remains the pinned development/primary CI toolchain.
-
-Release provenance and attestations are verified, but no SLSA build level is claimed unless that level is independently proven.
-
-Dependency/security automation includes:
-
-```bash
-cargo audit
-cargo deny check
-cargo machete
-cargo tree --locked -d
-```
-
-See [docs/security/CONTROL_MAP.md](docs/security/CONTROL_MAP.md) for the evidence-backed repository control map and [docs/FUZZING.md](docs/FUZZING.md) for the reproducible fuzzing workflow.
-
-Additional controls:
-
-- GitHub Actions are pinned to immutable commit SHAs.
-- Normal CI checkout does not persist repository credentials.
-- Git dependencies are allow-listed in `deny.toml`.
-- `rusty-kaspa` is pinned to both an exact release version and the immutable commit resolved from its reviewed release tag; tag drift is rejected by the updater.
-- Dependabot checks Cargo, GitHub Actions, Docker, Rust toolchain, and Compose dependencies on staggered weekly schedules.
-- The scheduled `rusty-kaspa` updater validates changes before publishing an update branch/PR.
-- Accepted upstream/transitive RustSec exceptions are documented in `SECURITY_ADVISORIES.md`; they are not silently hidden.
-- Releases include a CycloneDX SBOM, SHA-256 checksum, Sigstore bundles, and SLSA/in-toto provenance.
-- [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) documents fail-closed verification of release provenance.
-- [security-insights.yml](security-insights.yml) publishes the repository's OpenSSF Security Insights posture in a machine-readable format.
-
----
-
-## Security reporting
-
-Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Submit unpatched vulnerabilities privately through GitHub's repository Security Advisories / **Report a vulnerability** flow rather than a public issue.
-
-See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md) for documented upstream/transitive exceptions and their review policy, and [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) for signed-release verification.
-
----
-
-## Repository hygiene
-
-The canonical tracked tree contains source, tests, migrations, CI/release policy, deterministic offline SQLx metadata, and maintained project documentation. Runtime evidence, task-continuity ledgers, checkpoints, historical closure/status snapshots, local machine paths, database dumps, backups, logs, panic markers, generated exports, release scratch files, and Rust build output do **not** belong in the public source tree.
-
-Current project state is established from protected `main` plus the relevant live CI, release, deployment, and runtime evidence; historical task state is not a repository source of truth.
-
-If a real secret was ever committed, removing the latest file is not enough: rotate the credential immediately and rewrite Git history when the exposure requires it.
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported workflow, local quality gates, security expectations, and pull-request requirements. Coding agents should also follow [AGENTS.md](AGENTS.md).
 
 ## Support
+
+Kaspa donation address:
 
 ```text
 kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g
 ```
-
----
 
 ## License
 

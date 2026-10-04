@@ -1,65 +1,50 @@
-# Repository Execution Policy
+# Repository Engineering Policy
 
-<!-- KAS_DNS_ENVIRONMENT_BOUNDARY_V1 -->
+This file provides public engineering guidance for humans and coding agents working in this repository. The canonical machine-readable security policy is `proof/policy.toml`; this document must stay consistent with that policy but is not itself a machine-security authority.
 
-This file defines a mandatory execution boundary for all human and automated engineering work in this repository.
+## Engineering environment boundary
 
-## Authoritative environment boundary
+- Source edits, dependency resolution, Git mutations, builds, tests, security scans, and packaging must run in a trusted non-production development environment or in protected GitHub Actions.
+- Production environments must not be used for source mutation, dependency resolution, CI execution, or source builds.
+- If production verification exposes a defect, preserve the minimum evidence needed for diagnosis, keep or restore a safe runtime state, and return to a non-production development environment for the fix.
+- Never patch application source in place on production.
 
-- `kas` is the only development host.
-- `dns` is the production host and is not a development environment.
-- All source edits, dependency resolution, local Git operations, builds, tests, security scans, packaging, and release-artifact creation MUST run on `kas`.
-- All branch creation, commits, rebases/merges, pushes, tags, and GitHub coordination initiated from a local host MUST originate from `kas`.
-- GitHub Actions remains the repository's remote CI system; `dns` MUST NOT be configured or used as a CI runner.
+## Release authority
 
-## Production host prohibition
+- Local builds are qualification artifacts only.
+- Canonical project releases are produced by the protected, attested GitHub Actions release workflow in `.github/workflows/release.yml`.
+- A local rebuild must never substitute for a published release artifact.
+- Production deployment artifacts must be the exact published release bytes after checksum, source identity, signer workflow, and attestation verification.
+- Release verification is fail closed: do not install or run an artifact whose identity or provenance cannot be verified.
 
-During development, `dns` MUST NOT be used for:
+## Required engineering gates
 
-- Editing repository files.
-- Git fetch/pull/checkout/commit/push/tag operations.
-- Cargo, Rust, Docker, Node, npm, or other development builds.
-- Unit, integration, security, smoke, or CI-equivalent tests.
-- Dependency installation or dependency-resolution work for development.
-- Generating release artifacts.
+For applicable changes, preserve and run the repository-native gates rather than weakening them:
 
-## Permitted use of production
+```bash
+cargo fmt --all -- --check
+cargo check --locked --all-targets --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
+cargo xtask security environment-boundary
+cargo xtask security documentation
+cargo xtask security advisories --max-age-days 45
+cargo xtask proof verify
+```
 
-`dns` MAY be accessed only after the candidate change is merged and required CI gates have passed, and only for:
+Dependency and supply-chain changes must also keep the independent audit, deny, OSV, secret-scan, CodeQL, dependency-review, and workflow-lint controls healthy.
 
-- Deploying an already-approved artifact produced outside production.
-- Restarting/reloading the application as required by the deployment.
-- Post-deployment health, readiness, log, metrics, and functional verification.
-- Executing a documented rollback when verification fails.
+## Repository safety
 
-No source build is permitted on `dns` as part of deployment. Prefer immutable artifacts identified by the merged `main` commit SHA and a cryptographic checksum.
+- Do not commit secrets, production credentials, private user data, runtime dumps, private deployment state, local task ledgers, or machine-specific recovery state.
+- Preserve deterministic build and proof inputs such as `.sqlx/`, `Cargo.lock`, migrations, operational-qualification scenario data, and `proof/policy.toml`.
+- Do not delete or consolidate security/workflow boundaries merely for visual simplicity.
+- Unknown policy values and unclassified trust inputs fail closed.
 
-## Required deployment sequence
+## Continuity and side effects
 
-1. Develop and test on `kas`.
-2. Commit and push from `kas`.
-3. Open/review the pull request and wait for required GitHub CI gates.
-4. Merge to protected `main` only after gates pass.
-5. Build/package the deployable artifact on `kas` from the exact merged `main` SHA.
-6. Record the artifact SHA-256 and target commit SHA.
-7. Access `dns` only for deployment.
-8. Preserve a rollback copy before replacement.
-9. Deploy the exact approved artifact.
-10. Verify service status, health/readiness, logs, and required runtime integrations on `dns`.
-11. Roll back immediately if the deployment is materially worse than the pre-deployment baseline.
+Before repeating a material external effect, reconcile against the actual repository, CI, release, and runtime state. Preserve existing work, recover an already-started operation when possible, and avoid duplicate pushes, PRs, merges, tags, releases, deployments, or destructive history operations.
 
-## Failure and exception handling
+Operational continuity state belongs outside the tracked public repository.
 
-If production verification exposes a defect, capture the minimum evidence on `dns`, restore/retain a safe production state, then return to `kas` for diagnosis, code changes, builds, and tests. Do not repair source code in place on production.
-
-This boundary is mandatory even when a task has broad authorization. Authorization to deploy does not convert `dns` into a development host.
-
-If another document or prior conversation conflicts with this file on the `kas`/`dns` execution boundary, this policy governs until it is deliberately changed through protected `main`.
-
-## Interruption-safe continuity
-
-Operational task state is not repository source. Durable continuity ledgers, checkpoints, receipts, runtime evidence, local paths, and recovery state MUST remain outside the tracked public tree.
-
-When resuming work, reconcile against the actual repository, CI, release, deployment, and runtime state before retrying any material operation. Preserve existing work and source-bound evidence, and never treat a stale local status document as repository authority.
-
-This repository policy grants no push, release, deployment, or production authority by itself.
+This file grants no push, merge, release, deployment, or production authority by itself.

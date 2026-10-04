@@ -33,6 +33,6 @@ Reports should be validated privately, remediation coordinated, and a security a
 
 Dependency-sensitive changes are checked with `cargo audit`, `cargo deny`, and `cargo machete`; Rust application changes also pass formatting, locked compilation, strict Clippy, and tests. GitHub CodeQL performs Rust static analysis, and OpenSSF Scorecard continuously checks repository supply-chain posture.
 
-Accepted upstream or transitive exceptions are documented in `SECURITY_ADVISORIES.md` and configured in `.cargo/audit.toml` / `deny.toml` as applicable.
+Accepted upstream or transitive exceptions are canonicalized in `proof/policy.toml`, summarized in `SECURITY_ADVISORIES.md`, and projected into scanner-specific configuration. CI fails closed if those representations diverge or expire.
 
 See `docs/security/CONTROL_MAP.md` for the evidence-backed control map and `docs/security/DATABASE_SECURITY.md` for database-specific security policy.

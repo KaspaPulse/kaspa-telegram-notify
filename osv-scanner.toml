@@ -1,50 +1,48 @@
-# Time-bounded OSV exceptions for reviewed upstream/transitive RustSec advisories.
-# Every entry must be documented in SECURITY_ADVISORIES.md and expires within
-# the same 45-day review window enforced by `cargo xtask security advisories`.
-# These exceptions are intentionally narrow: only advisory IDs are ignored;
-# packages, ecosystems, and future advisories remain fully scanned.
+# Canonical exceptions live in proof/policy.toml.
+# This scanner-specific projection is fail-closed and verified by
+# `cargo xtask security advisories --max-age-days 45`.
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0052"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-27: async-std 1.13.2 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; the application has no direct async-std dependency and no newer stable rusty-kaspa release exists."
+reason = "Reviewed 2026-10-04: async-std 1.13.2 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; the application has no direct async-std dependency and no compatible stable upstream path removes it."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2021-0145"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-15: atty 0.2.14 is transitive through hexplay 0.3.0 from the pinned Kaspa/workflow graph; this unsoundness is Windows-specific, Production is Linux, and no patched atty release exists."
+reason = "Reviewed 2026-10-04: atty 0.2.14 is transitive through hexplay 0.3.0 in the pinned Kaspa/workflow graph; the published unsoundness is Windows-specific, production qualification is Linux, and no patched atty release exists."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0375"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-15: atty 0.2.14 is unmaintained and reaches the application only through hexplay 0.3.0 in the pinned Kaspa/workflow dependency graph; there is no direct application dependency or compatible upstream replacement."
+reason = "Reviewed 2026-10-04: atty 0.2.14 is unmaintained and reaches the application only through hexplay 0.3.0 in the pinned Kaspa/workflow graph; there is no direct application dependency or compatible maintained upstream replacement."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0388"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-27: derivative 2.2.0 is transitive through ark-crypto-primitives 0.6.0 -> ark-groth16 0.6.0 -> kaspa-txscript 2.0.1; the application does not select derivative directly and rusty-kaspa v2.1.0 remains the newest stable release."
+reason = "Reviewed 2026-10-04: derivative 2.2.0 is transitive through ark-crypto-primitives 0.6.0 and ark-groth16 0.6.0 into kaspa-txscript 2.1.0; the application does not select derivative directly and no compatible stable upstream path removes it."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0384"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-27: instant 0.1.13 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; it is not a direct application dependency and no stable upstream release removes this path yet."
+reason = "Reviewed 2026-10-04: instant 0.1.13 is transitive through workflow-core 0.18.0 in pinned rusty-kaspa v2.1.0; it is not a direct application dependency and no compatible stable upstream path removes it."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-15: paste 1.0.15 is transitive through pinned Kaspa RPC/notify crates and the RISC0 path under kaspa-txscript; the application does not select paste directly and current upstream stable dependencies still resolve it."
+reason = "Reviewed 2026-10-04: paste 1.0.15 is transitive through pinned Kaspa RPC/notify crates and the kaspa-txscript RISC0 path; the application does not select paste directly and current stable upstream dependencies still resolve it."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0370"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-15: proc-macro-error 1.0.4 is a compile-time transitive dependency through kaspa-rpc-macros and workflow-core-macros in the pinned Kaspa/workflow graph; there is no direct application dependency or stable upstream replacement."
+reason = "Reviewed 2026-10-04: proc-macro-error 1.0.4 is a compile-time transitive dependency through kaspa-rpc-macros and workflow-core-macros in the pinned Kaspa/workflow graph; there is no direct application dependency or compatible stable upstream replacement."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0173"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-15: proc-macro-error2 2.0.1 is compile-time only through teloxide 0.17.0 -> aquamarine 0.6.0; all three remain current published versions, and Rust 1.98.1 CI still reports the known future-incompatibility warning."
+reason = "Reviewed 2026-10-04: proc-macro-error2 2.0.1 is compile-time only through teloxide 0.17.0 and aquamarine 0.6.0; the application does not select it directly, and the current published dependency path has no compatible maintained replacement."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0306"
 ignoreUntil = 2026-10-15
-reason = "Reviewed 2026-09-27: faster-hex 0.9.0 is constrained by current upstream rusty-kaspa v2.1.0; selected Kaspa source calls checked hex_decode and contains no direct hex_decode_unchecked use, while fixed 0.10.1 is outside Kaspa's 0.9.x requirement. Re-review immediately when Kaspa updates."
+reason = "Reviewed 2026-10-04: faster-hex 0.9.0 is constrained by pinned rusty-kaspa v2.1.0; reviewed selected Kaspa call sites use checked hex_decode rather than direct hex_decode_unchecked, while the fixed 0.10.1 line is outside the upstream requirement."

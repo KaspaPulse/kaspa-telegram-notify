@@ -5,7 +5,6 @@
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
-        "rust-toolchain",
         "xtask/Cargo.toml"
       ],
       "critical_prefixes": [
@@ -13,8 +12,7 @@
         "migrations/",
         "xtask/src/",
         "opqual/",
-        ".github/workflows/",
-        "supply-chain/"
+        ".github/workflows/"
       ],
       "proven_irrelevant_exact": [
         "README.md",
@@ -22,13 +20,11 @@
         "SECURITY.md",
         "SUPPLY_CHAIN.md",
         ".gitignore",
-        ".gitattributes",
-        ".editorconfig"
+        ".github/pull_request_template.md"
       ],
       "proven_irrelevant_prefixes": [
         "docs/",
-        ".github/ISSUE_TEMPLATE/",
-        ".github/PULL_REQUEST_TEMPLATE/"
+        ".github/ISSUE_TEMPLATE/"
       ]
     },
     "full_system_v1": {
@@ -36,7 +32,6 @@
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
-        "rust-toolchain",
         "xtask/Cargo.toml"
       ],
       "critical_prefixes": [
@@ -44,8 +39,7 @@
         "migrations/",
         "xtask/src/",
         "opqual/",
-        ".github/workflows/",
-        "supply-chain/"
+        ".github/workflows/"
       ],
       "proven_irrelevant_exact": [
         "README.md",
@@ -53,17 +47,15 @@
         "SECURITY.md",
         "SUPPLY_CHAIN.md",
         ".gitignore",
-        ".gitattributes",
-        ".editorconfig"
+        ".github/pull_request_template.md"
       ],
       "proven_irrelevant_prefixes": [
         "docs/",
-        ".github/ISSUE_TEMPLATE/",
-        ".github/PULL_REQUEST_TEMPLATE/"
+        ".github/ISSUE_TEMPLATE/"
       ]
     }
   },
-  "policy_version": "conservative-over-invalidation-v1",
+  "policy_version": "conservative-over-invalidation-v2",
   "scenarios": {
     "COMP-001": "full_system_v1",
     "COMP-002": "full_system_v1",

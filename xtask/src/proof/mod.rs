@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use toml::Value as TomlValue;
 
-pub const PROOF_SCHEMA_VERSION: &str = "1.1.0";
+pub const PROOF_SCHEMA_VERSION: &str = "1.2.0";
 const RUST_ONLY_FILE: &str = "rust-only-proof.json";
 const NATIVE_FILE: &str = "native-dependency-inventory.json";
 const SUPPLY_FILE: &str = "supply-chain-proof.json";
@@ -22,6 +22,10 @@ fn policy(root: &Path) -> Result<TomlValue> {
     ensure!(
         value.get("schema_version").and_then(TomlValue::as_str) == Some(PROOF_SCHEMA_VERSION),
         "proof schema version must be pinned to {PROOF_SCHEMA_VERSION}"
+    );
+    ensure!(
+        value.get("policy_version").and_then(TomlValue::as_integer) == Some(3),
+        "proof policy version must be pinned to 3"
     );
     Ok(value)
 }

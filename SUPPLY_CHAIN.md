@@ -2,6 +2,8 @@
 
 Kaspa Pulse releases are produced by the protected GitHub Actions release workflow in `.github/workflows/release.yml`.
 
+Local builds are qualification artifacts only. They are not project releases and must not substitute for published release bytes. Production deployment must use the exact published artifact after checksum, source identity, signer-workflow, and attestation verification.
+
 ## Release artifacts
 
 Starting with `v1.3.1`, every published Linux release contains parallel `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` artifact sets. Each target has:
@@ -70,11 +72,11 @@ The release pipeline:
 
 Pull requests and scheduled security workflows use independent controls including CodeQL, OSV Scanner, `cargo audit`, `cargo deny`, dependency review, secret scanning, strict Clippy, tests, release builds, and production-container smoke tests.
 
-Reviewed RustSec/OSV exceptions are advisory-ID-specific, documented in `SECURITY_ADVISORIES.md`, and time-bounded by CI policy. A passing exception policy does not replace the independent vulnerability scanners.
+Reviewed RustSec/OSV exceptions are canonicalized as structured records in `proof/policy.toml`, projected into scanner-specific configuration, and summarized for humans in `SECURITY_ADVISORIES.md`. CI verifies exact scanner consistency and expiry. A passing exception policy does not replace the independent vulnerability scanners.
 
 ## Continuous Rust-only and native trust proof
 
-`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.1.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
+`cargo xtask proof verify` is the required fail-closed repository proof gate. Its schema is pinned to `1.2.0`, and successful verification emits three deterministic JSON artifacts under `target/proof/`:
 - `rust-only-proof.json` classifies every tracked/relevant artifact by ownership, role, path, file class, executability, origin, and target relevance; any unknown classification fails the gate;
 - `native-dependency-inventory.json` records all production-reachable custom build scripts by digest and classifies the union of Cargo `links`, `-sys` names, and build scripts with compiler/link/process/native-source capability signals. Each candidate has exact locked identity, dependency path, resolved features, discovery signals, target-aware native activation, approval, and validity predicates;
 - `supply-chain-proof.json` records the pinned workflow/action policy, dependency/advisory controls, explicit MSRV policy, SBOM/provenance/attestation controls, and input digests.

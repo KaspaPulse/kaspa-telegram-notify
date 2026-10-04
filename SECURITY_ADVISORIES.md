@@ -1,194 +1,119 @@
-# Security Advisories Review Log
+# Active Security Advisory Exceptions
 
-This file records intentionally accepted or currently unavoidable RustSec findings in Kaspa Pulse.
+This document is the human-readable view of the repository's current reviewed dependency exceptions. The canonical structured authority is `proof/policy.toml`; scanner-specific ignore sets in `osv-scanner.toml`, `.cargo/audit.toml`, and `deny.toml` are machine-verified against it.
+
+Last automated review: **2026-10-04**
 
 ## Policy
 
-- Never suppress a RustSec finding without recording why it is accepted and how it will be revisited.
-- Treat an unmaintained/transitive warning differently from a proven exploitable vulnerability.
-- Remove an exception as soon as the upstream dependency path no longer requires it.
-- Re-review the dependency graph whenever Rust, `rusty-kaspa`, SQLx, Teloxide, Reqwest, Axum, Rustls, or other security-sensitive dependencies change.
-- CI rejects ignored RustSec IDs that are not documented here and rejects a review date older than 45 days.
-- OSV exceptions must be advisory-ID-specific, include a concrete reason, and expire within 45 days; package-wide or ecosystem-wide vulnerability suppression is not permitted.
-- A passing OSV scan never replaces the independent `cargo audit` and `cargo deny` gates.
+- Exceptions are advisory-specific, time-bounded, and fail closed when expired or inconsistent.
+- A scanner ignore is invalid unless the same advisory exists in the canonical structured policy with a current review, justification, reachability assessment, remediation trigger, and expiry.
+- Resolved advisories are removed from this current-state view and remain available through Git history.
+- A passing exception policy does not replace independent vulnerability scanning.
+- Re-review is required whenever the relevant dependency path changes and no later than the canonical expiry date.
+- Current dependency versions and revisions come from `Cargo.toml` and `Cargo.lock`, not from prose in this document.
 
-Current CI security gates:
+Current validation:
 
 ```bash
 cargo xtask security advisories --max-age-days 45
 cargo audit
 cargo deny check
 cargo machete
-cargo tree --locked -d
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
 ```
-
-The security workflow also runs the SHA-pinned official OSV Scanner reusable workflow against `Cargo.lock` and applies only the reviewed, time-bounded entries in `osv-scanner.toml`.
-
-Last automated review: **2026-09-27**
-
----
-
-## Scorecard / OSV aggregation note
-
-OpenSSF Scorecard currently groups the previously reviewed RustSec records in this dependency graph under its broad `Vulnerabilities` check. That aggregate must not be interpreted as eight equivalent exploitable runtime vulnerabilities.
-
-The prior eight-record baseline contains seven RustSec `INFO Unmaintained` notices: `RUSTSEC-2025-0052`, `RUSTSEC-2024-0375`, `RUSTSEC-2024-0388`, `RUSTSEC-2024-0384`, `RUSTSEC-2024-0436`, `RUSTSEC-2024-0370`, and `RUSTSEC-2026-0173`. `RUSTSEC-2021-0145` is `INFO Unsound`, affects `atty` on Windows, has no patched release, and is retained only through an upstream/transitive path. Production container validation remains Linux-based.
-
-After dependency-path review, the retained records are encoded in `osv-scanner.toml` as narrow advisory-ID exceptions expiring on **2026-10-15**. CI rejects expired, undocumented, duplicate, malformed, or excessively long-lived OSV exceptions. This is not a blanket package/ecosystem override: new advisories remain scannable, and `cargo audit` plus `cargo deny` remain independent security controls.
-
-The purpose of these OSV exceptions is to encode the reviewed non-actionability of specific upstream/transitive findings while preserving an automatic expiry and re-review requirement; they must not be used to hide a locally actionable vulnerability.
-
-### 2026-09-15 independent re-review
-
-- An unfiltered `cargo audit` executed outside repository configuration against the exact `Cargo.lock` reports **0 vulnerabilities** and the eight informational RustSec records in that baseline: seven `unmaintained` and one `unsound` (`RUSTSEC-2021-0145`).
-- `cargo deny check advisories` remains PASS independently of `osv-scanner.toml`.
-- rusty-kaspa v2.1.0 at 01b532e8b553523216471682649693af92f0fd16 is the newest stable upstream release/tag and is also current upstream master; the repository pins that exact revision.
-- `teloxide 0.17.0`, `aquamarine 0.6.0`, and `proc-macro-error2 2.0.1` remain the newest published versions. Exact-main Rust 1.98.1 CI continues to report `proc-macro-error2 2.0.1` as future-incompatible, so the issue remains actively tracked rather than silently accepted.
-- The exact dependency paths were rechecked with `cargo tree -i`; the retained upstream/transitive advisories have no compatible stable update that removes their affected paths.
-- All OSV exceptions remain advisory-ID-specific and expire no later than **2026-10-15** in this review window. New advisories, packages, and ecosystems remain unignored.
-
-Next mandatory re-review: **on or before 2026-10-15**, and earlier if Rust, rusty-kaspa, Teloxide/Aquamarine, or the relevant workflow/Kaspa dependencies change.
-
----
 
 ## Current managed findings
 
-### RUSTSEC-2024-0388 — `derivative` unmaintained
+### RUSTSEC-2025-0052 — async-std
 
-Status: temporary transitive exception.
+Classification: transitive, runtime graph, unmaintained upstream dependency.
 
-Known path includes the upstream Kaspa/Arkworks dependency stack (`kaspa-txscript` → Arkworks components → `derivative`). Kaspa Pulse does not select `derivative` directly.
+Current path: `async-std 1.13.2 → workflow-core 0.18.0 → pinned rusty-kaspa 2.1.0 graph`.
 
-Action: keep `cargo audit`/`cargo deny` enabled and remove the exception when upstream no longer resolves this crate.
+The application does not select async-std directly. Remove this exception when the pinned upstream path no longer resolves it or a compatible maintained path becomes available.
 
-### RUSTSEC-2026-0173 — `proc-macro-error2` unmaintained / future compatibility
+Expiry: **2026-10-15**.
 
-Status: temporary build-time transitive exception.
+### RUSTSEC-2021-0145 — atty unsoundness
 
-The current resolved graph includes `aquamarine` → `proc-macro-error2`. Exact-main Rust 1.98.1 CI still reports this crate in its future-incompatibility output. Kaspa Pulse does not depend on it directly.
+Classification: transitive, platform-limited unsoundness.
 
-Action: track upstream replacement/removal and delete the exception when a safe path exists. Re-evaluate immediately if the advisory changes from maintenance/future compatibility to an exploitable vulnerability.
+Current path: `atty 0.2.14 → hexplay 0.3.0 → pinned Kaspa/workflow graph`.
 
-### RUSTSEC-2024-0320 — `yaml-rust` unmaintained
+The published unsoundness is Windows-specific while production qualification is Linux. Remove this exception when the atty path disappears or a compatible maintained replacement is adopted upstream.
 
-Status: visible transitive warning.
+Expiry: **2026-10-15**.
 
-Kaspa Pulse does not depend on `yaml-rust` directly. The warning remains visible in automated security output rather than being represented as a clean/no-warning state.
+### RUSTSEC-2024-0375 — atty unmaintained
 
-Action: monitor the upstream dependency path and remove it when upstream dependencies stop resolving the crate.
+Classification: transitive, runtime graph, unmaintained upstream dependency.
 
-### RUSTSEC-2024-0384 — `instant` unmaintained
+Current path: `atty 0.2.14 → hexplay 0.3.0 → pinned Kaspa/workflow graph`.
 
-Status: temporary transitive exception.
+There is no direct application dependency. Remove the exception when the upstream graph no longer resolves atty.
 
-Kaspa Pulse does not depend on `instant` directly.
+Expiry: **2026-10-15**.
 
-Action: monitor upstream Kaspa/dependency updates and remove the exception when the crate leaves the graph.
+### RUSTSEC-2024-0388 — derivative unmaintained
 
-### RUSTSEC-2023-0071 — RSA advisory
+Classification: transitive dependency through the Kaspa/Arkworks graph.
 
-Status: resolved from the current `cargo audit` / `cargo deny` graph on 2026-09-10.
+Current path: `derivative 2.2.0 → ark-crypto-primitives 0.6.0 → ark-groth16 0.6.0 → kaspa-txscript 2.1.0`.
 
-Kaspa Pulse remains PostgreSQL-only, and the current locked graph no longer matches this advisory in either Cargo security gate. The historical rationale is retained here so a future MySQL/RSA-backed path is recognized as a re-review trigger.
+The application does not select derivative directly. Remove the exception when the pinned Kaspa/Arkworks path no longer resolves it.
 
-Action: no Cargo exception remains; re-evaluate if MySQL/RSA-backed authentication is introduced.
+Expiry: **2026-10-15**.
 
-### RUSTSEC-2025-0052 — `async-std` unmaintained
+### RUSTSEC-2024-0384 — instant unmaintained
 
-Status: upstream/transitive Kaspa dependency.
+Classification: transitive, runtime graph, unmaintained upstream dependency.
 
-Kaspa Pulse application code does not directly select `async-std`.
+Current path: `instant 0.1.13 → workflow-core 0.18.0 → pinned rusty-kaspa 2.1.0 graph`.
 
-Action: track `rusty-kaspa` updates and remove the exception once upstream no longer requires the crate.
+The application does not select instant directly. Remove the exception when the upstream workflow graph no longer resolves it.
 
-### RUSTSEC-2024-0375 and RUSTSEC-2021-0145 — `atty`
+Expiry: **2026-10-15**.
 
-Status: both advisories remain visible in an independent unfiltered `cargo audit` of the exact lockfile; neither is a direct application dependency.
+### RUSTSEC-2024-0436 — paste unmaintained
 
-The resolved path is `atty 0.2.14` → `hexplay 0.3.0` → pinned Kaspa/workflow crates. `RUSTSEC-2021-0145` is Windows-specific unsoundness with no patched `atty` release; Production validation is Linux-based. The repository-configured Cargo gates remain independent from the OSV exception list and do not convert this informational finding into a clean claim.
+Classification: transitive/build graph dependency.
 
-Action: keep both advisory-ID-specific OSV exceptions time-bounded and remove them immediately when the upstream path disappears or a compatible patched path becomes available.
+Current path includes pinned Kaspa RPC/notify crates and the kaspa-txscript/RISC0 dependency graph.
 
-### RUSTSEC-2024-0436 — `paste`
+The application does not select paste directly. Remove the exception when the pinned upstream graph no longer resolves it.
 
-Status: upstream/transitive or build-time exception.
+Expiry: **2026-10-15**.
 
-Action: keep build-pipeline security checks enabled and remove the exception after the upstream path disappears.
+### RUSTSEC-2024-0370 — proc-macro-error unmaintained
 
-### RUSTSEC-2024-0370 — `proc-macro-error`
+Classification: compile-time transitive dependency.
 
-Status: upstream/transitive build-time exception.
+Current path: `proc-macro-error 1.0.4 → kaspa-rpc-macros/workflow-core-macros → pinned Kaspa/workflow graph`.
 
-Action: remove after the upstream dependency path is replaced.
+There is no direct application dependency. Remove the exception when upstream macros migrate away from proc-macro-error.
 
-### RUSTSEC-2025-0134 — rustls-pemfile
+Expiry: **2026-10-15**.
 
-Status: reintroduced only by the Rust-native operational qualification fixture during the 2026-09-27 migration, then removed in the current remediation by using rustls-pki-types PemObject directly. No OSV exception is used.
+### RUSTSEC-2026-0173 — proc-macro-error2 unmaintained
 
-Action: keep rustls-pemfile absent from the locked graph; re-open only if a future TLS dependency change reintroduces it.
+Classification: compile-time transitive dependency.
+
+Current path: `proc-macro-error2 2.0.1 → aquamarine 0.6.0 → teloxide 0.17.0 → kaspa-pulse`.
+
+The application does not select proc-macro-error2 directly. Remove the exception when Teloxide/Aquamarine replace or remove it.
+
+Expiry: **2026-10-15**.
 
 ### RUSTSEC-2026-0306 — faster-hex AVX2 decode over-read
 
-Status: current upstream rusty-kaspa v2.1.0 (01b532e8b553523216471682649693af92f0fd16) constrains faster-hex to the 0.9.x line, while the upstream fix is 0.10.1 or newer. Upstream master is the same Kaspa revision, so there is no newer stable/current Kaspa source to adopt.
+Classification: transitive runtime dependency with reviewed reachability.
 
-Reachability review on 2026-09-27 found no direct hex_decode_unchecked call in the selected Kaspa source or this repository. The selected Kaspa call sites use hex_decode, whose checked wrapper validates the source length against the destination length before entering the internal unchecked decoder.
+The pinned rusty-kaspa 2.1.0 graph constrains faster-hex to the 0.9.x line. Reviewed selected Kaspa call sites use checked `hex_decode` rather than direct `hex_decode_unchecked`; the fixed 0.10.1 line is outside the current upstream requirement.
 
-Action: retain a single advisory-ID-specific OSV exception only through **2026-10-15**. Re-review immediately when rusty-kaspa changes or permits faster-hex 0.10.1 or newer; do not fork Kaspa or suppress future faster-hex advisories.
+Remove this exception immediately when rusty-kaspa permits faster-hex 0.10.1 or newer, or if reachability changes.
 
-### RUSTSEC-2024-0407 — `linkme`
+Expiry: **2026-10-15**.
 
-Status: resolved from the current locked graph on 2026-09-10; no Cargo audit/deny exception remains.
+## Scanner relationship
 
-Historical note: a previous graph required `workflow-*` 0.18.x through `rusty-kaspa`, and forcing 0.19 locally was intentionally avoided because it crossed a pre-1.0 compatibility boundary without upstream validation.
-
-Action: retain this record for regression context; re-open only if the advisory reappears in a future upstream graph.
-
----
-
-## Git dependency policy
-
-Git dependencies are allowed only for explicitly reviewed sources. Floating branches are not accepted for production dependencies when an immutable release tag/revision is available.
-
-Approved Git source:
-
-```text
-https://github.com/kaspanet/rusty-kaspa
-```
-
-The current Kaspa SDK dependencies are pinned to exact version `2.0.1` and immutable revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`, which is the commit resolved from reviewed tag `v2.0.1`. As re-verified on 2026-09-15, `v2.0.1` is the newest stable `rusty-kaspa` release/tag; upstream `master` is newer but is not a reviewed stable release and is not substituted for the immutable production dependency pin; the automated updater refuses silent tag drift and requires manual review if an existing tag resolves to a different commit.
-
----
-
-## Release review checklist
-
-Before a production release:
-
-```bash
-cargo xtask security advisories --max-age-days 45
-cargo fmt --all -- --check
-cargo check --locked --all-targets --all-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
-cargo audit
-cargo deny check
-cargo machete
-cargo tree --locked -d
-cargo build --locked --release --all-features
-docker build --pull -t kaspa-pulse:release .
-```
-
-Operationally verify local endpoints where enabled:
-
-```bash
-curl http://127.0.0.1:18080/healthz
-curl http://127.0.0.1:18080/readyz
-curl http://127.0.0.1:18080/metrics
-```
-
----
-
-## Secret and repository hygiene
-
-Never commit `.env` files, database dumps, backup archives, generated repository exports, or runtime panic markers. If a real credential was committed, rotate it immediately; deleting the latest file alone does not remove it from Git history.
+The canonical record declares which scanners need an explicit exception. CI verifies exact set equality for Cargo Audit and Cargo Deny and verifies OSV IDs, reasons, and expiry values against the same authority. Unknown, missing, duplicate, stale, or expired exception state fails closed.
