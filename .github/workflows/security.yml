@@ -43,6 +43,26 @@ jobs:
       - name: Verify documentation and governance path contracts
         run: cargo xtask security documentation
 
+      - name: Validate Security Insights against OpenSSF v2.2.0 schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          cue_archive="${RUNNER_TEMP}/cue-v0.17.1.tar.gz"
+          cue_dir="${RUNNER_TEMP}/cue-v0.17.1"
+          schema="${RUNNER_TEMP}/security-insights-v2.2.0-schema.cue"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error             --output "$cue_archive"             "https://github.com/cue-lang/cue/releases/download/v0.17.1/cue_v0.17.1_linux_amd64.tar.gz"
+          echo "a39b0c97695069d95d276d99be0f5dbabb081d801bfdc9ba49b76efaf94e2369  $cue_archive" | sha256sum --check --strict
+          mkdir -p "$cue_dir"
+          tar -xzf "$cue_archive" -C "$cue_dir"
+          cue_binary="$(find "$cue_dir" -maxdepth 2 -type f -name cue -print -quit)"
+          test -n "$cue_binary"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error             --output "$schema"             "https://raw.githubusercontent.com/ossf/security-insights/701ac2a02ef17fc8b316f5df685428773c51372a/spec/schema.cue"
+          echo "4e4b61470b5484fc8969f2a8a77ffbe0712a7c8a870c2079188f246c14cd58b1  $schema" | sha256sum --check --strict
+          "$cue_binary" vet -d '#SecurityInsights' "$schema" security-insights.yml
+
+      - name: Verify Security Insights metadata contract
+        run: cargo xtask security metadata
+
       - name: Enforce immutable rusty-kaspa dependency pins
         run: cargo xtask security kaspa-pins
 
