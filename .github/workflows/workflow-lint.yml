@@ -2,15 +2,12 @@ name: Workflow Lint
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - ".github/workflows/**"
       - "xtask/**"
   push:
-    branches: [main, dev]
-    paths:
-      - ".github/workflows/**"
-      - "xtask/**"
+    branches: [main]
   workflow_dispatch:
 
 permissions:

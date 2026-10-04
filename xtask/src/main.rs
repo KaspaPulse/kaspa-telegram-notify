@@ -166,11 +166,11 @@ enum RustyKaspaCommand {
         allow_prerelease: bool,
         #[arg(long, default_value_t = false)]
         no_branch: bool,
-        #[arg(long, default_value = "dev")]
+        #[arg(long, default_value = "main")]
         base_branch: String,
     },
     Publish {
-        #[arg(long, default_value = "dev")]
+        #[arg(long, default_value = "main")]
         base_branch: String,
     },
 }
@@ -268,4 +268,41 @@ fn package_version() -> Result<()> {
     );
     println!("{version}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rusty_kaspa_update_defaults_to_main() {
+        let cli = Cli::try_parse_from(["xtask", "dependencies", "rusty-kaspa", "update"])
+            .expect("parse update command");
+        let Command::Dependencies {
+            command:
+                DependenciesCommand::RustyKaspa {
+                    command: RustyKaspaCommand::Update { base_branch, .. },
+                },
+        } = cli.command
+        else {
+            panic!("unexpected command");
+        };
+        assert_eq!(base_branch, "main");
+    }
+
+    #[test]
+    fn rusty_kaspa_publish_defaults_to_main() {
+        let cli = Cli::try_parse_from(["xtask", "dependencies", "rusty-kaspa", "publish"])
+            .expect("parse publish command");
+        let Command::Dependencies {
+            command:
+                DependenciesCommand::RustyKaspa {
+                    command: RustyKaspaCommand::Publish { base_branch },
+                },
+        } = cli.command
+        else {
+            panic!("unexpected command");
+        };
+        assert_eq!(base_branch, "main");
+    }
 }

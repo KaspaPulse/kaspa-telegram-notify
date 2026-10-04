@@ -2,14 +2,14 @@ name: Rust Fuzzing
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - "fuzz/**"
       - "src/utils.rs"
       - "Cargo.toml"
       - ".github/workflows/fuzz.yml"
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - "fuzz/**"
       - "src/utils.rs"
