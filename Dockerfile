@@ -38,7 +38,7 @@ RUN --mount=type=cache,id=kaspa-pulse-cargo-registry-${TARGETARCH},target=/usr/l
     && cargo build --locked --release --all-features \
     && install -D -m 0755 target/release/kaspa-pulse /out/kaspa-pulse
 
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS runtime
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime
 
 ARG SOURCE_REVISION=unknown
 
