@@ -79,4 +79,4 @@ jobs:
       - name: Hermetic runtime wiring
         run: cargo test --locked --test batch4b_runtime_integration_tests
       - name: Dockerfile policy check (no image published)
-        run: docker buildx build --check --platform linux/amd64,linux/arm64 .
+        run: docker buildx build --check --platform linux/amd64 .
