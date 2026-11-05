@@ -136,7 +136,7 @@ The repository's [Rust CI](.github/workflows/ci.yml) runs on pushes and pull req
 
 ### Container note
 
-The [Dockerfile](Dockerfile) was updated to Rust **1.99.1**, corrected to use `kaspa-block-alert-bot`, and uses immutable base-image digests plus a non-root runtime user. A Docker Buildx policy check passed. **Full image compilation and container startup smoke have not yet passed**; do not treat the source as a verified deployable image. See [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
+The [Dockerfile](Dockerfile) uses Rust **1.99.1**, the correct `kaspa-block-alert-bot` binary name, immutable image digests, a non-root runtime user and a **required source commit SHA**. Use `docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" .` when qualifying an image. Dockerfile policy checks and native ARM64 fail-closed startup were verified, but **the full multi-stage Docker image and its production startup remain unqualified**. See [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
 
 ## Release status and known issues
 

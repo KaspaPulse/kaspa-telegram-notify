@@ -32,6 +32,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       SQLX_OFFLINE: "true"
       CARGO_TERM_COLOR: always
+      KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}
 
     steps:
       - name: Checkout exactly the selected main commit
@@ -60,6 +61,8 @@ jobs:
           set -Eeuo pipefail
           install -d dist package
           install -m 0755 target/release/kaspa-block-alert-bot package/kaspa-block-alert-bot
+          # Fail closed if compiled provenance is absent from this exact binary.
+          grep -a -F "$GITHUB_SHA" package/kaspa-block-alert-bot >/dev/null
           install -m 0644 LICENSE README.md package/
           file package/kaspa-block-alert-bot
           readelf -h package/kaspa-block-alert-bot | grep 'Machine:'

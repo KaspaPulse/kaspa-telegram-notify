@@ -13,8 +13,16 @@ Publishing a GitHub source tag does not deploy the Telegram bot.
 - Vendored `teloxide-core` is kept in the source tree with its own license.
 - Base images used in the release-candidate Dockerfile are identified with
   immutable image digests; Dockerfile build-policy check passed on ARM64.
-  **A full container image build, runtime smoke and vulnerability scan have
-  not yet been proven.**
+  A separately built **ARM64 native binary** passed a network-disabled,
+  read-only, non-root container startup check with no credentials: it refused
+  to start without `DATABASE_URL`. This **does not qualify the full Docker
+  multi-stage image or production startup**.
+- Native release builders must set `KASPA_PULSE_SOURCE_REVISION` to the full
+  commit SHA, and validate that the compiled ELF embeds it. Docker builds
+  must supply `--build-arg SOURCE_REVISION=<40-hex-commit>`; builds lacking a
+  valid SHA fail closed. The previous unsigned native archives from
+  `246e2eb` were independently checked but lacked embedded revision and
+  are **test evidence, not distributable release assets**.
 - The CI workflow has **`contents: read`** only. It uses **push**, **pull request**
   and owner-initiated workflow triggers only: **no scheduled dependency updates**,
   no Dependabot configuration, no auto-merge or automatic release.

@@ -11,6 +11,12 @@ ARG TARGETARCH
 ARG SOURCE_REVISION=unknown
 ENV SQLX_OFFLINE=true
 ENV CARGO_INCREMENTAL=0
+ENV KASPA_PULSE_SOURCE_REVISION=${SOURCE_REVISION}
+
+# Refuse a release image whose binary would report an unknown source revision.
+RUN test "$SOURCE_REVISION" != "unknown" \
+    && test "${#SOURCE_REVISION}" -eq 40 \
+    && ! printf '%s' "$SOURCE_REVISION" | grep -Eq '[^0-9a-f]'
 
 # Vendored teloxide-core and the complete source must be present before
 # Cargo resolves [patch.crates-io]. A dummy first build would fail here.
