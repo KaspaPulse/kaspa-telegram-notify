@@ -1,278 +1,176 @@
 <div align="center">
 
-# 🦀 Kaspa Pulse
-### Community Mining Alerts for Kaspa Solo Miners
+# ⚡ Kaspa Pulse
 
-[![Rust](https://img.shields.io/badge/Rust-1.98.1-orange.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
-[![Edition](https://img.shields.io/badge/Rust%20Edition-2024-orange.svg?style=for-the-badge&logo=rust)](https://doc.rust-lang.org/edition-guide/rust-2024/)
-[![Kaspa](https://img.shields.io/badge/Kaspa-Network-70D4CB.svg?style=for-the-badge)](https://kaspa.org/)
-[![Database](https://img.shields.io/badge/Database-PostgreSQL-336791.svg?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+**Kaspa solo-mining rewards and wallet monitoring through Telegram — written in Rust.**
 
-A production-oriented Telegram bot for tracking Kaspa wallets, confirmed solo-mining rewards, wallet balances, BlockDAG/network metrics, and mining alerts.
+[![Rust 1.99.1](https://img.shields.io/badge/Rust-1.99.1-orange?logo=rust)](rust-toolchain.toml)
+[![Rust CI](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v2.0.0--rc.1-yellow.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/releases)
+
+**English by default · Arabic by choice · Public Kaspa PNN · PostgreSQL-backed delivery**
 
 </div>
 
 ---
 
-## Overview
+> **Repository status — 5 November 2026:** This is the owner-approved, independently rooted source repository. The current Rust crate version is **1.2.10** (`Cargo.toml`). The GitHub **v2.0.0-rc.1** tag is a **source-only prerelease** marking the clean-history baseline; it is not a new production binary. The operating Telegram service is managed separately and is not deployed from GitHub Actions.
+>
+> **Release qualification is incomplete:** GitHub CI currently fails at strict Clippy; security advisories in the pinned dependency graph still require triage. See [Release status and known issues](#release-status-and-known-issues).
 
-Kaspa Pulse is a Rust application that connects to a Kaspa node through wRPC/WebSocket and stores wallet, reward, deduplication, event, and delivery state in PostgreSQL.
+## What it does
 
-The repository intentionally uses a small auditable stack. It does **not** add Node.js, npm, TypeScript, ESLint, or a JavaScript web framework because the application does not contain a JavaScript/TypeScript runtime that needs them.
+Kaspa Pulse watches registered Kaspa wallets and sends Telegram alerts about detected mining rewards. It uses the **public Kaspa Peer-to-Peer Network (PNN)** for chain data, checks reward-related data, and stores wallet state, notification events and delivery deduplication records in PostgreSQL.
 
-### Production flow
+| Area | Capabilities |
+| --- | --- |
+| **Wallets** | Add, select, remove and inspect Kaspa wallets; view balances and mined blocks. |
+| **Mining rewards** | Coinbase/reward event detection, confirmation handling, block information and deduplicated notifications. |
+| **Telegram** | Compact inline menus, network/market views, wallet actions and a private owner-admin panel. |
+| **Languages** | **English is the default** for new users, regardless of Telegram app language. Users can explicitly select Arabic under **More → Language**; preference is stored per user. |
+| **Alerts** | A shared wallet can notify multiple recipients in their selected languages. Alerts show **Time / الوقت** with the timestamp and UTC precision preserved. |
+| **Donations** | **❤️ Donate** is directly on the Home menu, not hidden under More. |
+| **Reliability** | PostgreSQL-backed transactional alert outbox, event deduplication, delivery retries, health and readiness endpoints. |
+
+The native Telegram slash-command picker presents only **`/start`** and **`/help`**. Other legacy commands may still be accepted for compatibility, but are not advertised. Owner-only actions remain authorization-checked and are available from the protected **Admin** button.
+
+### Telegram home menu
 
 ```text
-Telegram user
-    ↓
-Command / wallet input
-    ↓
-Validation + actor-scoped rate limits
-    ↓
+👛 Wallets       💹 Market
+🌐 Network       ⚙️ More
+❤️ Donate
+🛡️ Admin        (authorized owner only)
+```
+
+The bot edits an existing menu where appropriate and avoids showing replies quoted against an old button message.
+
+## How notifications flow
+
+```text
+Telegram wallet registration
+         │
+         ▼
 PostgreSQL wallet state
-    ↓
-UTXO monitor
-    ↓
-Reward confirmation gate
-    ↓
-DAG analysis
-    ↓
-Event log + wallet-scoped deduplication
-    ↓
-telegram_delivery_queue
-    ↓
-Telegram delivery worker
+         │
+         ▼
+Public Kaspa PNN → UTXO / reward processing → confirmation checks
+         │
+         ▼
+PostgreSQL event and wallet-level deduplication
+         │
+         ▼
+Per-recipient EN / AR message formatting
+         │
+         ▼
+Transactional Telegram delivery queue → Telegram
 ```
 
----
+**No local Kaspa node URL is required.** This source explicitly rejects the old `NODE_URL_01`, `UTXO_STANDBY_NODE_URL`, and `UTXO_STANDBY_NODE_URL_FILE` overrides. Do not copy those settings from older deployments.
 
-## Current platform baseline
+## Technology baseline
 
-- Rust **1.98.1** is the pinned development/CI toolchain in `rust-toolchain.toml`; crate MSRV remains **1.97.1** in `Cargo.toml`.
-- Rust **Edition 2024**.
-- PostgreSQL **18** validation baseline with PostgreSQL-only SQLx 0.9 feature selection.
-- Teloxide 0.17 and Axum 0.8.
-- Reqwest 0.13 with Rustls.
-- `rusty-kaspa` dependencies pinned to exact version `2.0.1` and immutable upstream revision `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`.
-- Debian 13 (Trixie) production container.
-- Non-root container runtime using UID/GID `10001`.
+| Component | Pinned/current baseline |
+| --- | --- |
+| Application | `kaspa-pulse` crate **1.2.10**; Rust Edition 2024 |
+| Toolchain | **Rust stable 1.99.1** (`rust-toolchain.toml`); declared crate MSRV **1.97.1** |
+| Kaspa Rust crates | **2.0.1** at immutable `rusty-kaspa` commit `cfafeb4c093fa37a303f1b9f19c58f986b870ce3` |
+| Telegram | Teloxide **0.17** with a locally vendored `teloxide-core` patch |
+| Database | PostgreSQL; SQLx **0.9** (Postgres feature set) |
+| HTTP | Axum **0.8**, Reqwest **0.13**, Rustls |
 
-The crate has `publish = false` to prevent accidental publication to crates.io.
+The repository sets `publish = false` to prevent accidental publication to crates.io.
 
----
+## Local development
 
-## Features
+Prerequisites: Rust 1.99.1, a dedicated PostgreSQL database and application role, and a Telegram bot token. Use the least-privilege database role described in [DATABASE_SECURITY.md](DATABASE_SECURITY.md).
 
-### Wallet and mining monitoring
-
-- Add, remove, and list Kaspa wallets.
-- Track wallet balances and UTXOs.
-- Detect coinbase mining rewards.
-- Wait for the configured reward-confirmation threshold.
-- Analyze BlockDAG acceptance.
-- Persist mined-block history.
-- Apply wallet-scoped deduplication.
-- Queue Telegram delivery in PostgreSQL with retry/backoff state.
-
-### Operational safety
-
-- Private-chat admin authorization.
-- Actor-scoped command and callback rate limits.
-- One-time CSPRNG confirmation nonces for sensitive admin actions.
-- SHA-256-indexed confirmation state.
-- Fail-closed behavior on sensitive database paths.
-- Privacy-aware logging and input limits.
-- Local health, readiness, and Prometheus-style metrics endpoints.
-- Graceful shutdown handling.
-- Panic/restart marker support.
-
-### Alert controls
-
-```text
-/pause       = pause live monitoring
-/mute_alerts = keep monitoring but suppress outgoing mining alerts
+```bash
+git clone https://github.com/KaspaPulse/kaspa-telegram-notify.git
+cd kaspa-telegram-notify
+rustup show
+cargo fmt --all -- --check
+cargo check --locked --all-targets
+cargo test --locked --lib
 ```
 
----
+Prepare your **private environment file** outside version control, for example:
 
-## Requirements
-
-- Rust 1.98.1 for the pinned development/CI toolchain (MSRV: 1.97.1).
-- PostgreSQL 18 recommended.
-- A reachable Kaspa wRPC endpoint.
-- A Telegram bot token.
-- Docker/Compose only for container deployment.
-
-Use the repository-pinned Rust toolchain rather than relying on a machine-global default.
-
----
-
-## Environment setup
-
-Copy `.env.example` to `.env` and replace every placeholder. Never commit `.env`.
-
-Minimum production configuration:
-
-```env
-BOT_TOKEN=PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE
-ADMIN_USER_ID=PUT_YOUR_TELEGRAM_ADMIN_USER_ID_HERE
-ADMIN_CHAT_ID=PUT_THE_SAME_PRIVATE_CHAT_ID_HERE
-
-NODE_URL_01=wss://your-kaspa-node.example.com/json
-DATABASE_URL=postgres://kaspa_pulse_app:EXAMPLE_TEST_PASSWORD_NOT_REAL@127.0.0.1:5433/kaspa_dev?sslmode=disable
-
-APP_ENV=production
-RUST_LOG=info
-SQLX_OFFLINE=true
-ALLOW_RUNTIME_SCHEMA_ENSURE=false
-
-ENABLE_TELEGRAM_DELIVERY_QUEUE=true
-ENABLE_ALERT_DELIVERY=true
-MIN_REWARD_CONFIRMATIONS=10
-```
-
-`ADMIN_ID` remains a backward-compatible fallback. New deployments should use explicit `ADMIN_USER_ID` and `ADMIN_CHAT_ID`; admin commands require the configured private admin chat.
-
-See `.env.example` for health/readiness, timeouts, market history, webhook, retention, and monitoring settings.
-
----
-
-## Database policy
-
-Production runtime must use a least-privilege application role such as `kaspa_pulse_app`. Do not run the application as the PostgreSQL `postgres` superuser.
-
-Schema changes belong in `migrations/`. Runtime schema creation is disabled by default:
-
-```env
+```dotenv
+BOT_TOKEN=<your-telegram-bot-token>
+ADMIN_USER_ID=<your-numeric-telegram-user-id>
+ADMIN_CHAT_ID=<same-private-chat-id-as-admin-user-id>
+DATABASE_URL=postgres://<db-user>:<password>@127.0.0.1:5432/<database>
+APP_ENV=development
+USE_WEBHOOK=false
 ALLOW_RUNTIME_SCHEMA_ENSURE=false
 ```
 
-Use an administrative database role only for migrations or privileged maintenance.
+Replace **every** angle-bracketed placeholder. `ADMIN_CHAT_ID` must match `ADMIN_USER_ID` for the owner's private chat. Do not put tokens, passwords, actual chat IDs, logs or live database files in Git.
 
----
+Apply the reviewed SQL migrations from [migrations/](migrations/) using an administrative migration role **before** running the service. Schema creation by the runtime is disabled by default.
 
-## Running locally
+For a local, isolated instance using polling rather than a webhook:
+
+```bash
+cargo run --locked --release --bin kaspa-block-alert-bot
+```
+
+A production webhook additionally needs `USE_WEBHOOK=true`, `WEBHOOK_DOMAIN` and `WEBHOOK_SECRET_TOKEN`, plus an appropriately secured ingress. See [SECURITY.md](SECURITY.md). Bind metrics, health and readiness endpoints to a trusted local interface rather than the public internet.
+
+### Quality checks
 
 ```bash
 cargo fmt --all -- --check
-cargo check --locked --all-targets --all-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
-cargo run --locked --release
-```
-
----
-
-## Container deployment
-
-Build the production image:
-
-```bash
-docker build --pull -t kaspa-pulse:latest .
-```
-
-Start with Compose:
-
-```bash
-docker compose up -d --build
-```
-
-The production image:
-
-- uses a Rust 1.98.1 / Debian 13 Trixie builder;
-- uses a Debian 13 Trixie slim runtime;
-- runs as non-root UID/GID `10001`;
-- keeps the panic-recovery marker under `/var/lib/kaspa-pulse`;
-- includes only the compiled binary and required runtime CA certificates.
-
-Compose additionally enables an init process, drops Linux capabilities, sets `no-new-privileges`, limits JSON log rotation, and binds the published webhook port to host loopback by default.
-
----
-
-## Health and metrics
-
-When enabled, the service exposes local endpoints such as:
-
-```text
-/healthz
-/readyz
-/metrics
-```
-
-Example checks:
-
-```bash
-curl http://127.0.0.1:18080/healthz
-curl http://127.0.0.1:18080/readyz
-curl http://127.0.0.1:18080/metrics
-```
-
-Do not expose operational endpoints or the bot service directly to the public internet when a reverse proxy is expected.
-
----
-
-## Quality and supply chain
-
-Pull requests that change the Rust application run the core quality gate:
-
-```bash
-cargo fmt --all -- --check
-cargo check --locked --all-targets --all-features
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
-```
-
-Production release, Docker build, and container smoke tests run inside the protected Rust CI gate for pull requests, `main`/`dev` pushes, and explicit manual runs. This keeps container/runtime compatibility verified before merge as well as after integration.
-
-Dependency/security automation includes:
-
-```bash
+cargo check --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --lib
 cargo audit
 cargo deny check
-cargo machete
-cargo tree --locked -d
 ```
 
-Additional controls:
+The repository's [Rust CI](.github/workflows/ci.yml) runs on pushes and pull requests with **read-only permissions**. It does **not** build or deploy production releases.
 
-- GitHub Actions are pinned to immutable commit SHAs.
-- Normal CI checkout does not persist repository credentials.
-- Git dependencies are allow-listed in `deny.toml`.
-- `rusty-kaspa` is pinned to both an exact release version and the immutable commit resolved from its reviewed release tag; tag drift is rejected by the updater.
-- Dependabot checks Cargo, GitHub Actions, Docker, Rust toolchain, and Compose dependencies on staggered weekly schedules.
-- The scheduled `rusty-kaspa` updater validates changes before publishing an update branch/PR.
-- Accepted upstream/transitive RustSec exceptions are documented in `SECURITY_ADVISORIES.md`; they are not silently hidden.
-- Releases include a CycloneDX SBOM, SHA-256 checksum, Sigstore bundles, and SLSA/in-toto provenance.
-- [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) documents fail-closed verification of release provenance.
-- [security-insights.yml](security-insights.yml) publishes the repository's OpenSSF Security Insights posture in a machine-readable format.
+**Do not mistake the commands above for green gates:** the initial clean-root CI run passed formatting and compilation but **failed at strict Clippy**. Library tests passed in a separate ARM64 validation (154 passed; 0 failed; 1 ignored). Dependency advisory review is still open.
 
----
+### Container note
 
-## Security reporting
+The tracked [Dockerfile](Dockerfile) and [Compose configuration](docker-compose.yml) are retained from the local source, but their builder toolchain and binary path have **not** been requalified for this clean-root prerelease. Do **not** treat a Docker build as a verified deployment artifact until a container build and smoke test pass.
 
-Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Submit unpatched vulnerabilities privately through GitHub's repository Security Advisories / **Report a vulnerability** flow rather than a public issue.
+## Release status and known issues
 
-See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md) for documented upstream/transitive exceptions and their review policy, and [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) for signed-release verification.
+**v2.0.0-rc.1 is a source-only preview, not a production release.**
 
----
+- **Passed:** clean independent Git root, source sanitization scan, Rust formatting, ARM64 all-targets compilation and 154 Rust library tests.
+- **Not passed:** strict Clippy in the initial GitHub workflow (existing lint violations). The dependency audit also reported **13 RustSec advisories** in the locked dependency tree; each requires update or documented applicability review.
+- **Not yet verified:** reproducible release binaries, SBOM/provenance signing for this new root, full PostgreSQL integration matrix and Docker image qualification.
+- **Production:** the live Telegram bot is managed and rolled back separately; publishing a GitHub tag does not change its binary, data or subscriber notifications.
 
-## Repository hygiene
+See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md), [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md), and [GitHub Releases](https://github.com/KaspaPulse/kaspa-telegram-notify/releases) for the current evidence and release notes.
 
-The repository ignores local secrets, database dumps, backups, logs, panic marker files, generated exports, and Rust build output.
+## Repository history and maintenance
 
-If a real secret was ever committed, removing the latest file is not enough: rotate the credential immediately and rewrite Git history when the exposure requires it.
+On **5 November 2026**, the repository began a **new, independent root commit** from the owner-approved Rust source. Older GitHub branches, tags and releases were retired. Public forks, cached objects or historical pull-request references may still retain content from the previous history; a history reset does **not** guarantee global erasure. See [REPOSITORY_RESET_NOTICE.md](REPOSITORY_RESET_NOTICE.md).
 
----
+**Dependabot version updates and automated security-fix pull requests are disabled.** Auto-merge is disabled; no scheduled update or production release workflows are included in this source tree. Security alerts should still be reviewed and dependencies updated **manually**, with tests and owner approval.
 
-## Support
+## Privacy and responsible disclosure
+
+Do not post private chat messages, wallet identifiers tied to users, real bot tokens, database exports, or host access details in public issues or commits. Submit security vulnerabilities privately through [SECURITY.md](SECURITY.md) and the repository's GitHub private vulnerability reporting flow.
+
+A clean repository history does not replace credential rotation or remediation if a secret was previously exposed.
+
+## Donate
+
+If Kaspa Pulse is useful, voluntary Kaspa donations help support maintenance:
 
 ```text
 kaspa:qz0yqq8z3twwgg7lq2mjzg6w4edqys45w2wslz7tym2tc6s84580vvx9zr44g
 ```
 
----
+The same address is available under **❤️ Donate** in the Telegram Home menu.
 
-## License
+## License and contributions
 
-Kaspa Pulse is licensed under the [MIT License](LICENSE).
+Kaspa Pulse is licensed under [MIT](LICENSE). Vendored components retain their applicable notices and licenses. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before contributing.
