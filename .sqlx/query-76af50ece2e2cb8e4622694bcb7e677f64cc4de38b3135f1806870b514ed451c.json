@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_wallets\n             WHERE wallet = $1 AND chat_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "76af50ece2e2cb8e4622694bcb7e677f64cc4de38b3135f1806870b514ed451c"
+}

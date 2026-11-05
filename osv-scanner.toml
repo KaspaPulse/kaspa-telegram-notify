@@ -1,0 +1,45 @@
+# Time-bounded OSV exceptions for reviewed upstream/transitive RustSec advisories.
+# Every entry must be documented in SECURITY_ADVISORIES.md and expires within
+# the same 45-day review window enforced by scripts/check-security-advisories.py.
+# These exceptions are intentionally narrow: only advisory IDs are ignored;
+# packages, ecosystems, and future advisories remain fully scanned.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0052"
+ignoreUntil = 2026-09-22
+reason = "async-std is retained only through the reviewed rusty-kaspa transitive dependency path; no direct application dependency exists."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0145"
+ignoreUntil = 2026-09-22
+reason = "atty unsoundness is an upstream transitive advisory specific to Windows; production container validation is Linux-based and no patched atty release exists."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0375"
+ignoreUntil = 2026-09-22
+reason = "atty is unmaintained and present only through an upstream transitive dependency path; Kaspa Pulse does not depend on it directly."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0388"
+ignoreUntil = 2026-09-22
+reason = "derivative is unmaintained and retained through the reviewed Kaspa/Arkworks transitive stack; no direct dependency or safe local override exists."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+ignoreUntil = 2026-09-22
+reason = "instant is an unmaintained upstream transitive dependency; it is not selected directly by Kaspa Pulse and will be removed when upstream permits."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2026-09-22
+reason = "paste is an upstream transitive or build-time dependency; the exception is temporary pending a compatible upstream dependency refresh."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-09-22
+reason = "proc-macro-error is an upstream transitive build-time dependency; the exception expires unless the dependency path is re-reviewed."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+ignoreUntil = 2026-09-22
+reason = "proc-macro-error2 is a temporary build-time transitive dependency through aquamarine and is also tracked as a Rust future-incompatibility concern."

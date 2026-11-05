@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS system_settings (
+    key_name TEXT PRIMARY KEY,
+    value_data TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);

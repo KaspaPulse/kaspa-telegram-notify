@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_wallets (wallet, chat_id)\n             VALUES ($1, $2)\n             ON CONFLICT (wallet, chat_id)\n             DO UPDATE SET last_active = CURRENT_TIMESTAMP",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e7fbce4e3e9865b124222bf038ebea371082e96b3a8f9118ac6932934c4a0bb"
+}

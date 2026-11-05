@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*)\n             FROM mined_blocks\n             WHERE wallet = $1\n             AND timestamp >= CURRENT_TIMESTAMP - INTERVAL '7 days'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "15dabd5370646bf586e12c91723eb7c0e35945db683f2336789d880a647e4273"
+}

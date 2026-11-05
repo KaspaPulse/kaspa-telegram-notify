@@ -1,0 +1,70 @@
+[package]
+name = "kaspa-pulse"
+version = "1.2.10"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "Kaspa Pulse Mining Bot - Lightweight community build"
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "time", "tracing"] }
+tokio-util = "0.7"
+teloxide = { version = "0.17", features = ["macros", "webhooks-axum"] }
+axum = "0.8"
+
+async-trait = "0.1.80"
+async-channel = "2.5.0"
+anyhow = "1.0"
+thiserror = "2.0"
+
+# rusty-kaspa v2.0.1 pinned to its immutable commit; keep all Kaspa git crates aligned.
+kaspa-wrpc-client = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+kaspa-rpc-core = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+kaspa-addresses = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+kaspa-consensus-core = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+kaspa-hashes = { version = "=2.0.1", git = "https://github.com/kaspanet/rusty-kaspa", rev = "cfafeb4c093fa37a303f1b9f19c58f986b870ce3" }
+
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "chrono", "json"] }
+
+chrono = "0.4"
+dotenvy = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+reqwest = { version = "0.13", features = ["json", "multipart", "query", "rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+sysinfo = "0.39"
+dashmap = "6.2"
+governor = "0.10"
+rand = "0.10"
+sha2 = "0.11"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
+[features]
+default = []
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+# Thin LTO and parallel codegen: faster release iteration than full fat LTO.
+lto = "thin"
+codegen-units = 8
+strip = true
+panic = "abort"
+
+[[bin]]
+name = "kaspa-block-alert-bot"
+path = "src/main.rs"
+
+[patch.crates-io]
+teloxide-core = { path = "vendor/teloxide-core" }

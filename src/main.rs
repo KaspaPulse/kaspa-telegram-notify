@@ -1,0 +1,996 @@
+use crate::domain::models::{BotEventRecord, BotEventType, EventSeverity};
+use crate::infrastructure::database::postgres_adapter::PostgresRepository;
+use crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter;
+
+mod application;
+mod build_info;
+mod config;
+mod domain;
+mod infrastructure;
+mod network;
+mod presentation;
+mod wallet;
+
+pub mod utils;
+
+use dotenvy::dotenv;
+use std::env;
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::Arc;
+use teloxide::dptree;
+use teloxide::prelude::*;
+use teloxide::types::BotCommandScope;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, registry, util::SubscriberInitExt};
+
+use crate::infrastructure::market::coingecko_adapter::CoinGeckoAdapter;
+use crate::network::analyze_dag::AnalyzeDagUseCase;
+use crate::network::stats_use_cases::GetMinerStatsUseCase;
+use crate::network::stats_use_cases::NetworkStatsUseCase;
+use crate::presentation::telegram::commands::Command;
+use crate::wallet::wallet_use_cases::WalletManagementUseCase;
+use crate::wallet::wallet_use_cases::WalletQueriesUseCase;
+
+fn panic_event_marker_path() -> PathBuf {
+    env::var("PANIC_EVENT_MARKER_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("panic_event_pending.json"))
+}
+
+fn truncate_panic_text(value: &str, max_chars: usize) -> String {
+    let mut text = value
+        .replace('\u{0000}', "")
+        .replace(['\r', '\n'], " ")
+        .trim()
+        .to_string();
+
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>();
+        text.push_str("...[truncated]");
+    }
+
+    text
+}
+
+fn write_pending_panic_marker(location: &str, message: &str) {
+    let marker_path = panic_event_marker_path();
+
+    let payload = serde_json::json!({
+        "event_type": "PANIC_EVENT",
+        "status": "pending_recovery",
+        "location": truncate_panic_text(location, 300),
+        "message": truncate_panic_text(message, 1000),
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "pid": std::process::id()
+    });
+
+    if let Err(e) = fs::write(&marker_path, payload.to_string()) {
+        tracing::error!(
+            "[PANIC_EVENT] Failed to write pending panic marker at {:?}: {}",
+            marker_path,
+            e
+        );
+    }
+}
+
+async fn record_pending_panic_marker(
+    db_repo: &Arc<PostgresRepository>,
+) -> Result<(), crate::domain::errors::AppError> {
+    let marker_path = panic_event_marker_path();
+    record_pending_panic_marker_at(db_repo, &marker_path).await
+}
+
+async fn record_pending_panic_marker_at(
+    db_repo: &Arc<PostgresRepository>,
+    marker_path: &Path,
+) -> Result<(), crate::domain::errors::AppError> {
+    if !marker_path.exists() {
+        return Ok(());
+    }
+
+    let marker_content = match fs::read_to_string(marker_path) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::error!(
+                "[PANIC_EVENT] Failed to read pending panic marker at {:?}: {}",
+                marker_path,
+                e
+            );
+            return Ok(());
+        }
+    };
+
+    let marker_json: serde_json::Value =
+        serde_json::from_str(&marker_content).unwrap_or_else(|_| {
+            serde_json::json!({
+                "event_type": "PANIC_EVENT",
+                "status": "pending_recovery",
+                "message": truncate_panic_text(&marker_content, 1000)
+            })
+        });
+
+    let message = marker_json
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("panic marker recovered");
+
+    let metadata_json = marker_json.to_string();
+
+    db_repo
+        .record_bot_event_typed(
+            BotEventType::PanicEvent,
+            EventSeverity::Error,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("recovered_after_restart"),
+            Some(message),
+            None,
+            &metadata_json,
+        )
+        .await?;
+
+    if let Err(e) = fs::remove_file(marker_path) {
+        tracing::warn!(
+            "[PANIC_EVENT] Failed to remove pending panic marker at {:?}: {}",
+            marker_path,
+            e
+        );
+    } else {
+        tracing::info!("[PANIC_EVENT] Recovered pending panic marker into bot_event_log.");
+    }
+
+    Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if let Err(error) = result {
+                            tracing::error!("[SYSTEM] SIGINT listener failed: {}", error);
+                        }
+                        "SIGINT"
+                    }
+                    _ = sigterm.recv() => "SIGTERM",
+                }
+            }
+            Err(error) => {
+                tracing::error!("[SYSTEM] Failed to install SIGTERM handler: {}", error);
+                if let Err(ctrl_c_error) = tokio::signal::ctrl_c().await {
+                    tracing::error!("[SYSTEM] SIGINT listener failed: {}", ctrl_c_error);
+                }
+                "SIGINT"
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!("[SYSTEM] SIGINT listener failed: {}", error);
+        }
+        "SIGINT"
+    }
+}
+
+fn install_rustls_crypto_provider() -> anyhow::Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    anyhow::ensure!(
+        rustls::crypto::CryptoProvider::get_default().is_some(),
+        "Rustls CryptoProvider could not be installed during application startup"
+    );
+    Ok(())
+}
+
+async fn drive_dispatcher_until_shutdown<F>(
+    dispatch: F,
+    shutdown: teloxide::dispatching::ShutdownToken,
+    cancel_token: tokio_util::sync::CancellationToken,
+    drain_timeout: std::time::Duration,
+) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = ()>,
+{
+    tokio::pin!(dispatch);
+    tokio::select! {
+        signal = wait_for_shutdown_signal() => {
+            tracing::warn!("[SYSTEM] {} received. Starting graceful shutdown.", signal);
+            cancel_token.cancel();
+            crate::infrastructure::resilience::runtime::task_supervisor().begin_shutdown();
+            // Request stop, then keep polling dispatch so Teloxide can join its workers.
+            // Its DB-using handler futures are also owned by our task supervisor.
+            let _ = shutdown.shutdown();
+            // Drive worker shutdown concurrently: a stuck handler must be cancelled
+            // by its owner while the dispatcher is still able to join its receiver.
+            let workers = crate::infrastructure::resilience::runtime::drain_tracked_tasks(drain_timeout);
+            tokio::pin!(workers);
+            tokio::select! {
+                report = &mut workers => {
+                    let report = report?;
+                    tracing::info!(cancelled_tasks = ?report.cancelled, "[SYSTEM] Shutdown worker joins complete.");
+                    tokio::time::timeout(drain_timeout, &mut dispatch).await
+                        .map_err(|_| anyhow::anyhow!("Telegram dispatcher failed to join after its owned handlers stopped"))?;
+                }
+                _ = &mut dispatch => { workers.await?; }
+            }
+        }
+        _ = &mut dispatch => {
+            tracing::warn!("[SYSTEM] Dispatcher exited. Stopping background workers.");
+            cancel_token.cancel();
+        }
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    install_rustls_crypto_provider()?;
+    dotenv().ok();
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    registry()
+        .with(filter)
+        .with(fmt::layer())
+        .with(crate::infrastructure::recent_logs::layer())
+        .init();
+
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}", loc.file(), loc.line()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let message = panic_info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_string())
+            .or_else(|| {
+                panic_info
+                    .payload()
+                    .downcast_ref::<String>()
+                    .map(|value| value.to_string())
+            })
+            .unwrap_or_else(|| "unknown panic payload".to_string());
+
+        write_pending_panic_marker(&location, &message);
+
+        tracing::error!(
+            event_type = "PANIC_EVENT",
+            location = %location,
+            message = %message,
+            "panic captured by global panic hook"
+        );
+    }));
+
+    info!(
+        version = build_info::VERSION,
+        source_revision = build_info::source_revision(),
+        "Kaspa Pulse starting."
+    );
+
+    let startup = crate::config::StartupConfig::from_env()?;
+
+    tracing::info!(
+        "[SYSTEM] Environment: {} | DB max connections: {} | Verbose logs: {}",
+        startup.app_env,
+        startup.db_max_connections,
+        startup.verbose_logs
+    );
+
+    let cancel_token =
+        crate::infrastructure::resilience::runtime::task_supervisor().cancellation_token();
+    let pool = crate::infrastructure::database::runtime_pool_options(
+        startup.db_max_connections,
+        cancel_token.clone(),
+    )
+    .connect(&startup.database_url)
+    .await?;
+
+    let db_repo = Arc::new(PostgresRepository::new(pool.clone()));
+
+    if startup.allow_runtime_schema_ensure {
+        tracing::warn!(
+            "[DATABASE] Runtime schema ensure is enabled. Prefer applying migrations before startup."
+        );
+
+        db_repo
+            .ensure_pending_rewards_table()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to ensure pending_rewards table: {}", e))?;
+    } else {
+        tracing::info!(
+            "[DATABASE] Runtime schema ensure disabled. Database schema is expected to be managed by migrations."
+        );
+    }
+    if let Err(e) = record_pending_panic_marker(&db_repo).await {
+        tracing::error!("[PANIC_EVENT] Failed to record pending panic marker: {}", e);
+    }
+    let mut system_start_event =
+        BotEventRecord::new(BotEventType::SystemStart, EventSeverity::Info);
+    system_start_event.status = Some("ok");
+
+    if let Err(error) = db_repo.record_bot_event_record(system_start_event).await {
+        tracing::error!("[SYSTEM] Failed to persist system start event: {}", error);
+    }
+
+    // One public PNN resolver, mainnet only. The upstream Rust client
+    // resolves public endpoints and reconnects; we do not manage local nodes.
+    let network_id = kaspa_consensus_core::network::NetworkId::from_str("mainnet")
+        .map_err(|e| anyhow::anyhow!("invalid mainnet network ID: {e}"))?;
+    let rpc_client = kaspa_wrpc_client::KaspaRpcClient::new(
+        kaspa_wrpc_client::WrpcEncoding::Borsh,
+        None,
+        Some(kaspa_wrpc_client::Resolver::default()),
+        Some(network_id),
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!("PNN RPC client initialization failed: {e}"))?;
+
+    let rpc_client_arc = Arc::new(rpc_client);
+    let node_provider = Arc::new(KaspaRpcAdapter::new(rpc_client_arc.clone()));
+    // Fail-closed: an independently resolved public PNN standby is opt-in,
+    // and never uses the old DNS/KAS local node paths.
+    let mut standby_node_provider: Option<Arc<KaspaRpcAdapter>> = None;
+
+    tracing::info!("[SYSTEM] Running node pre-flight diagnostic with safe timeouts.");
+    let preflight = tokio::time::timeout(
+        crate::infrastructure::resilience::runtime::rpc_timeout_duration(),
+        async {
+            let mut failed_operations = Vec::new();
+
+            // Establish primary wRPC before probing it. Connection failure
+            // remains explicit and subsequent failures are still recorded.
+            if node_provider.connect(false).await.is_err() {
+                failed_operations.push("connect");
+            }
+
+            if node_provider.get_server_info().await.is_err() {
+                failed_operations.push("get_server_info");
+            }
+            if node_provider.get_sync_status().await.is_err() {
+                failed_operations.push("get_sync_status");
+            }
+            if node_provider.get_block_dag_info().await.is_err() {
+                failed_operations.push("get_block_dag_info");
+            }
+            if node_provider.get_coin_supply().await.is_err() {
+                failed_operations.push("get_coin_supply");
+            }
+            if node_provider.get_utxos_by_addresses(vec![]).await.is_err() {
+                tracing::debug!(
+                    "[SYSTEM] Empty-address UTXO pre-flight probe failed; continuing diagnostic."
+                );
+            }
+
+            failed_operations
+        },
+    )
+    .await;
+
+    match preflight {
+        Ok(failed_operations) if failed_operations.is_empty() => {
+            tracing::info!("[SYSTEM] Node pre-flight completed successfully.");
+        }
+        Ok(failed_operations) => {
+            tracing::warn!(
+                failed_operations = ?failed_operations,
+                "[SYSTEM] Node pre-flight completed with failures. Bot will start in degraded mode and node monitor will keep retrying."
+            );
+        }
+        Err(_) => {
+            crate::infrastructure::metrics::inc_rpc_timeouts();
+            tracing::warn!(
+                "[SYSTEM] Node pre-flight timed out. Bot will start in degraded mode and node monitor will keep retrying."
+            );
+        }
+    }
+
+    if std::env::var("KASPA_PNN_DISTINCT_STANDBY").as_deref() == Ok("1") {
+        use kaspa_rpc_core::api::rpc::RpcApi as _;
+        let qualified = tokio::time::timeout(std::time::Duration::from_secs(38), async {
+            let primary_url = node_provider
+                .client
+                .url()
+                .ok_or_else(|| anyhow::anyhow!("Primary public PNN URL unavailable"))?;
+            let primary_health = node_provider.get_server_info().await?;
+            anyhow::ensure!(
+                primary_health.network_id.to_string() == "mainnet"
+                    && primary_health.is_synced
+                    && primary_health.has_utxo_index,
+                "Primary not on synced indexed mainnet"
+            );
+            let resolver = kaspa_wrpc_client::Resolver::default();
+            let mut distinct_url = None;
+            for _ in 0..4 {
+                let candidate = tokio::time::timeout(
+                    std::time::Duration::from_secs(7),
+                    resolver.get_url(kaspa_wrpc_client::WrpcEncoding::Borsh, network_id),
+                )
+                .await??;
+                if candidate != primary_url {
+                    distinct_url = Some(candidate);
+                    break;
+                }
+            }
+            let alternate_url = distinct_url
+                .ok_or_else(|| anyhow::anyhow!("No distinct public PNN endpoint found"))?;
+            let alternate_client = kaspa_wrpc_client::KaspaRpcClient::new(
+                kaspa_wrpc_client::WrpcEncoding::Borsh,
+                Some(&alternate_url),
+                None, // Pinned to the verified public standby URL, no silent resolver collision
+                Some(network_id),
+                None,
+            )?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                alternate_client.connect(Some(
+                    kaspa_wrpc_client::client::ConnectOptions::blocking_fallback(),
+                )),
+            )
+            .await??;
+            anyhow::ensure!(
+                alternate_client.url().as_deref() != Some(primary_url.as_str()),
+                "Public PNN primary and standby selected the same endpoint"
+            );
+            let alternate = Arc::new(KaspaRpcAdapter::new(Arc::new(alternate_client)));
+            let info = alternate.get_server_info().await?;
+            let peers = alternate
+                .client
+                .get_connected_peer_info()
+                .await?
+                .peer_info
+                .len();
+            anyhow::ensure!(
+                info.network_id.to_string() == "mainnet"
+                    && info.is_synced
+                    && info.has_utxo_index
+                    && info.virtual_daa_score > 0
+                    && peers >= 1,
+                "Standby public PNN failed mainnet sync/index/peers checks"
+            );
+            Ok::<Arc<KaspaRpcAdapter>, anyhow::Error>(alternate)
+        })
+        .await;
+        match qualified {
+            Ok(Ok(alternate)) => {
+                tracing::info!(
+                    "[PNN STANDBY] Independent public endpoint qualified for UTXO-only failover."
+                );
+                standby_node_provider = Some(alternate);
+            }
+            Ok(Err(error)) => tracing::warn!(error=%error,
+                "[PNN STANDBY] Not qualified; retaining original single PNN source."),
+            Err(_) => tracing::warn!(
+                "[PNN STANDBY] Preflight timed out; retaining original single PNN source."
+            ),
+        }
+    }
+
+    let market_provider: Arc<dyn crate::infrastructure::market::coingecko_adapter::MarketProvider> =
+        Arc::new(CoinGeckoAdapter::new()?);
+
+    let wallet_management_uc = Arc::new(WalletManagementUseCase::new(db_repo.clone()));
+
+    let wallet_queries_uc = Arc::new(WalletQueriesUseCase::new(
+        db_repo.clone(),
+        node_provider.clone(),
+    ));
+
+    let network_stats_uc = Arc::new(NetworkStatsUseCase::new(node_provider.clone()));
+    let dag_uc = Arc::new(AnalyzeDagUseCase::new(node_provider.clone()));
+
+    let get_miner_stats_uc = Arc::new(GetMinerStatsUseCase::new(
+        db_repo.clone(),
+        node_provider.clone(),
+    ));
+
+    let market_stats_uc = Arc::new(crate::network::stats_use_cases::GetMarketStatsUseCase::new(
+        node_provider.clone(),
+        market_provider.clone(),
+    ));
+
+    let bot = Bot::new(startup.bot_token.clone());
+    let admin_user_id = startup.admin_user_id;
+    let admin_chat_id = startup.admin_chat_id;
+    let mut telegram_command_sync_errors = 0usize;
+
+    // Clear stale Telegram command scopes so deleted legacy commands disappear.
+    if let Err(error) = bot.delete_my_commands().await {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "delete_default_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+    if let Err(error) = bot
+        .delete_my_commands()
+        .scope(BotCommandScope::AllPrivateChats)
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "delete_private_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+    if let Err(error) = bot
+        .delete_my_commands()
+        .scope(BotCommandScope::AllGroupChats)
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "delete_group_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+    if let Err(error) = bot
+        .delete_my_commands()
+        .scope(BotCommandScope::AllChatAdministrators)
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "delete_chat_admin_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+    if let Err(error) = bot
+        .delete_my_commands()
+        .scope(BotCommandScope::Chat {
+            chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
+        })
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "delete_admin_chat_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+
+    // Public commands for all users.
+    if let Err(error) = bot
+        .set_my_commands(crate::presentation::telegram::commands::public_bot_commands())
+        .scope(BotCommandScope::AllPrivateChats)
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "set_public_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+
+    // Owner's private chat gets the same minimal Start/Help picker as everyone.
+    if let Err(error) = bot
+        .set_my_commands(crate::presentation::telegram::commands::public_bot_commands())
+        .scope(BotCommandScope::Chat {
+            chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
+        })
+        .await
+    {
+        telegram_command_sync_errors += 1;
+        tracing::warn!(
+            operation = "set_admin_commands",
+            error = %crate::utils::sanitize_for_log(&error.to_string()),
+            "[SYSTEM] Telegram command synchronization operation failed."
+        );
+    }
+
+    // Do not let Telegram's phone/UI locale override the bot's English default.
+    // Remove language-scoped commands from previous releases, including the
+    // old Arabic /start description. Only language-neutral English commands
+    // are published above. User-selected Arabic applies inside the bot.
+    for (scope, lang) in [
+        (BotCommandScope::Default, "ar"),
+        (BotCommandScope::Default, "en"),
+        (BotCommandScope::AllPrivateChats, "ar"),
+        (BotCommandScope::AllPrivateChats, "en"),
+        (
+            BotCommandScope::Chat {
+                chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
+            },
+            "ar",
+        ),
+        (
+            BotCommandScope::Chat {
+                chat_id: teloxide::types::Recipient::Id(ChatId(admin_chat_id)),
+            },
+            "en",
+        ),
+    ] {
+        if let Err(error) = bot
+            .delete_my_commands()
+            .scope(scope)
+            .language_code(lang.to_string())
+            .await
+        {
+            telegram_command_sync_errors += 1;
+            tracing::warn!(language = lang,
+                error = %crate::utils::sanitize_for_log(&error.to_string()),
+                "Telegram stale language-scoped command deletion failed");
+        }
+    }
+
+    if telegram_command_sync_errors == 0 {
+        tracing::info!("[SYSTEM] Telegram commands synced.");
+    } else {
+        tracing::warn!(
+            failed_operations = telegram_command_sync_errors,
+            "[SYSTEM] Telegram command synchronization completed with errors; bot startup will continue."
+        );
+    }
+
+    let drain_timeout = std::time::Duration::from_secs(startup.shutdown_drain_secs);
+
+    let app_context = std::sync::Arc::new(crate::domain::models::AppContext::new(
+        rpc_client_arc.clone(),
+        pool.clone(),
+        admin_user_id,
+        admin_chat_id,
+    ));
+
+    {
+        let persisted = db_repo
+            .load_persisted_runtime_settings()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("Failed to load required persisted runtime settings: {error}")
+            })?;
+        app_context.memory_cleaner_enabled.store(
+            persisted.memory_cleaner_enabled,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        app_context.live_sync_enabled.store(
+            persisted.live_sync_enabled,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        app_context.maintenance_mode.store(
+            persisted.maintenance_mode,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    crate::presentation::telegram::workers::utxo_monitor::start_utxo_monitor(
+        bot.clone(),
+        node_provider.clone(),
+        standby_node_provider.clone(),
+        db_repo.clone(),
+        app_context.live_sync_enabled.clone(),
+        cancel_token.clone(),
+        app_context.clone(),
+    );
+
+    crate::presentation::telegram::workers::telegram_delivery::start_telegram_delivery_worker(
+        bot.clone(),
+        app_context.pool.clone(),
+        cancel_token.clone(),
+    );
+    crate::infrastructure::external_services::system::spawn_node_monitor(
+        (*app_context).clone(),
+        bot.clone(),
+        cancel_token.clone(),
+        standby_node_provider.clone(),
+    );
+
+    crate::infrastructure::external_services::system::spawn_price_monitor(
+        (*app_context).clone(),
+        cancel_token.clone(),
+    )?;
+
+    crate::infrastructure::external_services::system::spawn_memory_cleaner(
+        (*app_context).clone(),
+        cancel_token.clone(),
+    );
+
+    let system_tasks_uc = Arc::new(
+        crate::application::background_jobs::SystemTasksUseCase::new(
+            db_repo.clone(),
+            market_provider.clone(),
+        ),
+    );
+
+    crate::presentation::telegram::workers::periodic_tasks::start_system_monitors(
+        system_tasks_uc.clone(),
+        cancel_token.clone(),
+    );
+
+    crate::infrastructure::webhook_security::spawn_health_endpoint(cancel_token.clone());
+
+    use crate::presentation::telegram::handlers;
+
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .filter_command::<Command>()
+                .endpoint(handlers::lifecycle::handle_command),
+        )
+        .branch(Update::filter_callback_query().endpoint(handlers::lifecycle::handle_callback))
+        .branch(Update::filter_my_chat_member().endpoint(handlers::handle_block_user))
+        .branch(Update::filter_message().endpoint(handlers::lifecycle::handle_raw_message));
+
+    let bot_use_cases = crate::presentation::telegram::handlers::BotUseCases {
+        wallet_mgt: wallet_management_uc.clone(),
+        wallet_query: wallet_queries_uc.clone(),
+        network_stats: network_stats_uc.clone(),
+        market_stats: market_stats_uc.clone(),
+        miner_stats: get_miner_stats_uc.clone(),
+        dag_uc: dag_uc.clone(),
+    };
+    let callback_execution_registry = Arc::new(
+        crate::presentation::telegram::callback_inflight::CallbackExecutionRegistry::default(),
+    );
+
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
+        .dependencies(dptree::deps![
+            db_repo.clone(),
+            node_provider,
+            app_context,
+            dag_uc,
+            bot_use_cases,
+            callback_execution_registry
+        ])
+        .build();
+
+    let dispatch_result = async {
+        if startup.use_webhook {
+            info!("Running in WEBHOOK mode");
+
+            let webhook = startup
+                .webhook
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("validated webhook configuration is missing"))?;
+
+            crate::infrastructure::webhook_security::validate_webhook_runtime_settings(
+                &startup.app_env,
+                webhook.bind_ip,
+                &webhook.domain,
+                &webhook.secret_token,
+            )?;
+
+            let addr = SocketAddr::new(webhook.bind_ip, webhook.port);
+            let url = format!("https://{}/webhook", webhook.domain).parse()?;
+            let webhook_metadata = format!(
+                r#"{{"domain":"{}","bind":"{}","port":{}}}"#,
+                webhook.domain, webhook.bind_ip, webhook.port
+            );
+
+            let mut webhook_start_event =
+                BotEventRecord::new(BotEventType::WebhookStart, EventSeverity::Info);
+            webhook_start_event.status = Some("listening");
+            webhook_start_event.metadata_json = &webhook_metadata;
+
+            if let Err(error) = db_repo.record_bot_event_record(webhook_start_event).await {
+                tracing::error!("[WEBHOOK] Failed to persist webhook start event: {}", error);
+            }
+
+            tracing::info!(
+                "[WEBHOOK] Listening on {}:{} for domain {}",
+                webhook.bind_ip,
+                webhook.port,
+                webhook.domain
+            );
+
+            let options = teloxide::update_listeners::webhooks::Options::new(addr, url)
+                .secret_token(webhook.secret_token.clone())
+                .max_connections(
+                    crate::infrastructure::webhook_security::webhook_max_connections(),
+                );
+
+            let (mut listener, stop_flag, router) =
+                teloxide::update_listeners::webhooks::axum_to_router(bot, options).await?;
+            use teloxide::update_listeners::UpdateListener as _;
+            let listener_stop = listener.stop_token();
+            let tcp = tokio::net::TcpListener::bind(addr).await?;
+            let server_cancel = cancel_token.clone();
+            crate::infrastructure::resilience::runtime::spawn_resilient(
+                "telegram_webhook_server",
+                async move {
+                    let result = axum::serve(tcp, router)
+                        .with_graceful_shutdown(async move {
+                            tokio::select! {
+                                _ = server_cancel.cancelled() => {}
+                                _ = stop_flag => {}
+                            }
+                        })
+                        .await;
+                    listener_stop.stop();
+                    if let Err(error) = result {
+                        tracing::error!("[WEBHOOK] Server stopped with error: {}", error);
+                    }
+                },
+            );
+            let shutdown = dispatcher.shutdown_token();
+            drive_dispatcher_until_shutdown(
+                dispatcher.dispatch_with_listener(
+                    listener,
+                    LoggingErrorHandler::with_custom_text("Webhook Error"),
+                ),
+                shutdown,
+                cancel_token.clone(),
+                drain_timeout,
+            )
+            .await
+        } else {
+            info!("Running in POLLING mode");
+            bot.delete_webhook().await?;
+            let shutdown = dispatcher.shutdown_token();
+            drive_dispatcher_until_shutdown(
+                dispatcher.dispatch(),
+                shutdown,
+                cancel_token.clone(),
+                drain_timeout,
+            )
+            .await
+        }
+    }
+    .await;
+
+    crate::infrastructure::resilience::runtime::task_supervisor().begin_shutdown();
+    cancel_token.cancel();
+    tracing::info!(
+        "[SYSTEM] Waiting up to {} seconds for tracked background workers to stop.",
+        startup.shutdown_drain_secs
+    );
+    tracing::info!(
+        tasks = ?crate::infrastructure::resilience::runtime::task_supervisor().active_tasks(),
+        "[SYSTEM] Owned tasks at shutdown."
+    );
+    let report =
+        crate::infrastructure::resilience::runtime::drain_tracked_tasks(drain_timeout).await?;
+    tracing::info!(cancelled_tasks = ?report.cancelled,
+        "[SYSTEM] All owned background workers and request tasks joined; database can now close.");
+
+    let mut shutdown_event = BotEventRecord::new(BotEventType::SystemShutdown, EventSeverity::Info);
+    shutdown_event.status = Some(if dispatch_result.is_ok() {
+        "ok"
+    } else {
+        "dispatcher_error"
+    });
+    shutdown_event.metadata_json = r#"{"reason":"graceful_shutdown"}"#;
+    match tokio::time::timeout(
+        drain_timeout,
+        db_repo.record_bot_event_record(shutdown_event),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!("[SYSTEM] Failed to persist shutdown event: {}", error),
+        Err(error) => tracing::error!("[SYSTEM] Shutdown event persistence timed out: {}", error),
+    }
+
+    pool.close().await;
+    tracing::info!("[SYSTEM] Database connections closed safely.");
+    dispatch_result
+}
+
+#[cfg(test)]
+mod rustls_startup_tests {
+    #[test]
+    fn explicit_provider_prevents_ambiguous_rustls_builder_panic() {
+        super::install_rustls_crypto_provider().expect("Rustls provider must install");
+        let _ = rustls::ClientConfig::builder();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
+}
+
+#[cfg(test)]
+mod panic_marker_recovery_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn marker_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kaspa-pulse-{label}-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
+
+    #[tokio::test]
+    async fn recovered_panic_marker_is_persisted_before_file_removal() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL is required for panic marker recovery test");
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .expect("isolated PostgreSQL must be reachable");
+        let repo = Arc::new(PostgresRepository::new(pool.clone()));
+        let path = marker_path("panic-recovery");
+        let message = format!("synthetic-panic-recovery-{}", std::process::id());
+        fs::write(
+            &path,
+            serde_json::json!({
+                "event_type": "PANIC_EVENT",
+                "status": "pending_recovery",
+                "location": "synthetic:test",
+                "message": message,
+            })
+            .to_string(),
+        )
+        .expect("synthetic marker must be writable");
+
+        record_pending_panic_marker_at(&repo, &path)
+            .await
+            .expect("panic marker recovery must succeed");
+        assert!(
+            !path.exists(),
+            "marker must be removed only after persistence"
+        );
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM bot_event_log \
+             WHERE event_type = 'PANIC_EVENT' \
+               AND status = 'recovered_after_restart' \
+               AND error_message = $1",
+        )
+        .bind(&message)
+        .fetch_one(&pool)
+        .await
+        .expect("recovered panic event must be queryable");
+        assert_eq!(count, 1);
+
+        sqlx::query(
+            "DELETE FROM bot_event_log \
+             WHERE event_type = 'PANIC_EVENT' \
+               AND status = 'recovered_after_restart' \
+               AND error_message = $1",
+        )
+        .bind(&message)
+        .execute(&pool)
+        .await
+        .expect("synthetic panic event cleanup must succeed");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_panic_event_persistence_keeps_marker_for_next_restart() {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://panic_test@127.0.0.1:1/panic_test?sslmode=disable")
+            .expect("unavailable test endpoint URL must parse");
+        let repo = Arc::new(PostgresRepository::new(pool.clone()));
+        let path = marker_path("panic-db-failure");
+        fs::write(&path, r#"{"message":"synthetic persistence failure"}"#)
+            .expect("synthetic marker must be writable");
+
+        let result = record_pending_panic_marker_at(&repo, &path).await;
+        assert!(result.is_err());
+        assert!(
+            path.exists(),
+            "failed persistence must retain marker for retry"
+        );
+
+        fs::remove_file(&path).expect("test-owned marker cleanup must succeed");
+        pool.close().await;
+    }
+}

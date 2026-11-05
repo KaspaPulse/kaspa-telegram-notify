@@ -1,0 +1,1 @@
+Local minimal compatibility overlay on teloxide-core 0.13.0, exclusively optional InlineKeyboardButton.style (Bot API 9.4); no network, transport or security changes. Do not update automatically. Source originally pinned by Cargo.lock.

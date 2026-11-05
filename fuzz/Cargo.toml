@@ -1,0 +1,21 @@
+[package]
+name = "kaspa-pulse-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+
+[dependencies.kaspa-pulse]
+path = ".."
+
+[[bin]]
+name = "text_safety"
+path = "fuzz_targets/text_safety.rs"
+test = false
+doc = false
+bench = false
