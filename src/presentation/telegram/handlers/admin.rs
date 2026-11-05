@@ -1018,20 +1018,19 @@ pub async fn render_subscriber_detail(
         let mut username: Option<String> = first.try_get("telegram_username")?;
         let mut display_name: Option<String> = first.try_get("telegram_first_name")?;
         let mut last_name: Option<String> = first.try_get("telegram_last_name")?;
-        if username.as_deref().is_none_or(|s| s.trim().is_empty()) {
-            if let Ok(Ok(info)) = tokio::time::timeout(
+        if username.as_deref().is_none_or(|s| s.trim().is_empty())
+            && let Ok(Ok(info)) = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
                 bot.get_chat(teloxide::types::ChatId(user_id)),
             )
             .await
-            {
-                username = info.username().map(str::to_owned);
-                display_name = info.first_name().map(str::to_owned).or(display_name);
-                last_name = info.last_name().map(str::to_owned).or(last_name);
-                let _=sqlx::query("UPDATE public.bot_users SET telegram_username=$1,telegram_first_name=$2,telegram_last_name=$3 WHERE telegram_user_id=$4")
+        {
+            username = info.username().map(str::to_owned);
+            display_name = info.first_name().map(str::to_owned).or(display_name);
+            last_name = info.last_name().map(str::to_owned).or(last_name);
+            let _=sqlx::query("UPDATE public.bot_users SET telegram_username=$1,telegram_first_name=$2,telegram_last_name=$3 WHERE telegram_user_id=$4")
                     .bind(username.as_deref()).bind(display_name.as_deref()).bind(last_name.as_deref())
                     .bind(user_id).execute(pool).await;
-            }
         }
         let resolved_name = subscriber_name(
             username.as_deref(),

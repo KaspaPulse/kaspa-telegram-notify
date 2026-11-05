@@ -21,7 +21,7 @@ fn parse_acceptance(payload: &[u8], expected_txid: &str) -> Option<String> {
         return None;
     }
     let row = values.first()?;
-    if row.get("accepted")?.as_bool()? != true {
+    if !row.get("accepted")?.as_bool()? {
         return None;
     }
     let txid = row.get("transactionId")?.as_str()?;

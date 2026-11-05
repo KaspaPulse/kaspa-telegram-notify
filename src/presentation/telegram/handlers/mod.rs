@@ -1737,8 +1737,7 @@ pub async fn handle_callback(
             }
             mining::handle_wallet_blocks_detail(
                 bot,
-                msg.chat().id,
-                msg.id(),
+                (msg.chat().id, msg.id()),
                 msg.chat().id.0,
                 token,
                 history_page,

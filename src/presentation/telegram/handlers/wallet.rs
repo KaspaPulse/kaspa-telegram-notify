@@ -435,7 +435,7 @@ pub async fn handle_wallet_balance_detail(
          📊 <b>{}:</b> <code>{:.2} KAS</code>\n\
          🩺 <b>{}:</b> <code>{}</code>\n\n\
          ⏱️ <code>{}</code>",
-        format!(
+        format_args!(
             "💰 <b>{} {} — {}</b>",
             lang.label("Wallet", "المحفظة"),
             index + 1,

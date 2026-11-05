@@ -62,6 +62,7 @@ echo "Granting CI-only reset privileges; runtime DML comes from migrations..."
 psql "$DATABASE_ADMIN_URL" \
     -v ON_ERROR_STOP=1 <<'SQL'
 GRANT TRUNCATE ON TABLE
+    telegram_active_wallet,
     telegram_delivery_queue,
     wallet_alert_dedup,
     user_wallets

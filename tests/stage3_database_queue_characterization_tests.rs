@@ -41,6 +41,7 @@ async fn test_pool() -> PgPool {
 async fn reset_characterization_tables(pool: &PgPool) {
     sqlx::query(
         "TRUNCATE TABLE
+            telegram_active_wallet,
             telegram_delivery_queue,
             wallet_alert_dedup,
             user_wallets",

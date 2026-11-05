@@ -2,16 +2,12 @@ use crate::domain::models::{BotEventRecord, BotEventType, EventSeverity};
 use crate::infrastructure::database::postgres_adapter::PostgresRepository;
 use crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter;
 
-mod application;
-mod build_info;
-mod config;
-mod domain;
-mod infrastructure;
-mod network;
-mod presentation;
-mod wallet;
-
-pub mod utils;
+// Compile the application modules once in the library crate and reuse them
+// from the binary. This keeps library and runtime behavior identical, avoids
+// a second independent module tree, and preserves public integration APIs.
+pub use kaspa_pulse::{
+    application, build_info, config, domain, infrastructure, network, presentation, utils, wallet,
+};
 
 use dotenvy::dotenv;
 use std::env;

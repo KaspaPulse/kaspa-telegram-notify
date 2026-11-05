@@ -28,11 +28,13 @@ fn valid_hash(v: &str) -> bool {
 }
 
 fn decode_hex_limited(s: &str, limit: usize) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 || s.len() / 2 > limit {
+    if !s.len().is_multiple_of(2) || s.len() / 2 > limit {
         return None;
     }
     s.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let a = (pair[0] as char).to_digit(16)? as u8;
             let b = (pair[1] as char).to_digit(16)? as u8;
@@ -101,7 +103,7 @@ fn mine_match(block: &Value, script: &[u8]) -> Option<(String, String, u64)> {
 }
 
 fn validate_transaction_metadata(meta: &Value, txid: &str) -> Option<(String, String)> {
-    if meta["is_accepted"].as_bool()? != true
+    if !meta["is_accepted"].as_bool()?
         || !meta["transaction_id"].as_str()?.eq_ignore_ascii_case(txid)
     {
         return None;
@@ -333,12 +335,10 @@ mod live_public_archive_contract_tests {
             if let (Some(address), Some(script_hex)) = (
                 output["verboseData"]["scriptPublicKeyAddress"].as_str(),
                 output["scriptPublicKey"]["scriptPublicKey"].as_str(),
-            ) {
-                if let Some(script) = decode_hex_limited(script_hex, 512) {
-                    if mine_match(&mined_block, &script).is_some() {
-                        wallets.push(address.to_string());
-                    }
-                }
+            ) && let Some(script) = decode_hex_limited(script_hex, 512)
+                && mine_match(&mined_block, &script).is_some()
+            {
+                wallets.push(address.to_string());
             }
         }
         assert_eq!(wallets.len(), 1, "one exactly-attributed wallet");

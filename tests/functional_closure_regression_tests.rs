@@ -359,10 +359,12 @@ fn f05_restart_is_explicitly_information_only() {
     let security = include_str!("../src/domain/models/telegram_security.rs");
 
     assert!(commands.contains("rename = \"restart_info\""));
-    assert!(commands.contains("show restart instructions"));
+    assert!(commands.contains("Show external service restart instructions"));
     assert!(!commands.contains("BotCommand::new(\"restart\""));
-    assert!(menu.contains("Restart Info"));
-    assert!(menu.contains("cmd_restart_info"));
+    // Restart is deliberately not exposed as an admin menu button. The
+    // legacy read-only route remains available without restarting the bot.
+    assert!(!menu.contains("cmd_restart_info"));
+    assert!(handlers.contains("\"cmd_restart_info\""));
     assert!(handlers.contains("Command::RestartInfo"));
     assert!(handlers.contains("handle_restart_info"));
     assert!(admin.contains("does not restart its own process"));
@@ -475,11 +477,21 @@ async fn f09_startup_persisted_settings_default_only_when_missing_and_fail_on_db
 
 #[test]
 fn f08_help_registered_commands_and_admin_buttons_are_consistent() {
-    use kaspa_pulse::presentation::telegram::commands::admin_bot_commands;
+    use kaspa_pulse::presentation::telegram::commands::public_bot_commands;
 
     let handlers = include_str!("../src/presentation/telegram/handlers/mod.rs");
     let menus = include_str!("../src/presentation/telegram/menus.rs");
-    for command in admin_bot_commands() {
+    // The owner's approved native slash picker exposes only /start and /help.
+    // Admin is a protected inline button; never require it in native /help.
+    let published_commands = public_bot_commands();
+    assert_eq!(
+        published_commands
+            .iter()
+            .map(|item| item.command.as_str())
+            .collect::<Vec<_>>(),
+        vec!["start", "help"]
+    );
+    for command in published_commands {
         let documented = format!("/{}", command.command);
         assert!(
             handlers.contains(&documented),
@@ -487,36 +499,36 @@ fn f08_help_registered_commands_and_admin_buttons_are_consistent() {
         );
     }
 
-    for real_button in [
-        "Health",
-        "System",
-        "Stats",
-        "Settings",
-        "Pause",
-        "Resume",
-        "Restart Info",
-        "DB Diagnostics",
-        "Logs",
-        "Events",
-        "Errors",
-        "Delivery",
-        "Cleanup Events",
-        "Stop Alerts",
-        "Resume Alerts",
-        "Alert Status",
+    // Current admin actions live in authorized inline menus; ordinary /help
+    // intentionally documents only the two native root commands.
+    for callback in [
+        "cmd_health",
+        "cmd_stats",
+        "cmd_settings",
+        "cmd_delivery",
+        "cmd_db_diag",
+        "cmd_logs",
+        "cmd_pause",
+        "cmd_resume",
+        "cmd_mute_alerts",
+        "cmd_unmute_alerts",
+        "cmd_errors",
+        "cmd_events",
+        "cmd_sys",
+        "cmd_alerts_status",
+        "cmd_cleanup_events",
     ] {
+        assert!(menus.contains(callback), "admin button missing {callback}");
         assert!(
-            menus.contains(real_button),
-            "admin menu missing {real_button}"
-        );
-        assert!(
-            handlers.contains(&format!("<b>{real_button}</b>")),
-            "help missing {real_button}"
+            handlers.contains(&format!("\"{callback}\"")),
+            "admin callback missing {callback}"
         );
     }
+    assert!(handlers.contains("<b>Kaspa Help</b>"));
+    assert!(handlers.contains("/start — Home"));
+    assert!(handlers.contains("/help — Help"));
     assert!(!handlers.contains("<b>Subscribers</b> -"));
     assert!(!handlers.contains("<b>Wallet Events</b> -"));
-    assert!(handlers.contains("<b>Market</b> - KAS market information."));
     assert!(!handlers.contains("<b>Price</b> - KAS price and market info."));
 }
 

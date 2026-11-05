@@ -242,14 +242,14 @@ pub async fn handle_miner(
 
 pub async fn handle_wallet_blocks_detail(
     bot: Bot,
-    chat_id: teloxide::types::ChatId,
-    message_id: teloxide::types::MessageId,
+    chat_and_message_ids: (teloxide::types::ChatId, teloxide::types::MessageId),
     cid: i64,
     wallet_token: &str,
     history_page: usize,
     wallet_query: Arc<WalletQueriesUseCase>,
     lang: crate::presentation::telegram::menus::Language,
 ) -> anyhow::Result<()> {
+    let (chat_id, message_id) = chat_and_message_ids;
     let details = match wallet_query.get_wallet_blocks_details(cid).await {
         Ok(details) => details,
         Err(error) => {

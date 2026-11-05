@@ -17,7 +17,7 @@
 
 > **Repository status — 5 November 2026:** This is the owner-approved, independently rooted source repository. The current Rust crate version is **1.2.10** (`Cargo.toml`). The GitHub **v2.0.0-rc.1** tag is a **source-only prerelease** marking the clean-history baseline; it is not a new production binary. The operating Telegram service is managed separately and is not deployed from GitHub Actions.
 >
-> **Release qualification is incomplete:** GitHub CI currently fails at strict Clippy; security advisories in the pinned dependency graph still require triage. See [Release status and known issues](#release-status-and-known-issues).
+> **Release qualification is in progress:** The original clean-root CI run failed strict Clippy and reported security advisories. A separately tested release candidate now passes strict Clippy and its refreshed RustSec and cargo-deny gates; **GitHub CI and complete distributable-image qualification remain open**. See [Release status and known issues](#release-status-and-known-issues).
 
 ## What it does
 
@@ -132,19 +132,19 @@ cargo deny check
 
 The repository's [Rust CI](.github/workflows/ci.yml) runs on pushes and pull requests with **read-only permissions**. It does **not** build or deploy production releases.
 
-**Do not mistake the commands above for green gates:** the initial clean-root CI run passed formatting and compilation but **failed at strict Clippy**. Library tests passed in a separate ARM64 validation (154 passed; 0 failed; 1 ignored). Dependency advisory review is still open.
+**Quality evidence for the updated candidate (5 November 2026):** formatting and strict all-target Clippy passed locally; 154 Rust library tests passed with one ignored, transactional outbox 21/21, wallet/queue tests 14/14, runtime DB role 1/1, UI closure 10/10, and runtime wiring 15/15. Refreshed RustSec reported **zero vulnerability advisories**; cargo-deny passed after the **eight explicitly documented unmaintained transitive exceptions** in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md). **Wait for a green GitHub CI run on the new commit before calling these remotely verified.**
 
 ### Container note
 
-The tracked [Dockerfile](Dockerfile) and [Compose configuration](docker-compose.yml) are retained from the local source, but their builder toolchain and binary path have **not** been requalified for this clean-root prerelease. Do **not** treat a Docker build as a verified deployment artifact until a container build and smoke test pass.
+The [Dockerfile](Dockerfile) was updated to Rust **1.99.1**, corrected to use `kaspa-block-alert-bot`, and uses immutable base-image digests plus a non-root runtime user. A Docker Buildx policy check passed. **Full image compilation and container startup smoke have not yet passed**; do not treat the source as a verified deployable image. See [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
 
 ## Release status and known issues
 
 **v2.0.0-rc.1 is a source-only preview, not a production release.**
 
-- **Passed:** clean independent Git root, source sanitization scan, Rust formatting, ARM64 all-targets compilation and 154 Rust library tests.
-- **Not passed:** strict Clippy in the initial GitHub workflow (existing lint violations). The dependency audit also reported **13 RustSec advisories** in the locked dependency tree; each requires update or documented applicability review.
-- **Not yet verified:** reproducible release binaries, SBOM/provenance signing for this new root, full PostgreSQL integration matrix and Docker image qualification.
+- **Passed on a newer isolated candidate:** Rust formatting, strict Clippy, ARM64 all-targets compilation, 154 Rust library tests, 21 transactional-outbox tests, 14 queue/wallet tests, 10 UI closure tests, 15 wiring tests, and a full isolated PostgreSQL 18 migration sequence. The **13 original RustSec vulnerabilities and the additional Tokio unsoundness advisory were fixed with patched dependencies**, not ignored.
+- **Dependency policy:** Refreshed RustSec shows **zero vulnerabilities and eight unmaintained warnings**. `cargo deny` passes with **eight exact-ID exceptions solely for documented upstream maintenance warnings**. No yanked dependencies remain and no expired OSV exclusions are retained.
+- **Not yet verified:** green GitHub CI on the new commit, full container build and non-root runtime smoke, reproducible release binaries, SBOM and signed provenance, and every optional database/Telegram integration test. Keep stable release on HOLD.
 - **Production:** the live Telegram bot is managed and rolled back separately; publishing a GitHub tag does not change its binary, data or subscriber notifications.
 
 See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md), [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md), and [GitHub Releases](https://github.com/KaspaPulse/kaspa-telegram-notify/releases) for the current evidence and release notes.

@@ -22,13 +22,16 @@ wildcards = "deny"
 
 [advisories]
 ignore = [
-    "RUSTSEC-2024-0388", # derivative: unmaintained, transitive through the Kaspa/Arkworks stack. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2026-0173", # proc-macro-error2: unmaintained build-time transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2025-0052", # async-std: upstream Kaspa SDK transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2024-0375", # atty: upstream transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2024-0384", # instant: upstream transitive dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2024-0436", # paste: upstream transitive/build dependency. See SECURITY_ADVISORIES.md.
-    "RUSTSEC-2024-0370", # proc-macro-error: upstream transitive/build dependency. See SECURITY_ADVISORIES.md.
+    # Unmaintained upstream dependencies, never a blanket vulnerability waiver.
+    # Exact reverse dependency trees and review notes are in SECURITY_ADVISORIES.md.
+    "RUSTSEC-2024-0388", # derivative (Kaspa txscript -> Arkworks).
+    "RUSTSEC-2026-0173", # proc-macro-error2 (Teloxide -> aquamarine).
+    "RUSTSEC-2024-0449", # unsafe-libyaml (Kaspa core -> log4rs -> serde_yaml).
+    "RUSTSEC-2025-0052", # async-std (Kaspa workflow-core; discontinued).
+    "RUSTSEC-2024-0375", # atty (Kaspa txscript -> hexplay).
+    "RUSTSEC-2024-0384", # instant (Kaspa workflow-core).
+    "RUSTSEC-2024-0436", # paste (Kaspa crates and risc0-zkp).
+    "RUSTSEC-2024-0370", # proc-macro-error (Kaspa RPC macros, workflow-core macros).
 ]
 unmaintained = "all"
 yanked = "deny"

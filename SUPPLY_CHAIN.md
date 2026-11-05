@@ -1,61 +1,66 @@
-# Supply-chain security and release verification
+# Kaspa Pulse supply-chain and release controls
 
-Kaspa Pulse releases are produced by the protected GitHub Actions release workflow in `.github/workflows/release.yml`.
+**Status: release qualification in progress (5 November 2026).** The clean-root
+repository does **not** yet contain a tested production release pipeline.
+Publishing a GitHub source tag does not deploy the Telegram bot.
 
-## Release artifacts
+## Build inputs and integrity
 
-A published release contains the following versioned artifacts:
+- Rust **1.99.1 stable** in `rust-toolchain.toml`.
+- `Cargo.lock` committed; release and test builds use `--locked`.
+- Rusty Kaspa SDK **2.0.1**, immutably pinned to
+  `cfafeb4c093fa37a303f1b9f19c58f986b870ce3`.
+- Vendored `teloxide-core` is kept in the source tree with its own license.
+- Base images used in the release-candidate Dockerfile are identified with
+  immutable image digests; Dockerfile build-policy check passed on ARM64.
+  **A full container image build, runtime smoke and vulnerability scan have
+  not yet been proven.**
+- The CI workflow has **`contents: read`** only. It uses **push**, **pull request**
+  and owner-initiated workflow triggers only: **no scheduled dependency updates**,
+  no Dependabot configuration, no auto-merge or automatic release.
 
-- the Linux release archive (`*.tar.gz`);
-- its SHA-256 checksum (`*.sha256`);
-- a CycloneDX JSON SBOM (`*.cdx.json`);
-- a Sigstore bundle for SLSA build provenance (`*.sigstore.json`);
-- a Sigstore bundle for the SBOM attestation (`*.sbom.sigstore.json`);
-- an in-toto/SLSA provenance bundle (`*.intoto.jsonl`).
+## Test and security evidence
 
-The release workflow uses GitHub OIDC and ephemeral Sigstore signing through GitHub Artifact Attestations. No long-lived release signing private key is stored in the repository.
+- Strict Clippy with `-D warnings`, Rustfmt and library tests validated on an
+  isolated ARM64 candidate.
+- Transactional alert outbox and rollback, wallet queue, runtime DB privilege,
+  and functional UI behavior were checked with a disposable PostgreSQL 18
+  instance and fixed fixture scope.
+- Refreshed `cargo audit` returned zero vulnerability advisories;
+  `cargo deny check` passed after explicit documentation of eight upstream
+  maintenance notices. Details and residual risk are in
+  [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
+- These local results are **not a substitute for successful GitHub CI** on the
+  exact candidate commit.
 
-## Verify a release
+## What this release candidate does not claim
 
-Install the GitHub CLI, authenticate to GitHub if required, and download the assets for the release you want to verify.
+- No published binary, reproducible binary-build equivalence proof, CycloneDX
+  SBOM, signed attestation, or SLSA provenance for the post-reset source has
+  yet been independently verified.
+- No Docker runtime smoke has been verified against this exact candidate.
+- The existing GitHub `v2.0.0-rc.1` is **source-only**, with known older CI
+  failures; do not repurpose its tag as an artifact authentication anchor.
+- Historical GitHub forks and pull-request references may retain old content
+  despite the independent root commit. Past exposure remediation is a separate
+  privacy task.
+- Production `dns` remains unchanged until a separate authorized rollout
+  with a retained backup and tested rollback.
 
-For `v1.2.5` on Linux x86_64:
+## Future signed release policy
 
-```bash
-archive="kaspa-pulse-1.2.5-x86_64-unknown-linux-gnu.tar.gz"
+Before publishing a stable v2.0.0 release:
 
-sha256sum --check "${archive}.sha256"
+1. Build ARM64 and amd64 candidates from the same pinned commit with
+   independent hash/revision evidence.
+2. Validate isolated PostgreSQL migration/rollback and Telegram wallet
+   localization without accessing the production database.
+3. Validate container image build, non-root runtime, image digest, health
+   behavior, and startup fail-closed conditions.
+4. Produce and independently verify SHA-256 hashes, an SBOM and signer
+   attestation. Do not claim attestation if no signed artifact exists.
+5. Obtain owner approval of final CI and release evidence; only then create a
+   stable release tag or authorize a separately controlled production rollout.
 
-gh attestation verify "$archive" \
-  --repo KaspaPulse/kaspa-telegram-notify \
-  --bundle "${archive}.intoto.jsonl" \
-  --signer-workflow KaspaPulse/kaspa-telegram-notify/.github/workflows/release.yml
-```
-
-Verification must fail closed: do not install or run an artifact when the checksum or attestation verification fails.
-
-## Reproducibility controls
-
-The release pipeline:
-
-- builds with the repository-pinned Rust toolchain and `Cargo.lock` using `--locked`;
-- uses a deterministic archive order, ownership, timestamp, and gzip metadata;
-- generates a CycloneDX SBOM from the locked dependency graph;
-- normalizes the CycloneDX serial number deterministically from repository, commit, version, target, and specification version;
-- generates SLSA provenance and an SBOM attestation before publication;
-- verifies the downloaded SLSA provenance bundle before creating the GitHub Release;
-- refuses to republish a version tag that already has a release.
-
-## Dependency and advisory controls
-
-Pull requests and scheduled security workflows use independent controls including CodeQL, OSV Scanner, `cargo audit`, `cargo deny`, dependency review, secret scanning, strict Clippy, tests, release builds, and production-container smoke tests.
-
-Reviewed RustSec/OSV exceptions are advisory-ID-specific, documented in `SECURITY_ADVISORIES.md`, and time-bounded by CI policy. A passing exception policy does not replace the independent vulnerability scanners.
-
-## Trust boundary
-
-Only artifacts attached to the canonical GitHub repository release page should be treated as project releases:
-
-https://github.com/KaspaPulse/kaspa-telegram-notify/releases
-
-Do not trust binaries redistributed through unrelated mirrors unless you independently verify their checksum and provenance against the canonical release metadata.
+The full release checklist is deliberately **fail-closed**: source publication
+and good unit-test results alone do not authorize binary distribution.

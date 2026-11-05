@@ -10,11 +10,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: kaspa-pulse-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
-    name: fmt + check + clippy + test
+    name: Rust quality + isolated PostgreSQL
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      SQLX_OFFLINE: "true"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+      DATABASE_ADMIN_URL: postgres://postgres:TEST_PASSWORD@127.0.0.1:5432/kaspa_release_ci
+      DATABASE_URL: postgres://kaspa_pulse_app:TEST_PASSWORD@127.0.0.1:5432/kaspa_release_ci
+
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_PASSWORD: TEST_PASSWORD
+          POSTGRES_DB: kaspa_release_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kaspa_release_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -25,11 +50,33 @@ jobs:
         with:
           toolchain: 1.99.1
           components: clippy, rustfmt
+      - name: Prepare PostgreSQL test client
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends postgresql-client
+          fi
+      - name: Reviewed security policy has no expired exceptions
+        run: python3 scripts/check-security-advisories.py --max-age-days 45
       - name: Formatting
         run: cargo fmt --all -- --check
-      - name: Check
+      - name: Check all targets
         run: cargo check --locked --all-targets
-      - name: Clippy
+      - name: Strict Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Tests
+      - name: Rust library tests
         run: cargo test --locked --lib
+      - name: Prepare isolated PostgreSQL
+        run: bash scripts/ci-prepare-postgres.sh
+      - name: Transactional outbox and rollback
+        run: cargo test --locked --test transactional_alert_outbox_tests -- --test-threads=1
+      - name: Wallet and queue regression
+        run: cargo test --locked --test stage3_database_queue_characterization_tests -- --test-threads=1
+      - name: Runtime DB privilege contract
+        run: cargo test --locked --test runtime_event_write_privilege_tests -- --test-threads=1
+      - name: Telegram UI and functional closure
+        run: cargo test --locked --test functional_closure_regression_tests -- --test-threads=1
+      - name: Hermetic runtime wiring
+        run: cargo test --locked --test batch4b_runtime_integration_tests
+      - name: Dockerfile policy check (no image published)
+        run: docker buildx build --check --platform linux/amd64,linux/arm64 .

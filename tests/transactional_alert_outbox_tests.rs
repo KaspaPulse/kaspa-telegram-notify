@@ -59,7 +59,7 @@ async fn reset_tables(admin_pool: &PgPool) {
         .await
         .expect("failed to remove a stale queue failure function");
 
-    sqlx::query("TRUNCATE TABLE telegram_delivery_queue, wallet_alert_dedup, wallet_seen_utxos, user_wallets")
+    sqlx::query("TRUNCATE TABLE telegram_active_wallet, telegram_delivery_queue, wallet_alert_dedup, wallet_seen_utxos, user_wallets")
         .execute(admin_pool)
         .await
         .expect("failed to reset outbox tables");
