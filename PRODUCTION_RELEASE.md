@@ -19,7 +19,12 @@ The version card is **More → 📦 Version**, or type `/version`.
 Authorized owners additionally see the full commit and source/binary hashes
 via **Admin → 📦 Live Release**. Dates display in **Riyadh UTC+03:00**.
 The displayed identity is embedded in the actual running executable,
-not taken from the repository default-branch HEAD.
+not taken from the repository default-branch HEAD. OP095 reconciles the
+maintained local checkout with the public GitHub `main` branch, retaining
+the **same OP092 application source**; changes made solely to README,
+security policy or production documentation do not require a production
+binary rebuild. Release commits and deployed source-commit identities are
+tracked separately to prevent false reports of a new production release.
 
 Local-only trustworthy recovery artifacts:
 

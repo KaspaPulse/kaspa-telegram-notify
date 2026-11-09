@@ -30,6 +30,49 @@ Dependabot automatic updates and automated security fixes are disabled.
 Builds and tests run manually and locally with a locked Rust toolchain.
 A Git push never deploys or restarts the bot.
 
+### Production-first source reconciliation (OP095)
+
+**Authoritative state is the installed, verified OP092 executable**, not a
+newer repository timestamp. The recorded OP092 build was compiled from Git
+commit **`0c4650a5ff89f59c5ba9402085ffe6ecd4e1c5a8`**. The current
+`main` branch retains that exact application source, Cargo dependency lock,
+vendored Rust code, migrations, and deployment scripts. Subsequent commits
+may refresh documentation and remove old CI workflows **without changing
+the deployed application**. The current Git commit and the source commit
+embedded into the binary therefore serve different, explicitly documented
+purposes.
+
+The canonical *development* checkout is maintained on the `dns` host; the
+public GitHub `main` branch is its reviewed remote mirror. Obsolete local
+checkouts and sensitive environment backups must be retained only in
+restricted local recovery storage, never committed or uploaded. Neither the
+working checkout nor GitHub is a production database or credentials backup.
+
+Before a manual release or push, verify the checked-out source against the
+published production-source commit; for example, this **read-only** check
+must report no application-source changes for the current OP092 deployment:
+
+```bash
+git diff --exit-code \
+  0c4650a5ff89f59c5ba9402085ffe6ecd4e1c5a8 HEAD -- \
+  src/ vendor/ migrations/ tests/ scripts/ Cargo.toml Cargo.lock \
+  build.rs rust-toolchain.toml Dockerfile
+```
+
+A local, fail-closed `pre-push` hook on the maintained checkout rejects
+known secret patterns, sensitive file paths, unreviewed history rewrites,
+and stale pre-OP093 source. **Git hooks are not transported by a clone**:
+a new workstation must install and verify an equivalent local guard, and
+manual review of all added content remains mandatory. This guard does not
+claim comprehensive detection of every possible secret.
+
+The OP094 secret audit examined the published source and reachable
+repository history; it did not prove that any previously exposed, unreachable
+or externally cached data had been erased. Release provenance and rollback
+details are recorded in [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md).
+**No application deployment or automatic GitHub workflow was triggered by
+the OP095 repository reconciliation.**
+
 ## What it does
 
 Kaspa Pulse watches registered Kaspa wallets and sends Telegram alerts about detected mining rewards. It uses the **public Kaspa Peer-to-Peer Network (PNN)** for chain data, checks reward-related data, and stores wallet state, notification events and delivery deduplication records in PostgreSQL.
