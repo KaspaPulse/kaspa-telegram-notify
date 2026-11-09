@@ -5,9 +5,8 @@
 **Kaspa solo-mining rewards and wallet monitoring through Telegram — written in Rust.**
 
 [![Rust 1.99.1](https://img.shields.io/badge/Rust-1.99.1-orange?logo=rust)](rust-toolchain.toml)
-[![Rust CI](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v2.0.0--rc.1-yellow.svg)](https://github.com/KaspaPulse/kaspa-telegram-notify/releases)
+[![Production](https://img.shields.io/badge/Production-OP092-success-brightgreen.svg)](PRODUCTION_RELEASE.md)
 
 **English by default · Arabic by choice · Public Kaspa PNN · PostgreSQL-backed delivery**
 
@@ -15,9 +14,21 @@
 
 ---
 
-> **Repository status — 5 November 2026:** This is the owner-approved, independently rooted source repository. The current Rust crate version is **1.2.10** (`Cargo.toml`). The GitHub **v2.0.0-rc.1** tag is a **source-only prerelease** marking the clean-history baseline; it is not a new production binary. The operating Telegram service is managed separately and is not deployed from GitHub Actions.
->
-> **Release qualification is in progress:** The original clean-root CI run failed strict Clippy and reported security advisories. A separately tested release candidate now passes strict Clippy and its refreshed RustSec and cargo-deny gates; **GitHub CI and complete distributable-image qualification remain open**. See [Release status and known issues](#release-status-and-known-issues).
+**Production source of truth — 9 November 2026:** The Telegram bot is running
+**Kaspa Pulse v1.2.10**, production release **`op092-595a1dc25372cb6a`**.
+Its independently verified full Git commit is
+**`0c4650a5ff89f59c5ba9402085ffe6ecd4e1c5a8`**. This commit is the
+deployed Rust source; a later documentation-only branch commit is not a new
+production binary. See [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md) for
+SHA-256, Git commit date, build time, production activation and rollback.
+In Telegram use **More → 📦 Version**, **`/version`**, or
+**Admin → 📦 Live Release** (authorized owner only).
+
+**No automated cloud builds:** GitHub Actions is disabled in repository
+settings and this source tree contains **no `.github/workflows` files**.
+Dependabot automatic updates and automated security fixes are disabled.
+Builds and tests run manually and locally with a locked Rust toolchain.
+A Git push never deploys or restarts the bot.
 
 ## What it does
 
@@ -27,13 +38,13 @@ Kaspa Pulse watches registered Kaspa wallets and sends Telegram alerts about det
 | --- | --- |
 | **Wallets** | Add, select, remove and inspect Kaspa wallets; view balances and mined blocks. |
 | **Mining rewards** | Coinbase/reward event detection, confirmation handling, block information and deduplicated notifications. |
-| **Telegram** | Compact inline menus, network/market views, wallet actions and a private owner-admin panel. |
+| **Telegram** | Compact menus, network/market views, wallets, private owner administration and verified production release information. |
 | **Languages** | **English is the default** for new users, regardless of Telegram app language. Users can explicitly select Arabic under **More → Language**; preference is stored per user. |
 | **Alerts** | A shared wallet can notify multiple recipients in their selected languages. Alerts show **Time / الوقت** with the timestamp and UTC precision preserved. |
 | **Donations** | **❤️ Donate** is directly on the Home menu, not hidden under More. |
 | **Reliability** | PostgreSQL-backed transactional alert outbox, event deduplication, delivery retries, health and readiness endpoints. |
 
-The native Telegram slash-command picker presents only **`/start`** and **`/help`**. Other legacy commands may still be accepted for compatibility, but are not advertised. Owner-only actions remain authorization-checked and are available from the protected **Admin** button.
+The native Telegram slash-command picker presents only **`/start`** and **`/help`**. The manually typed **`/version`** command also works, and the same card is available from **More → Version**. Other legacy commands may still be accepted for compatibility, but are not advertised. Owner-only actions remain authorization-checked and are available from the protected **Admin** button.
 
 ### Telegram home menu
 
@@ -119,41 +130,75 @@ cargo run --locked --release --bin kaspa-block-alert-bot
 
 A production webhook additionally needs `USE_WEBHOOK=true`, `WEBHOOK_DOMAIN` and `WEBHOOK_SECRET_TOKEN`, plus an appropriately secured ingress. See [SECURITY.md](SECURITY.md). Bind metrics, health and readiness endpoints to a trusted local interface rather than the public internet.
 
-### Quality checks
+### Manual offline quality checks
+
+GitHub Actions is **disabled**, and the repository has **no workflow files**.
+Run quality checks manually on trusted hardware with the pinned toolchain:
 
 ```bash
 cargo fmt --all -- --check
-cargo check --locked --all-targets
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --lib
-cargo audit
-cargo deny check
+cargo clippy --release --locked --offline --all-targets -- -D warnings
+cargo test --release --locked --offline --lib
+cargo test --release --locked --offline --test production_regression_tests
+# Run PNN, reward-proof, Telegram and sensitive integration tests manually.
 ```
 
-The repository's [Rust CI](.github/workflows/ci.yml) runs on pushes and pull requests with **read-only permissions**. It does **not** build or deploy production releases.
-
-**Quality evidence for the updated candidate (5 November 2026):** formatting and strict all-target Clippy passed locally; 154 Rust library tests passed with one ignored, transactional outbox 21/21, wallet/queue tests 14/14, runtime DB role 1/1, UI closure 10/10, and runtime wiring 15/15. Refreshed RustSec reported **zero vulnerability advisories**; cargo-deny passed after the **eight explicitly documented unmaintained transitive exceptions** in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md). **Wait for a green GitHub CI run on the new commit before calling these remotely verified.**
+**Native ARM64 production OP092 (9 November 2026):** 221 library tests
+(one inherited ignored), four release-information tests, 32 production
+regressions, 37 sensitive PNN/proof/dedup tests and 15 runtime integration
+tests passed. Strict Clippy and rustfmt passed. The existing informational
+proc-macro-error2 future-compatibility warning is **not** a production
+failure. A native release is not automatic Docker-image certification.
+Use [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md) and
+[SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) for additional manual reviews.
 
 ### Container note
 
 The [Dockerfile](Dockerfile) uses Rust **1.99.1**, the correct `kaspa-block-alert-bot` binary name, immutable image digests, a non-root runtime user and a **required source commit SHA**. Use `docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" .` when qualifying an image. Dockerfile policy checks and native ARM64 fail-closed startup were verified, but **the full multi-stage Docker image and its production startup remain unqualified**. See [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
 
-## Release status and known issues
+## Verified live production and version provenance
 
-**v2.0.0-rc.1 is a source-only preview, not a production release.**
+| Property | Verified running production |
+| --- | --- |
+| Crate/application | `kaspa-pulse 1.2.10` |
+| Live release | `op092-595a1dc25372cb6a` |
+| **Full source Git commit** | `0c4650a5ff89f59c5ba9402085ffe6ecd4e1c5a8` |
+| Source commit UTC | `2026-11-09 07:51:55` |
+| Build UTC | `2026-11-09 08:38:04` |
+| Production activation UTC | `2026-11-09 08:46:22` |
+| Live binary SHA-256 | `d7285d9eca53f2a15fba855ca10263c4a4f6e8ca9d038e1615a9097da22d352b` |
+| Previous release for rollback | `op090-d2e3817d422f7500` |
+| GitHub Actions | **Disabled; no workflow files** |
 
-- **Passed on a newer isolated candidate:** Rust formatting, strict Clippy, ARM64 all-targets compilation, 154 Rust library tests, 21 transactional-outbox tests, 14 queue/wallet tests, 10 UI closure tests, 15 wiring tests, and a full isolated PostgreSQL 18 migration sequence. The **13 original RustSec vulnerabilities and the additional Tokio unsoundness advisory were fixed with patched dependencies**, not ignored.
-- **Dependency policy:** Refreshed RustSec shows **zero vulnerabilities and eight unmaintained warnings**. `cargo deny` passes with **eight exact-ID exceptions solely for documented upstream maintenance warnings**. No yanked dependencies remain and no expired OSV exclusions are retained.
-- **Not yet verified:** green GitHub CI on the new commit, full container build and non-root runtime smoke, reproducible release binaries, SBOM and signed provenance, and every optional database/Telegram integration test. Keep stable release on HOLD.
-- **Production:** the live Telegram bot is managed and rolled back separately; publishing a GitHub tag does not change its binary, data or subscriber notifications.
+The Telegram **`/version`** command reads the identity embedded in the
+actual running binary. Users see a compact public card; authenticated
+private-chat owners see the full commit, source digest and live binary digest.
+A later README-only Git commit does **not** create a new production binary.
+See [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md) for attestation and recovery.
 
-See [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md), [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md), and [GitHub Releases](https://github.com/KaspaPulse/kaspa-telegram-notify/releases) for the current evidence and release notes.
+At independent production acceptance the bot was healthy/ready (HTTP 200),
+the public PNN source pool was qualified 5/5, Telegram delivery queue was
+empty and the 68 historic excluded proof rows/81,221 attempts were unchanged.
+No historical replay or test notification was sent.
 
-## Repository history and maintenance
+The native Linux ARM64 executable is verified. Optional Docker image
+packaging, an independent reproducible-build check and every optional
+integration environment have not all been qualified. Do not imply they have.
 
-On **5 November 2026**, the repository began a **new, independent root commit** from the owner-approved Rust source. Older GitHub branches, tags and releases were retired. Public forks, cached objects or historical pull-request references may still retain content from the previous history; a history reset does **not** guarantee global erasure. See [REPOSITORY_RESET_NOTICE.md](REPOSITORY_RESET_NOTICE.md).
+## Repository policy and history
 
-**Dependabot version updates and automated security-fix pull requests are disabled.** Auto-merge is disabled; no scheduled update or production release workflows are included in this source tree. Security alerts should still be reviewed and dependencies updated **manually**, with tests and owner approval.
+**No paid automation from this repository:** GitHub Actions is disabled;
+no workflow files, Git LFS, paid runners, Codespaces, hosted CI or scheduled
+builds are configured. Dependabot automated version/security updates
+and automatic fixes are disabled; security alerts are reviewed manually.
+This does not control subscriptions or billing from **other** repositories.
+
+On 9 November 2026 the owner-approved local repository replaced the
+older GitHub `main` branch tip. The specific source commit used to build
+the live OP092 binary remains reachable from the refreshed branch for
+accurate production traceability. An overwritten branch or deleted tag
+does not guarantee globally erasing older commits, forks or cached objects.
+See [REPOSITORY_RESET_NOTICE.md](REPOSITORY_RESET_NOTICE.md).
 
 ## Privacy and responsible disclosure
 
