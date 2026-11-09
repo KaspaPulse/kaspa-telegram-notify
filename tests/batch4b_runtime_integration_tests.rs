@@ -220,12 +220,19 @@ fn final_scan_freshness_includes_nested_processing_failures() {
 fn rpc_outage_events_use_matching_sql_bind_parameters() {
     let source = include_str!("../src/infrastructure/external_services/system.rs");
 
-    assert!(
-        source.contains("VALUES ($1, $2, 'node_unreachable', 'RPC connection lost', $3::jsonb)")
-    );
-    assert!(source.contains("VALUES ($1, $2, 'recovered', $3::jsonb)"));
-    assert!(source.contains("Failed to record RPC outage event"));
-    assert!(source.contains("Failed to record RPC recovery event"));
+    // OP090: only a REAL reward-pool outage creates one persistent incident.
+    // Auxiliary primary flapping remains visible without flooding the DB.
+    assert!(source.contains(
+        "VALUES ($1, $2, $3, 'Primary RPC and qualified reward pool unavailable', $4::jsonb)"
+    ));
+    assert!(source.contains(".bind(BotEventType::RpcError.as_str())"));
+    assert!(source.contains(".bind(EventSeverity::Error.as_str())"));
+    assert!(source.contains("if !reward_pool_outage_reported"));
+    assert!(source.contains("\"node_unreachable\""));
+    assert!(source.contains("VALUES ($1, $2, $3, $4::jsonb)"));
+    assert!(source.contains(".bind(BotEventType::RpcRecovered.as_str())"));
+    assert!(source.contains("Failed to record actual RPC outage event"));
+    assert!(source.contains("Failed to record real RPC recovery event"));
     assert!(!source.contains(
         "VALUES ('RPC_ERROR', 'error', 'node_unreachable', 'RPC connection lost', $1::jsonb)"
     ));

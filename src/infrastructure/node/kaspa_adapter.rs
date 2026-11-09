@@ -7,11 +7,34 @@ use std::sync::Arc;
 
 pub struct KaspaRpcAdapter {
     pub client: Arc<KaspaRpcClient>,
+    // Stable resolver URL; unlike KaspaRpcClient::url() this survives
+    // a transport disconnect. Only public mainnet PNN adapters set it.
+    pinned_url: Option<String>,
 }
 
 impl KaspaRpcAdapter {
     pub fn new(client: Arc<KaspaRpcClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            pinned_url: None,
+        }
+    }
+
+    pub fn new_pinned(client: Arc<KaspaRpcClient>, pinned_url: String) -> Self {
+        assert!(
+            !pinned_url.is_empty(),
+            "public PNN pinned URL must be nonempty"
+        );
+        Self {
+            client,
+            pinned_url: Some(pinned_url),
+        }
+    }
+    pub fn current_or_pinned_url(&self) -> Option<String> {
+        self.pinned_url.clone().or_else(|| self.client.url())
+    }
+    pub fn stable_pinned_url(&self) -> Option<&str> {
+        self.pinned_url.as_deref()
     }
 
     pub async fn get_utxos(
@@ -66,26 +89,38 @@ impl KaspaRpcAdapter {
     }
 
     pub async fn get_node_health(&self) -> Result<(bool, usize), AppError> {
-        let mut is_online = self.client.get_server_info().await.is_ok();
-
-        if !is_online {
-            tracing::warn!("[NODE ADAPTER] Node offline. Attempting reconnect.");
-            let _ = self.client.connect(None).await;
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            is_online = self.client.get_server_info().await.is_ok();
-        }
-
-        if !is_online {
+        // OP066: PNN's own wRPC driver manages reconnects. Calling
+        // KaspaRpcClient::connect() from a health/read-only path first
+        // DISCONNECTS the shared client and tears down its listeners.
+        // Never force another connection from an observer.
+        if !self.client.is_connected() {
             return Ok((false, 0));
         }
-
-        let peer_count = self
-            .client
-            .get_connected_peer_info()
-            .await
-            .map(|p| p.peer_info.len())
-            .map_err(|error| AppError::NodeConnection(error.to_string()))?;
-
+        match crate::infrastructure::resilience::runtime::with_rpc_timeout(
+            "get_node_health",
+            async {
+                self.client
+                    .get_server_info()
+                    .await
+                    .map_err(|e| AppError::NodeConnection(e.to_string()))
+            },
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(_) => return Ok((false, 0)),
+        };
+        let peer_count = crate::infrastructure::resilience::runtime::with_rpc_timeout(
+            "get_node_health_peers",
+            async {
+                self.client
+                    .get_connected_peer_info()
+                    .await
+                    .map(|p| p.peer_info.len())
+                    .map_err(|e| AppError::NodeConnection(e.to_string()))
+            },
+        )
+        .await?;
         Ok((true, peer_count))
     }
 

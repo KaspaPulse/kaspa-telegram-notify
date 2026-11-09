@@ -360,6 +360,193 @@ impl MonitoringSchedule {
     }
 }
 
+/// OP089: single event-only observer bound to the same qualified PNN
+/// source and generation as the UTXO scanner and durable VSPC indexer.
+/// Does NOT create a wallet reader, RPC reconnection, or a second writer.
+fn selected_subscription_lease_matches(
+    captured: &crate::infrastructure::node::source_registry::SelectedPnn,
+    current: Option<&crate::infrastructure::node::source_registry::SelectedPnn>,
+) -> bool {
+    current.is_some_and(|now| {
+        now.index == captured.index
+            && now.generation == captured.generation
+            && Arc::ptr_eq(&now.source, &captured.source)
+    })
+}
+
+/// Five-source mode never starts a second realtime listener on the ancillary
+/// primary. A source transition tears down the old listener before admitting
+/// the new one. Poll fallback always remains enabled at the wallet scanner.
+pub fn spawn_selected_pnn_subscription_runtime(
+    registry: Arc<crate::infrastructure::node::source_registry::SourceRegistry>,
+    signal_sender: SubscriptionSignalSender,
+    lifecycle: SubscriptionLifecycleHandle,
+    cancellation: CancellationToken,
+) {
+    if !lifecycle.snapshot().mode.requires_subscription() {
+        crate::infrastructure::observability::set_subscription_active(false);
+        return;
+    }
+    crate::infrastructure::resilience::runtime::spawn_resilient(
+        "selected_public_pnn_subscription_runtime",
+        async move {
+            let mut previous_source: Option<(usize, u64)> = None;
+            loop {
+                if cancellation.is_cancelled() {
+                    crate::infrastructure::observability::set_subscription_active(false);
+                    return;
+                }
+                let selected = registry.selected().await;
+                let Some(selected) = selected else {
+                    lifecycle.on_disconnected();
+                    crate::infrastructure::observability::set_subscription_active(false);
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                    }
+                    continue;
+                };
+                let client = selected.source.client.clone();
+                if !client.is_connected() {
+                    lifecycle.on_disconnected();
+                    crate::infrastructure::observability::set_subscription_active(false);
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                    }
+                    continue;
+                }
+                // A bounded remote notify registration. Its local listener ID
+                // is owned here, so a timeout is explicitly unregistered.
+                let (sender, receiver) = async_channel::unbounded::<Notification>();
+                let rpc_api = client.rpc_api();
+                let listener_id = rpc_api.register_new_listener(ChannelConnection::new(
+                    "kaspa-pulse-selected-source",
+                    sender,
+                    ChannelType::Persistent,
+                ));
+                let registration = tokio::select! {
+                    _ = cancellation.cancelled() => None,
+                    outcome = tokio::time::timeout(
+                        Duration::from_secs(8),
+                        rpc_api.start_notify(
+                            listener_id,
+                            Scope::VirtualDaaScoreChanged(VirtualDaaScoreChangedScope {}),
+                        ),
+                    ) => Some(outcome),
+                };
+                let registered = matches!(registration, Some(Ok(Ok(()))));
+                if !registered {
+                    if client.is_connected() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            rpc_api.unregister_listener(listener_id),
+                        )
+                        .await;
+                    }
+                    lifecycle.on_registration_failed();
+                    crate::infrastructure::observability::set_subscription_active(false);
+                    crate::infrastructure::observability::increment_subscription_registration_failures();
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                    }
+                    continue;
+                }
+                let same_source = selected_subscription_lease_matches(
+                    &selected,
+                    registry.selected().await.as_ref(),
+                );
+                if !same_source {
+                    if client.is_connected() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            rpc_api.unregister_listener(listener_id),
+                        )
+                        .await;
+                    }
+                    lifecycle.on_disconnected();
+                    crate::infrastructure::observability::set_subscription_active(false);
+                    continue;
+                }
+                let next_key = (selected.index, selected.generation);
+                if previous_source.is_some() && previous_source != Some(next_key) {
+                    crate::infrastructure::observability::increment_node_reconnects();
+                }
+                previous_source = Some(next_key);
+                lifecycle.on_connected();
+                let _ = lifecycle.on_registration_succeeded();
+                // Registration is NOT end-to-end liveness: only real VDAA
+                // notification on a currently fenced source sets Active.
+                crate::infrastructure::observability::set_subscription_active(false);
+                tracing::info!(
+                    slot = selected.index + 1,
+                    source_generation = selected.generation,
+                    "[KASPA SUBSCRIPTION] Selected public PNN listener registered; awaiting actual VDAA event."
+                );
+                let mut check = tokio::time::interval(Duration::from_secs(2));
+                check.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                check.tick().await;
+                let mut last_observed = tokio::time::Instant::now();
+                loop {
+                    tokio::select! {
+                        _ = cancellation.cancelled() => break,
+                        _ = check.tick() => {
+                            let current = registry.selected().await;
+                            if !selected_subscription_lease_matches(
+                                &selected, current.as_ref()
+                            ) || !client.is_connected()
+                                || last_observed.elapsed() >= Duration::from_secs(30)
+                            {
+                                break;
+                            }
+                        }
+                        notification = receiver.recv() => {
+                            if notification.is_err() {
+                                break;
+                            }
+                            // Never accept an event from a former selected
+                            // generation, even while an old channel drains.
+                            let current = registry.selected().await;
+                            if !selected_subscription_lease_matches(
+                                &selected, current.as_ref()
+                            ) || !client.is_connected() {
+                                break;
+                            }
+                            last_observed = tokio::time::Instant::now();
+                            crate::infrastructure::observability::mark_subscription_event(
+                                crate::infrastructure::metrics::now_unix_secs(),
+                            );
+                            crate::infrastructure::observability::set_subscription_active(true);
+                            signal_sender.signal();
+                        }
+                    }
+                }
+                // Clean old listener before switching generation. On a
+                // disconnected transport we cannot issue network cleanup;
+                // the connection-scoped listener is retired with its socket.
+                if client.is_connected() {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        rpc_api.unregister_listener(listener_id),
+                    )
+                    .await;
+                }
+                lifecycle.on_disconnected();
+                crate::infrastructure::observability::set_subscription_active(false);
+                signal_sender.signal();
+                if cancellation.is_cancelled() {
+                    return;
+                }
+                tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
+            }
+        },
+    );
+}
+
 pub fn spawn_subscription_runtime(
     client: Arc<KaspaRpcClient>,
     signal_sender: SubscriptionSignalSender,
@@ -456,7 +643,12 @@ impl SubscriptionRuntimeBackend for KaspaSubscriptionRuntimeBackend {
                             crate::infrastructure::observability::set_node_connected(false);
                             crate::infrastructure::observability::set_subscription_active(false);
                             lifecycle.on_disconnected();
-                            unregister_listener(&self.client, &mut listener_id).await;
+                            // The wRPC transport has already disconnected:
+                            // unregister_listener() would now make a network call on
+                            // a dead channel and delay recovery. Drop only the
+                            // connection-scoped listener ID; re-register on Connected.
+                            listener_id = None;
+                            signal_sender.signal(); // Prompt immediate in-process fallback scan.
                             tracing::warn!("[KASPA SUBSCRIPTION] RPC disconnected; polling fallback enabled.");
                         }
                         Err(error) => {
@@ -869,5 +1061,71 @@ mod tests {
         );
         cancellation.cancel();
         assert_eq!(schedule.next_trigger(&cancellation).await, None);
+    }
+}
+// OP089 source-generation fence tests. Synthetic clients never connect.
+#[cfg(test)]
+mod op089_selected_pnn_subscription_tests {
+    use super::*;
+    use crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter;
+    use crate::infrastructure::node::source_registry::{SelectedPnn, SourceRegistry};
+    use kaspa_consensus_core::network::NetworkId;
+    use kaspa_wrpc_client::WrpcEncoding;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn listener_accepts_only_current_source_pointer_slot_and_generation() {
+        let network = NetworkId::from_str("mainnet").unwrap();
+        let sources: Vec<Arc<KaspaRpcAdapter>> = (0u16..5)
+            .map(|slot| {
+                let url = format!("ws://127.0.0.1:{}", 19801 + slot);
+                let client =
+                    KaspaRpcClient::new(WrpcEncoding::Borsh, Some(&url), None, Some(network), None)
+                        .unwrap();
+                Arc::new(KaspaRpcAdapter::new_pinned(Arc::new(client), url))
+            })
+            .collect();
+        let registry = SourceRegistry::new(sources.clone());
+        assert!(registry.selected().await.is_none());
+        registry.select(Some(3)).await.unwrap();
+        let selected = registry.selected().await.unwrap();
+        assert!(selected_subscription_lease_matches(
+            &selected,
+            registry.selected().await.as_ref()
+        ));
+        let other_pointer_same_index_generation = SelectedPnn {
+            source: sources[4].clone(),
+            index: selected.index,
+            generation: selected.generation,
+        };
+        assert!(!selected_subscription_lease_matches(
+            &selected,
+            Some(&other_pointer_same_index_generation)
+        ));
+        registry.select(Some(4)).await.unwrap();
+        assert!(!selected_subscription_lease_matches(
+            &selected,
+            registry.selected().await.as_ref()
+        ));
+        registry.select(None).await.unwrap();
+        assert!(!selected_subscription_lease_matches(
+            &selected,
+            registry.selected().await.as_ref()
+        ));
+    }
+
+    #[test]
+    fn selected_listener_requires_real_notifications_not_registration_only() {
+        let state = SubscriptionLifecycleHandle::new(MonitoringMode::SubscriptionPreferred);
+        assert_eq!(state.snapshot().state, SubscriptionState::Disconnected);
+        state.on_connected();
+        state.on_registration_succeeded();
+        assert_eq!(state.snapshot().state, SubscriptionState::Active);
+        // The production selected-source runtime deliberately leaves the
+        // PUBLIC active gauge false until a real fenced VDAA event arrives.
+        // This lifecycle remains fail-closed if the selected source dies.
+        state.on_disconnected();
+        assert!(state.should_poll_fallback());
+        assert_eq!(state.snapshot().state, SubscriptionState::Disconnected);
     }
 }

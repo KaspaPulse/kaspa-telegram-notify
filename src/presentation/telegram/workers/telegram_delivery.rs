@@ -82,6 +82,73 @@ async fn refresh_queue_metrics(pool: &PgPool, failed_queue_window_seconds: u64) 
             tracing::warn!("[DELIVERY QUEUE] Failed to read queue stats: {}", error);
         }
     }
+    // Read-only aggregate from PostgreSQL; refreshed alongside queue health,
+    // not once per mined block. Persisted proof rows are never modified.
+    let retry_sql = crate::infrastructure::database::pending_rewards_repo::OP076_RETRY_INTERVAL_SQL;
+    let query = format!(
+        r#"SELECT
+      count(*)::bigint,
+      count(*) FILTER (WHERE first_seen_at < now()-interval '1 day')::bigint,
+      coalesce(extract(epoch FROM now()-min(first_seen_at))::bigint,0),
+      count(*) FILTER (WHERE coalesce(metadata->>'accepting_block_hash','')='')::bigint,
+      coalesce(max(attempts),0)::bigint,
+      count(*) FILTER (
+          WHERE first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+            AND first_seen_at < now()-interval '10 minutes'
+      )::bigint,
+      count(*) FILTER (
+          WHERE first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+      )::bigint,
+      count(*) FILTER (
+          WHERE first_seen_at < TIMESTAMPTZ '2026-11-05 17:30:32+00'
+      )::bigint,
+      coalesce(max(attempts) FILTER (
+          WHERE first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+      ),0)::bigint,
+      count(*) FILTER (
+          WHERE first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+            AND last_checked_at < NOW()-{retry_sql}
+      )::bigint
+      FROM pending_rewards WHERE status='awaiting_block_proof'"#
+    );
+    match sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64)>(
+        sqlx::AssertSqlSafe(query),
+    )
+    .fetch_one(pool)
+    .await
+    {
+        Ok((
+            count,
+            old_day,
+            max_age,
+            missing,
+            max_retries,
+            newer_over_10m,
+            newer_waiting,
+            historic_excluded,
+            newer_max_attempts,
+            newer_due,
+        )) => {
+            crate::infrastructure::metrics::set_proof_backlog(
+                crate::infrastructure::metrics::ProofBacklogSnapshot {
+                    count: count.max(0) as u64,
+                    old_day: old_day.max(0) as u64,
+                    max_age: max_age.max(0) as u64,
+                    missing_acceptance: missing.max(0) as u64,
+                    max_retries: max_retries.max(0) as u64,
+                    newer_over_10m: newer_over_10m.max(0) as u64,
+                    newer_waiting: newer_waiting.max(0) as u64,
+                    historic_excluded: historic_excluded.max(0) as u64,
+                    newer_max_attempts: newer_max_attempts.max(0) as u64,
+                    newer_due_for_retry: newer_due.max(0) as u64,
+                },
+            );
+        }
+        Err(error) => {
+            crate::infrastructure::metrics::inc_db_errors();
+            tracing::warn!("[PROOF METRICS] Database snapshot unavailable: {}", error);
+        }
+    }
 }
 
 async fn deliver_pending_batch(bot: &Bot, pool: &PgPool) {

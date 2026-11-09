@@ -226,6 +226,11 @@ impl OperationalSnapshot {
     }
 
     pub fn readiness(self, now_ts: u64, policy: ReadinessPolicy) -> ReadinessState {
+        // OP071: standalone primary RPC is never enough to claim the
+        // explicitly configured FIVE-PNN source contract at restart.
+        if !crate::infrastructure::metrics::required_five_pool_ready() {
+            return ReadinessState::NotReady;
+        }
         if policy.require_node_connection && !self.node_connected {
             return ReadinessState::NotReady;
         }

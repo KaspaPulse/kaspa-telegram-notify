@@ -9,6 +9,8 @@ pub enum Command {
     Admin,
     #[command(description = "Show the guide and features.")]
     Help,
+    #[command(description = "Show the live production version and build identity.")]
+    Version,
     #[command(description = "Add a wallet: /add <address>")]
     Add(String),
     #[command(description = "Remove a wallet: /remove <address>")]

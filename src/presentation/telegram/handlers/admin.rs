@@ -1105,9 +1105,8 @@ pub async fn render_subscriber_detail(
                 if monitoring { "🟢" } else { "⚪" }
             ));
         }
-        let node = crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter {
-            client: context.rpc.clone(),
-        };
+        let node =
+            crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter::new(context.rpc.clone());
         let price = context.current_kas_usd_price().await;
         let mut total_sompi = 0u64;
         let mut all_balances = true;

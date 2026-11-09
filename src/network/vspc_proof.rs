@@ -31,8 +31,25 @@ fn apply_delta_memory(
 /// Persistent checkpoint and matched Coinbase metadata are written in one DB transaction.
 /// A one-minute rewind is used on restart so records that arrived immediately
 /// after a VSPC delta are not lost across a WSL interruption.
+async fn selected_pnn(
+    primary: &Arc<KaspaRpcAdapter>,
+    registry: &Option<Arc<crate::infrastructure::node::source_registry::SourceRegistry>>,
+) -> Option<(
+    Arc<KaspaRpcAdapter>,
+    Option<crate::infrastructure::node::source_registry::SelectedPnn>,
+)> {
+    match registry {
+        Some(registry) => {
+            let selected = registry.selected().await?;
+            Some((selected.source.clone(), Some(selected)))
+        }
+        None => Some((primary.clone(), None)),
+    }
+}
+
 pub async fn run_indexer(
     node: Arc<KaspaRpcAdapter>,
+    pool: Option<Arc<crate::infrastructure::node::source_registry::SourceRegistry>>,
     db: Arc<PostgresRepository>,
     cancellation: CancellationToken,
 ) {
@@ -71,8 +88,18 @@ pub async fn run_indexer(
             if cancellation.is_cancelled() {
                 return;
             }
-            match tokio::time::timeout(Duration::from_secs(12), node.client.get_block_dag_info())
-                .await
+            let Some((selected_node, _selection)) = selected_pnn(&node, &pool).await else {
+                tokio::select! {
+                    _ = cancellation.cancelled()=>return,
+                    _ = tokio::time::sleep(Duration::from_secs(2))=>{}
+                }
+                continue;
+            };
+            match tokio::time::timeout(
+                Duration::from_secs(12),
+                selected_node.client.get_block_dag_info(),
+            )
+            .await
             {
                 Ok(Ok(info)) => {
                     tracing::info!(
@@ -97,12 +124,19 @@ pub async fn run_indexer(
             _ = cancellation.cancelled()=>break,
             _ = interval.tick()=>{}
         }
-        if !node.client.is_connected() {
+        // OP067: acceptance indexer follows the EXACT healthy source
+        // selected by the single-writer UTXO scanner. When no source is
+        // eligible, hold the durable cursor instead of reading stale PNN.
+        let Some((selected_node, captured_selection)) = selected_pnn(&node, &pool).await else {
+            continue;
+        };
+        if !selected_node.client.is_connected() {
             continue;
         }
         let response = tokio::time::timeout(
             Duration::from_secs(12),
-            node.client
+            selected_node
+                .client
                 .get_virtual_chain_from_block(cursor, true, Some(10)),
         )
         .await;
@@ -180,6 +214,22 @@ pub async fn run_indexer(
             .iter()
             .map(|(txid, (block, _))| (txid.clone(), block.clone()))
             .collect();
+        // Keep the source selection + generation stable through the
+        // WHOLE DB checkpoint transaction. No other reader or source
+        // replacement may invalidate an accepted VSPC delta mid-commit.
+        let _generation_fence = if let (Some(registry), Some(captured)) =
+            (pool.as_ref(), captured_selection.as_ref())
+        {
+            let Some(fence) = registry.fence(captured).await else {
+                tracing::warn!(
+                    "[PNN VSPC] Source generation changed during RPC; discarding response, checkpoint unchanged."
+                );
+                continue;
+            };
+            Some(fence)
+        } else {
+            None
+        };
         if let Err(error) = db
             .apply_vspc_proof_delta(
                 &matches,

@@ -113,6 +113,24 @@ impl TelegramMenus {
                 Self::key(lang, "🌍 Language", "🌍 اللغة", "ui:language"),
                 Self::key(lang, "❔ Help", "❔ المساعدة", "cmd_help"),
             ],
+            vec![Self::key(lang, "📦 Version", "📦 الإصدار", "ui:release")],
+            vec![Self::key(lang, "🏠 Home", "🏠 الرئيسية", "ui:home")],
+        ])
+    }
+
+    pub fn release_markup(lang: Language, admin: bool) -> InlineKeyboardMarkup {
+        InlineKeyboardMarkup::new(vec![
+            vec![Self::key(lang, "🔄 Refresh", "🔄 تحديث", "ui:release")],
+            vec![Self::key(
+                lang,
+                if admin { "↩️ Admin" } else { "↩️ More" },
+                if admin {
+                    "↩️ الإدارة"
+                } else {
+                    "↩️ المزيد"
+                },
+                if admin { "ui:admin" } else { "ui:more" },
+            )],
             vec![Self::key(lang, "🏠 Home", "🏠 الرئيسية", "ui:home")],
         ])
     }
@@ -166,6 +184,12 @@ impl TelegramMenus {
                 "👥 Subscribers",
                 "👥 المشتركون",
                 "ui:admin_subs:0",
+            )],
+            vec![Self::key(
+                lang,
+                "📦 Live Release",
+                "📦 إصدار الإنتاج",
+                "ui:release",
             )],
             vec![Self::key(lang, "🏠 Home", "🏠 الرئيسية", "ui:home")],
         ])

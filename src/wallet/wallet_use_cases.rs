@@ -8,6 +8,7 @@ use crate::network::analyze_dag::AnalyzeDagUseCase;
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct WalletManagementUseCase {
     db: Arc<PostgresRepository>,
@@ -336,6 +337,21 @@ fn reward_analysis_timeout() -> std::time::Duration {
     parse_reward_analysis_timeout(value.as_deref())
 }
 
+// OP070: A queued, serialized public archive proof may wait up to 25s for
+// admission and up to 20s for the normal global cooldown before the 35s
+// verified fetch. Reserve a bounded child timeout for the ALREADY-DURABLE
+// newer Coinbase proof route only; preserve fast primary PNN fresh scans.
+fn proof_route_timeout(
+    configured: std::time::Duration,
+    already_durable_coinbase: bool,
+) -> std::time::Duration {
+    if already_durable_coinbase {
+        configured.max(std::time::Duration::from_secs(100))
+    } else {
+        configured
+    }
+}
+
 // A get_balance() call repeats the identical get_utxos_by_addresses RPC already
 // performed by the scanner. Reuse that verified snapshot once per wallet instead
 // of issuing a redundant RPC for every reward while the PNN is congested.
@@ -368,6 +384,42 @@ fn truncate_reward_batch<T>(items: &mut Vec<T>, limit: usize) -> usize {
     let deferred = items.len().saturating_sub(limit);
     items.truncate(limit);
     deferred
+}
+
+// A preexisting proof is historical even while its Coinbase UTXO is unspent.
+fn route_existing_proof_to_historical(
+    seen_before: bool,
+    persisted: &HashSet<String>,
+    outpoint: &str,
+) -> bool {
+    !seen_before && persisted.contains(outpoint)
+}
+
+// OP063: keep the live lane reserved after ALL historical candidates are loaded.
+fn fair_reward_lane_counts(fresh: usize, historical: usize, limit: usize) -> (usize, usize) {
+    let limit = limit.max(1);
+    let reserved_fresh = fresh.min(limit.div_ceil(2));
+    let historical_first = historical.min(limit - reserved_fresh);
+    let extra_fresh = (fresh - reserved_fresh).min(limit - reserved_fresh - historical_first);
+    let total_fresh = reserved_fresh + extra_fresh;
+    let total_historical = historical_first
+        + (historical - historical_first).min(limit - total_fresh - historical_first);
+    (total_fresh, total_historical)
+}
+
+static LAST_PROOF_BACKLOG_LOG_TS: AtomicU64 = AtomicU64::new(0);
+static LAST_REWARD_BATCH_LOG_TS: AtomicU64 = AtomicU64::new(0);
+
+// No timer, async task, or sleep: just suppress duplicate WARN lines.
+// Metrics retain event counts for the complete interval.
+fn periodic_warning_due(last: &AtomicU64) -> bool {
+    let now = crate::infrastructure::metrics::now_unix_secs();
+    let previous = last.load(Ordering::Relaxed);
+    if now.saturating_sub(previous) < 60 {
+        return false;
+    }
+    last.compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
 }
 
 // A fixed, owner-approved one-time migration boundary. Never use a moving
@@ -481,6 +533,10 @@ impl UtxoMonitorService {
                 return Err(e);
             }
         };
+        // One read-only snapshot per wallet scan; old unspent Coinbase rows
+        // must go through the same bounded proof lane as old spent rows.
+        let persisted_proof_outpoints =
+            self.db.get_awaiting_proof_outpoints(wallet_address).await?;
         crate::infrastructure::resilience::runtime::task_stage("wallet_cache_lock");
         let mut known_mem = self.known_utxos.lock(wallet_address).await;
         crate::infrastructure::resilience::runtime::task_stage("reward_state_db_work");
@@ -499,6 +555,15 @@ impl UtxoMonitorService {
 
             let seen_before =
                 known_mem.contains(&utxo.outpoint) || known_db.contains(&utxo.outpoint);
+            if route_existing_proof_to_historical(
+                seen_before,
+                &persisted_proof_outpoints,
+                &utxo.outpoint,
+            ) {
+                // Already durable: do not claim or re-upsert here; recovery lane
+                // selects it fairly after fresh work is reserved.
+                continue;
+            }
 
             // Cutover authorized by owner: historical (pre-cutover) outputs
             // must not be re-analyzed forever. Persist their outpoints as seen
@@ -680,19 +745,47 @@ impl UtxoMonitorService {
         if truncate_reward_batch(&mut new_rewards, live_budget) > 0 && unpersisted_deferred {
             completed_without_errors = false;
         }
-        // Rehydrate only strict-mode records. Never replay archived 'pending'.
+        // Only strict-proof rows are eligible. Legacy pending rewards stay untouched.
+        // Critically, DO NOT claim historical rows before allocating processing slots.
         let proof_backlog = self.db.get_awaiting_block_proof(wallet_address).await?;
-        let mut recovered_outpoints = std::collections::HashSet::new();
+        let mut historical_candidates = Vec::new();
         for reward in proof_backlog {
             if !known_mem.contains(&reward.outpoint)
                 && !known_db.contains(&reward.outpoint)
                 && !new_rewards
                     .iter()
                     .any(|new| new.outpoint == reward.outpoint)
-                && self
-                    .db
-                    .claim_awaiting_block_proof(wallet_address, &reward.outpoint)
-                    .await?
+            {
+                historical_candidates.push(reward);
+            }
+        }
+        // Fresh lane is ordered internally by DAA; archived lane preserves the
+        // database's oldest-last-check order, independent of fresh lane.
+        new_rewards.sort_unstable_by(|a, b| {
+            a.block_daa_score
+                .cmp(&b.block_daa_score)
+                .then_with(|| a.outpoint.cmp(&b.outpoint))
+        });
+        let (fresh_count, historical_count) = fair_reward_lane_counts(
+            new_rewards.len(),
+            historical_candidates.len(),
+            reward_batch_limit(),
+        );
+        let unpersisted_deferred = new_rewards
+            .iter()
+            .skip(fresh_count)
+            .any(|reward| !reward.is_coinbase);
+        let deferred = new_rewards.len().saturating_sub(fresh_count)
+            + historical_candidates.len().saturating_sub(historical_count);
+        new_rewards.truncate(fresh_count);
+        historical_candidates.truncate(historical_count);
+
+        let mut recovered_outpoints = std::collections::HashSet::new();
+        for reward in historical_candidates {
+            if self
+                .db
+                .claim_awaiting_block_proof(wallet_address, &reward.outpoint)
+                .await?
             {
                 recovered_outpoints.insert(reward.outpoint.clone());
                 new_rewards.push(reward);
@@ -705,28 +798,17 @@ impl UtxoMonitorService {
                 completed_without_errors,
             });
         }
-
-        // Oldest accepted rewards first: retries make forward progress across
-        // scans without losing any unprocessed outpoint or skipping dedup.
-        new_rewards.sort_unstable_by(|a, b| {
-            a.block_daa_score
-                .cmp(&b.block_daa_score)
-                .then_with(|| a.outpoint.cmp(&b.outpoint))
-        });
-        let unpersisted_deferred = new_rewards
-            .iter()
-            .skip(reward_batch_limit())
-            .any(|reward| !reward.is_coinbase);
-        let deferred = truncate_reward_batch(&mut new_rewards, reward_batch_limit());
         if deferred > 0 {
-            // A durable proof backlog must not poison /readyz indefinitely.
             completed_without_errors &= !unpersisted_deferred;
-            tracing::warn!(
-                wallet = %crate::utils::format_short_wallet(wallet_address),
-                batch = new_rewards.len(),
-                deferred,
-                "[REWARD BATCH] Bounded wallet backlog; deferred rewards retain their unprocessed outpoints for the next scan."
-            );
+            crate::infrastructure::metrics::record_reward_batch_deferred(deferred as u64);
+            if periodic_warning_due(&LAST_REWARD_BATCH_LOG_TS) {
+                tracing::warn!(
+                    wallet = %crate::utils::format_short_wallet(wallet_address),
+                    processing = new_rewards.len(),
+                    deferred,
+                    "OP063 [REWARD BATCH] Deferred slots, fair live lane guaranteed; counters are in /metrics."
+                );
+            }
         }
 
         // Reward analysis is a child of this wallet scan. Keep the children
@@ -782,8 +864,12 @@ impl UtxoMonitorService {
                     }
                 }
 
-                let analysis = tokio::time::timeout(
+                let route_deadline = proof_route_timeout(
                     reward_analysis_deadline,
+                    recovered_proof_backlog && utxo.is_coinbase,
+                );
+                let analysis = tokio::time::timeout(
+                    route_deadline,
                     analyzer.execute_with_archive_recovery(
                         &utxo.transaction_id,
                         &wallet,
@@ -833,7 +919,7 @@ impl UtxoMonitorService {
                                 crate::utils::format_short_wallet(&utxo.transaction_id);
                             let error_text = format!(
                                 "DAG analysis timed out after {} seconds",
-                                reward_analysis_deadline.as_secs()
+                                route_deadline.as_secs()
                             );
 
                             let mut rpc_error_event =
@@ -847,7 +933,7 @@ impl UtxoMonitorService {
 
                             tracing::error!(
                                 "[DAG TIMEOUT] Reward analysis exceeded {}s. tx={} wallet={}",
-                                reward_analysis_deadline.as_secs(),
+                                route_deadline.as_secs(),
                                 txid_masked,
                                 wallet_masked
                             );
@@ -861,11 +947,14 @@ impl UtxoMonitorService {
                     utxo.is_coinbase, &acc_block_hash,
                     mined_block_hash.as_deref(), &extracted_worker, block_time_ms
                 ) {
-                    tracing::warn!(
-                        "[PROOF BACKLOG] Full verified block and worker details not yet available; wallet={} tx={}; no Telegram alert is enqueued.",
-                        crate::utils::format_short_wallet(&wallet),
-                        crate::utils::format_short_wallet(&utxo.transaction_id),
-                    );
+                    crate::infrastructure::metrics::record_proof_incomplete();
+                    if periodic_warning_due(&LAST_PROOF_BACKLOG_LOG_TS) {
+                        tracing::warn!(
+                            "[PROOF BACKLOG] Incomplete verified proof, no Telegram alert enqueued; see /metrics. wallet={} tx={}",
+                            crate::utils::format_short_wallet(&wallet),
+                            crate::utils::format_short_wallet(&utxo.transaction_id),
+                        );
+                    }
                     // Not a failed scan. Deferred alerts remain in PostgreSQL
                     // and are resolved by subsequent in-process scan triggers.
                     return (None, true);
@@ -1039,6 +1128,41 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn op063_existing_unspent_proof_cannot_reenter_fresh_reward_lane() {
+        let existing = std::collections::HashSet::from(["old-outpoint".to_string()]);
+        assert!(route_existing_proof_to_historical(
+            false,
+            &existing,
+            "old-outpoint"
+        ));
+        assert!(!route_existing_proof_to_historical(
+            true,
+            &existing,
+            "old-outpoint"
+        ));
+        assert!(!route_existing_proof_to_historical(
+            false,
+            &existing,
+            "brand-new-outpoint"
+        ));
+        // The live scan redirects any persisted proof row even while it
+        // remains in the node's UTXO set; previously the same row re-entered
+        // as a fresh reward after the 45s backoff.
+    }
+
+    #[test]
+    fn op063_live_lane_survives_historical_daa_sort_and_claims_only_selected() {
+        assert_eq!(fair_reward_lane_counts(5, 6, 2), (1, 1));
+        assert_eq!(fair_reward_lane_counts(1, 72, 2), (1, 1));
+        assert_eq!(fair_reward_lane_counts(2, 6, 1), (1, 0));
+        assert_eq!(fair_reward_lane_counts(0, 72, 2), (0, 2));
+        assert_eq!(fair_reward_lane_counts(7, 0, 2), (2, 0));
+        assert_eq!(fair_reward_lane_counts(1, 0, 2), (1, 0));
+        assert_eq!(fair_reward_lane_counts(10, 3, 3), (2, 1));
+        assert_eq!(fair_reward_lane_counts(0, 0, 2), (0, 0));
+    }
+
+    #[test]
     fn deferred_durable_proof_does_not_falsely_mark_scan_failed() {
         assert!(merge_scan_task_status(true, true));
         assert!(!merge_scan_task_status(true, false));
@@ -1179,5 +1303,33 @@ mod dag_payout_fallback_tests {
         assert!(nonce.is_empty());
         assert!(worker.is_empty());
         assert_eq!(time, 0);
+    }
+}
+
+#[cfg(test)]
+mod op070_proof_route_deadline_tests {
+    use super::*;
+    use std::time::Duration;
+    #[test]
+    fn already_durable_coinbase_waits_for_fair_archive_admission() {
+        assert_eq!(
+            proof_route_timeout(Duration::from_secs(45), true),
+            Duration::from_secs(100)
+        );
+        assert_eq!(
+            proof_route_timeout(Duration::from_secs(120), true),
+            Duration::from_secs(120)
+        );
+    }
+    #[test]
+    fn fresh_reward_and_transfer_deadlines_are_not_widened() {
+        assert_eq!(
+            proof_route_timeout(Duration::from_secs(45), false),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            proof_route_timeout(Duration::from_secs(10), false),
+            Duration::from_secs(10)
+        );
     }
 }

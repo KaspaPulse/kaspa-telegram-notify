@@ -202,19 +202,37 @@ pub fn spawn_node_monitor(
     ctx: AppContext,
     bot: Bot,
     token: CancellationToken,
-    standby: Option<std::sync::Arc<crate::infrastructure::node::kaspa_adapter::KaspaRpcAdapter>>,
+    has_reward_alternate: bool,
 ) {
     crate::infrastructure::resilience::runtime::spawn_resilient(
         "node_connectivity_monitor",
         async move {
             let mut failed_attempts = 0;
             let mut is_disconnected = false;
+            let mut admin_outage_notice_sent = false;
             let mut monitor_paused_live_sync = false;
-            let Some(initial_connected) =
-                run_until_cancelled(&token, async { ctx.rpc.connect(None).await.is_ok() }).await
-            else {
-                tracing::info!("[NODE] Shutdown requested before initial connection completed.");
-                return;
+            // Incident OP090: one *actual* loss of reward-pool availability
+            // creates one durable incident; flapping of unrelated auxiliary
+            // primary while the verified writer scans must not pollute DB.
+            let mut reward_pool_outage_reported = false;
+            // OP066: Main preflight already connected the public wRPC client.
+            // Calling connect(None) a second time unconditionally forcibly
+            // disconnects its current WebSocket and registered subscriptions.
+            // The monitor MUST be a passive observer when the transport is up.
+            let initial_connected = if ctx.rpc.is_connected() {
+                true
+            } else {
+                // Initial preflight may have failed while the public resolver
+                // was temporarily unavailable. Only this monitor may try one
+                // startup recovery if there is no established connection.
+                let Some(connected) =
+                    run_until_cancelled(&token, async { ctx.rpc.connect(None).await.is_ok() })
+                        .await
+                else {
+                    tracing::info!("[NODE] Shutdown before startup recovery.");
+                    return;
+                };
+                connected
             };
             crate::infrastructure::observability::set_node_connected(initial_connected);
 
@@ -238,24 +256,58 @@ pub fn spawn_node_monitor(
                         }
 
                         if health_check.is_err() || health_check.as_ref().is_ok_and(|inner| inner.is_err()) {
-                            crate::infrastructure::observability::set_node_connected(false);
+                            // OP068: when an independent public PNN UTXO
+                            // pool is available, the UTXO scanner owns the
+                            // aggregate node_connected readiness gauge.
+                            // Primary-only monitor must not overwrite its
+                            // healthy selected source with a false outage.
+                            if !has_reward_alternate {
+                                crate::infrastructure::observability::set_node_connected(false);
+                            }
                             failed_attempts += 1;
-                            tracing::error!("[NODE ALERT] RPC Connection Lost! Attempt {}...", failed_attempts);
-                            if let Err(error) = sqlx::query(
-                                "INSERT INTO bot_event_log (event_type, severity, status, error_message, metadata)
-                                 VALUES ($1, $2, 'node_unreachable', 'RPC connection lost', $3::jsonb)",
-                            )
-                            .bind(BotEventType::RpcError.as_str())
-                            .bind(EventSeverity::Error.as_str())
-                            .bind(format!(r#"{{"attempt":{}}}"#, failed_attempts))
-                            .execute(&ctx.pool)
-                            .await
-                            {
-                                crate::infrastructure::metrics::inc_db_errors();
-                                tracing::error!(
-                                    "[DATABASE ERROR] Failed to record RPC outage event: {}",
-                                    error
-                                );
+                            let reward_pool_healthy =
+                                crate::infrastructure::metrics::pnn_reward_source_ready();
+                            if reward_pool_healthy {
+                                // The primary still serves auxiliary lookups.
+                                // Keep its existing bounded reconnect policy,
+                                // but do not masquerade as a mining outage.
+                                if failed_attempts == 1 {
+                                    tracing::info!(
+                                        "[PNN AUXILIARY] Primary RPC temporarily unavailable; qualified reward pool and realtime selected source remain independent."
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        attempt = failed_attempts,
+                                        "[PNN AUXILIARY] Primary health probe failed; reward scanner remains independently healthy."
+                                    );
+                                }
+                                reward_pool_outage_reported = false;
+                            } else {
+                                tracing::error!("[NODE ALERT] RPC connection and reward pool unavailable; attempt {}...", failed_attempts);
+                                // One durable event per actual pool outage,
+                                // NOT one database write per minute or per
+                                // ancillary primary socket flap.
+                                if !reward_pool_outage_reported {
+                                    if let Err(error) = sqlx::query(
+                                        "INSERT INTO bot_event_log (event_type, severity, status, error_message, metadata)
+                                         VALUES ($1, $2, $3, 'Primary RPC and qualified reward pool unavailable', $4::jsonb)",
+                                    )
+                                    .bind(BotEventType::RpcError.as_str())
+                                    .bind(EventSeverity::Error.as_str())
+                                    .bind("node_unreachable")
+                                    .bind(format!(r#"{{"attempt":{}}}"#, failed_attempts))
+                                    .execute(&ctx.pool)
+                                    .await
+                                    {
+                                        crate::infrastructure::metrics::inc_db_errors();
+                                        tracing::error!(
+                                            "[DATABASE ERROR] Failed to record actual RPC outage event: {}",
+                                            error
+                                        );
+                                    } else {
+                                        reward_pool_outage_reported = true;
+                                    }
+                                }
                             }
 
                             if failed_attempts == 1 {
@@ -263,53 +315,104 @@ pub fn spawn_node_monitor(
                                 // A qualified standby is selected independently by the
                                 // UTXO failover state machine. Do not globally pause its scans.
                                 // Without one, retain the original safe-pause behavior.
-                                let status_text = if standby.is_some() {
+                                let status_text = if has_reward_alternate {
                                     "⚠️ <b>WARNING:</b> Primary public Kaspa PNN disconnected.\n🔄 Checking the independently qualified public standby.\n🛡️ Wallet alerts retain transactional deduplication."
                                 } else {
                                     monitor_paused_live_sync =
                                         ctx.live_sync_enabled.swap(false, Ordering::Relaxed);
                                     "⚠️ <b>WARNING:</b> Public Kaspa PNN RPC connection interrupted.\n⏸️ Wallet monitoring paused while reconnecting.\n🔄 Retrying another public endpoint automatically..."
                                 };
-                                if let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), status_text)
-                                    .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
+                                // OP069: an ancillary public wRPC socket may
+                                // disconnect while one of FIVE reward PNN
+                                // endpoints remains healthy. Do not spam the
+                                // owner with false "wallet monitoring paused".
+                                if !crate::infrastructure::metrics::pnn_reward_source_ready() {
+                                    admin_outage_notice_sent = true;
+                                    if let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), status_text)
+                                        .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
+                                } else {
+                                    tracing::info!("[NODE PRIMARY] Public subscription disconnected but reward PNN pool remains healthy; admin warning suppressed.");
+                                }
                             }
 
+                            // Escalate once when a previously healthy
+                            // reward pool ALSO becomes unavailable during a
+                            // prolonged primary outage.
+                            if !admin_outage_notice_sent
+                                && is_disconnected
+                                && !crate::infrastructure::metrics::pnn_reward_source_ready()
+                            {
+                                admin_outage_notice_sent = true;
+                                if let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), "🚨 <b>WARNING:</b> Public PNN subscription and all qualified reward sources are currently unavailable. Wallet monitoring is retrying safely.")
+                                    .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
+                            }
                             if failed_attempts % 10 == 0
+                                && admin_outage_notice_sent
+                                && !crate::infrastructure::metrics::pnn_reward_source_ready()
                                 && let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), format!("🚨 <b>CRITICAL:</b> Node still unreachable after {} attempts. Continuing to retry quietly...", failed_attempts))
                                     .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
 
-                            if run_until_cancelled(&token, ctx.rpc.connect(None)).await.is_none() {
-                                break;
+                            // The wRPC transport owns its normal reconnect loop.
+                            // A health timeout is NOT permission to forcibly
+                            // disconnect/recreate the shared WebSocket.
+                            // Only after 3 consecutive 60s failures, while the
+                            // transport still reports disconnected, attempt ONE
+                            // bounded recovery per 5 subsequent checks.
+                            if failed_attempts >= 3
+                                && (failed_attempts - 3) % 5 == 0
+                                && !ctx.rpc.is_connected()
+                            {
+                                crate::infrastructure::metrics::inc_pnn_forced_recoveries();
+                                tracing::warn!(
+                                    "[NODE RECOVERY] PNN remains disconnected after prolonged outage; one guarded transport recovery."
+                                );
+                                if run_until_cancelled(&token, ctx.rpc.connect(None)).await.is_none() {
+                                    break;
+                                }
                             }
                         } else {
-                            crate::infrastructure::observability::set_node_connected(true);
+                            // In five-source mode ONLY the selected source
+                            // scanner owns the aggregate node_connected gauge;
+                            // auxiliary primary recovery is not service readiness.
+                            if !has_reward_alternate {
+                                crate::infrastructure::observability::set_node_connected(true);
+                            }
                             if is_disconnected {
-                                tracing::info!("[NODE RECOVERED] RPC Tunnel stabilized.");
-                                if let Err(error) = sqlx::query(
-                                    "INSERT INTO bot_event_log (event_type, severity, status, metadata)
-                                     VALUES ($1, $2, 'recovered', $3::jsonb)",
-                                )
-                                .bind(BotEventType::RpcRecovered.as_str())
-                                .bind(EventSeverity::Info.as_str())
-                                .bind(format!(r#"{{"failed_attempts":{}}}"#, failed_attempts))
-                                .execute(&ctx.pool)
-                                .await
-                                {
-                                    crate::infrastructure::metrics::inc_db_errors();
-                                    tracing::error!(
-                                        "[DATABASE ERROR] Failed to record RPC recovery event: {}",
-                                        error
-                                    );
+                                if admin_outage_notice_sent {
+                                    tracing::info!("[NODE RECOVERED] RPC transport stabilized after confirmed reward-pool outage.");
+                                } else {
+                                    tracing::debug!("[PNN AUXILIARY] Primary RPC recovered; public reward pool was not interrupted.");
+                                }
+                                if admin_outage_notice_sent
+                                    && let Err(error) = sqlx::query(
+                                        "INSERT INTO bot_event_log (event_type, severity, status, metadata)
+                                         VALUES ($1, $2, $3, $4::jsonb)",
+                                    )
+                                    .bind(BotEventType::RpcRecovered.as_str())
+                                    .bind(EventSeverity::Info.as_str())
+                                    .bind("recovered")
+                                    .bind(format!(r#"{{"failed_attempts":{}}}"#, failed_attempts))
+                                    .execute(&ctx.pool)
+                                    .await
+                                    {
+                                        crate::infrastructure::metrics::inc_db_errors();
+                                        tracing::error!(
+                                            "[DATABASE ERROR] Failed to record real RPC recovery event: {}",
+                                            error
+                                        );
                                 }
                                 if monitor_paused_live_sync {
                                     ctx.live_sync_enabled.store(true, Ordering::Relaxed);
                                     monitor_paused_live_sync = false;
                                 }
-                                if let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), "✅ <b>RECOVERED:</b> Primary public Kaspa PNN RPC is connected again.\n▶️ Wallet monitoring is running.")
-                                    .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
+                                if admin_outage_notice_sent
+                                    && let Err(e) = bot.send_message(ChatId(ctx.admin_chat_id), "✅ <b>RECOVERED:</b> Primary public Kaspa PNN RPC is connected again.\n▶️ Wallet monitoring is running.")
+                                        .parse_mode(teloxide::types::ParseMode::Html).await { tracing::error!("[TELEGRAM ERROR] Bot API request failed: {}", e); }
 
                                 failed_attempts = 0;
                                 is_disconnected = false;
+                                admin_outage_notice_sent = false;
+                                reward_pool_outage_reported = false;
                             }
                         }
                     }

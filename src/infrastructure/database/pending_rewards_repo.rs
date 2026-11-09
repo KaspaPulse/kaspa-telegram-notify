@@ -3,6 +3,44 @@ use crate::domain::models::UtxoRecord;
 
 use super::postgres_adapter::PostgresRepository;
 
+// OP076: stable SQL expression shared by the queue reader and atomic claim.
+// The first three attempts remain as responsive as OP075 (45s).
+// Subsequent retries are reason-aware: with verified VSPC acceptance,
+// preserve up to 30-min attempts for missing canonical mined-block payload;
+// without acceptance, cap at 15min. Neither branch ever excludes a row.
+pub(crate) const OP076_RETRY_INTERVAL_SQL: &str = r#"make_interval(secs => CASE
+    WHEN attempts <= 3 THEN 45
+    WHEN (metadata->>'accepting_block_hash') ~ '^[a-fA-F0-9]{64}$' THEN
+        CASE WHEN attempts <= 10 THEN 120 WHEN attempts <= 40 THEN 300
+             WHEN attempts <= 120 THEN 900 ELSE 1800 END
+    ELSE CASE WHEN attempts <= 10 THEN 120 WHEN attempts <= 40 THEN 300
+              ELSE 900 END
+END)"#;
+
+/// Mirror the constant SQL delay table for exhaustive unit boundary checks.
+#[cfg(test)]
+fn op076_retry_secs(attempts: i64, has_accepted_hash: bool) -> u64 {
+    if attempts <= 3 {
+        45
+    } else if has_accepted_hash {
+        if attempts <= 10 {
+            120
+        } else if attempts <= 40 {
+            300
+        } else if attempts <= 120 {
+            900
+        } else {
+            1800
+        }
+    } else if attempts <= 10 {
+        120
+    } else if attempts <= 40 {
+        300
+    } else {
+        900
+    }
+}
+
 impl PostgresRepository {
     pub async fn ensure_pending_rewards_table(&self) -> Result<(), AppError> {
         sqlx::query(
@@ -172,22 +210,49 @@ impl PostgresRepository {
         Ok(attempted.is_some())
     }
 
-    /// Restore a confirmed reward even if its UTXO was spent before PNN gave proof.
-    /// Only the newly introduced strict-proof status is eligible for this recovery.
-    pub async fn get_awaiting_block_proof(
+    /// Snapshot strict-proof outpoints before the live scan: a persisted reward,
+    /// even if its UTXO is still unspent, is historical work and must never
+    /// steal the reserved fresh-reward slot by being re-upserted every 45s.
+    pub async fn get_awaiting_proof_outpoints(
         &self,
         wallet: &str,
-    ) -> Result<Vec<UtxoRecord>, AppError> {
-        let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
-            "SELECT outpoint,txid,amount,reward_daa_score FROM pending_rewards
-             WHERE wallet=$1 AND status='awaiting_block_proof'
-               AND last_checked_at < NOW()-INTERVAL '45 seconds'
-             ORDER BY last_checked_at,outpoint LIMIT 6",
+    ) -> Result<std::collections::HashSet<String>, AppError> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT outpoint FROM pending_rewards
+             WHERE wallet=$1 AND status='awaiting_block_proof'",
         )
         .bind(wallet)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Restore a confirmed reward even if its UTXO was spent before PNN gave proof.
+    /// Only the newly introduced strict-proof status is eligible for this recovery.
+    // OP064 fixed owner boundary: NEVER resurrect or notify a proof that
+    // existed before the audited OP063 production cutover at 17:30:32 UTC.
+    // This is a fixed event timestamp, never a moving date filter.
+    // Historical records remain durable, counted and untouched. Only fresh
+    // proof rows introduced after this boundary can enter the retry lane.
+    pub async fn get_awaiting_block_proof(
+        &self,
+        wallet: &str,
+    ) -> Result<Vec<UtxoRecord>, AppError> {
+        let query = format!(
+            "SELECT outpoint,txid,amount,reward_daa_score FROM pending_rewards
+             WHERE wallet=$1 AND status='awaiting_block_proof'
+               AND last_checked_at < NOW()-{OP076_RETRY_INTERVAL_SQL}
+               AND first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+             ORDER BY last_checked_at,outpoint LIMIT 6"
+        );
+        // SqlSafeStr audit: SQL is formatted from a compile-time constant
+        // OP076_RETRY_INTERVAL_SQL only; the wallet input remains a bind.
+        let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
+            .bind(wallet)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         rows.into_iter()
             .map(|(outpoint, transaction_id, amount, daa)| {
                 Ok(UtxoRecord {
@@ -213,18 +278,25 @@ impl PostgresRepository {
         wallet: &str,
         outpoint: &str,
     ) -> Result<bool, AppError> {
-        let claimed = sqlx::query_scalar::<_, String>(
+        // Repeat EXACTLY the same due interval and fixed cutover as the
+        // read-only candidate query. This row claim is the final atomic gate
+        // against concurrent wallet scans and historical backfill.
+        let query = format!(
             "UPDATE pending_rewards SET
                 last_checked_at=NOW(),attempts=attempts+1
              WHERE wallet=$1 AND outpoint=$2 AND status='awaiting_block_proof'
-               AND last_checked_at < NOW()-INTERVAL '45 seconds'
-             RETURNING outpoint",
-        )
-        .bind(wallet)
-        .bind(outpoint)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+               AND first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'
+               AND last_checked_at < NOW()-{OP076_RETRY_INTERVAL_SQL}
+             RETURNING outpoint"
+        );
+        // SqlSafeStr audit: only static CASE expression is interpolated;
+        // wallet + outpoint stay separately bound by SQLx.
+        let claimed = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(query))
+            .bind(wallet)
+            .bind(outpoint)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
         Ok(claimed.is_some())
     }
 
@@ -245,9 +317,18 @@ impl PostgresRepository {
         if !removed.is_empty() {
             sqlx::query(
                 "UPDATE pending_rewards
-                 SET metadata=metadata-'accepting_block_hash'
+                 SET metadata=metadata-'accepting_block_hash',
+                     attempts=CASE
+                       WHEN status='awaiting_block_proof'
+                         AND first_seen_at>=TIMESTAMPTZ '2026-11-05 17:30:32+00'
+                       THEN 0 ELSE attempts END,
+                     last_checked_at=CASE
+                       WHEN status='awaiting_block_proof'
+                         AND first_seen_at>=TIMESTAMPTZ '2026-11-05 17:30:32+00'
+                       THEN NOW()-INTERVAL '60 seconds'
+                       ELSE last_checked_at END
                  WHERE status IN ('pending','awaiting_block_proof')
-                 AND metadata->>'accepting_block_hash'=ANY($1)",
+                   AND metadata->>'accepting_block_hash'=ANY($1)",
             )
             .bind(removed)
             .execute(&mut *tx)
@@ -260,7 +341,20 @@ impl PostgresRepository {
             sqlx::query(
                 "UPDATE pending_rewards AS p
                  SET metadata=jsonb_set(p.metadata,'{accepting_block_hash}',
-                      to_jsonb(v.accepting_hash),true)
+                      to_jsonb(v.accepting_hash),true),
+                     attempts=CASE
+                       WHEN p.status='awaiting_block_proof'
+                         AND p.first_seen_at>=TIMESTAMPTZ '2026-11-05 17:30:32+00'
+                         AND lower(p.metadata->>'accepting_block_hash')
+                             IS DISTINCT FROM lower(v.accepting_hash)
+                       THEN 0 ELSE p.attempts END,
+                     last_checked_at=CASE
+                       WHEN p.status='awaiting_block_proof'
+                         AND p.first_seen_at>=TIMESTAMPTZ '2026-11-05 17:30:32+00'
+                         AND lower(p.metadata->>'accepting_block_hash')
+                             IS DISTINCT FROM lower(v.accepting_hash)
+                       THEN NOW()-INTERVAL '60 seconds'
+                       ELSE p.last_checked_at END
                  FROM UNNEST($1::text[],$2::text[]) AS v(txid,accepting_hash)
                  WHERE p.txid=v.txid AND p.status IN ('pending','awaiting_block_proof')",
             )
@@ -347,5 +441,43 @@ impl PostgresRepository {
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         Ok(result.rows_affected())
+    }
+}
+
+// OP076 fail-closed retry policy: bounded, no terminal suppression.
+#[cfg(test)]
+mod op076_proof_retry_policy_tests {
+    use super::*;
+    #[test]
+    fn all_retries_remain_possible_and_bounds_are_monotonic() {
+        for accepted in [false, true] {
+            let mut previous = 0;
+            for attempts in 0..=5000 {
+                let delay = op076_retry_secs(attempts, accepted);
+                assert!((45..=1800).contains(&delay));
+                assert!(delay >= previous, "backoff must be monotonic");
+                previous = delay;
+            }
+        }
+        assert_eq!(op076_retry_secs(684, true), 1800);
+        assert_eq!(op076_retry_secs(610, true), 1800);
+        assert_eq!(op076_retry_secs(124, false), 900);
+        assert_eq!(op076_retry_secs(1, true), 45);
+    }
+    #[test]
+    fn first_three_attempts_and_reason_specific_boundaries() {
+        for attempted in [0, 1, 2, 3] {
+            assert_eq!(op076_retry_secs(attempted, true), 45);
+            assert_eq!(op076_retry_secs(attempted, false), 45);
+        }
+        assert_eq!(op076_retry_secs(4, true), 120);
+        assert_eq!(op076_retry_secs(10, true), 120);
+        assert_eq!(op076_retry_secs(11, true), 300);
+        assert_eq!(op076_retry_secs(40, true), 300);
+        assert_eq!(op076_retry_secs(41, true), 900);
+        assert_eq!(op076_retry_secs(120, true), 900);
+        assert_eq!(op076_retry_secs(121, true), 1800);
+        assert_eq!(op076_retry_secs(41, false), 900);
+        assert_eq!(op076_retry_secs(10000, false), 900);
     }
 }

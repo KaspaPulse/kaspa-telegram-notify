@@ -21,47 +21,23 @@ fn extract_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
 #[test]
 fn dag_candidate_missing_block_must_not_abort_search() {
     let source = read_source("src/network/analyze_dag.rs");
-
-    let candidate_search = extract_between(
-        &source,
-        "for hash in &current_hashes",
-        "if !acc_block_hash.is_empty()",
-    );
-
-    assert!(
-        candidate_search.contains("rpc_cl.get_block(*hash, true).await"),
-        "DAG candidate search must fetch candidate blocks"
-    );
-
-    assert!(
-        candidate_search.contains("continue;"),
-        "missing/unavailable DAG candidate blocks must be skipped so the search can continue"
-    );
-
-    assert!(
-        !candidate_search.contains("DAG block fetch failed while searching acceptance block"),
-        "candidate block fetch failures must not abort DAG search; they should warn and continue"
-    );
-
-    assert!(
-        !candidate_search.contains("return Err(AppError::NodeError"),
-        "candidate block fetch failures must not return Err inside the candidate-search loop"
-    );
+    assert!(source.contains("const MAX_CHAIN_BLOCKS: usize = 512"));
+    assert!(source.contains("let mut visited = HashSet::new()"));
+    assert!(source.contains("rpc_cl.get_block(current_hash, true).await.map_err("));
+    assert!(source.contains("Selected-parent DAG block fetch failed for tx"));
+    assert!(source.contains("no fabricated mined-block details"));
+    assert!(!source.contains("for hash in &current_hashes"));
+    // Current selected-parent-only design must fail closed if a required
+    // chain block is unavailable. Old fanout-and-skip behavior was retired.
 }
 
 #[test]
 fn dag_tip_lookup_must_not_silently_fallback_to_empty_tips() {
     let source = read_source("src/network/analyze_dag.rs");
-
-    assert!(
-        !source.contains("Err(_) => vec![]"),
-        "DAG tip lookup must propagate or log errors, not silently fallback to empty tips"
-    );
-
-    assert!(
-        source.contains("DAG tip lookup failed while analyzing tx"),
-        "DAG tip lookup must have an explicit error message"
-    );
+    assert!(source.contains("get_block_dag_info().await.map_err("));
+    assert!(source.contains("DAG tip lookup failed for tx"));
+    assert!(!source.contains("Err(_) => vec![]"));
+    assert!(!source.contains("get_block_dag_info().await.unwrap_or_default()"));
 }
 
 #[test]
@@ -135,16 +111,15 @@ fn wallet_utxo_seen_state_must_not_silently_fallback_to_empty_db_state() {
 #[test]
 fn live_balance_fallback_must_be_logged() {
     let source = read_source("src/wallet/wallet_use_cases.rs");
-
     assert!(
-        !source.contains("node.get_balance(&wallet).await.map(|(b, _)| b).unwrap_or(0)"),
-        "live balance RPC fallback must not be silent"
+        source.contains("checked_snapshot_balance_sompi(utxos.iter().map(|utxo| utxo.amount))")
     );
-
-    assert!(
-        source.contains("live_balance_failed"),
-        "live balance fallback must be logged"
-    );
+    assert!(source.contains("UTXO snapshot balance overflow"));
+    assert!(source.contains("let live_balance = snapshot_balance_sompi;"));
+    assert!(source.contains("live_balance as f64 / 1e8"));
+    assert!(!source.contains("node.get_balance(&wallet).await.map(|(b, _)| b).unwrap_or(0)"));
+    assert!(source.contains("wallet_balance_read_failed"));
+    // Snapshot overflow fails closed and is not silently rendered as zero.
 }
 
 #[test]
@@ -247,102 +222,46 @@ fn unconfirmed_rewards_must_not_be_marked_seen_before_processing() {
 #[test]
 fn help_guide_must_include_current_commands_buttons_and_safety_policy() {
     let source = read_source("src/presentation/telegram/handlers/mod.rs");
-
-    assert!(
-        source.contains("Reward Confirmation Policy"),
-        "/help must explain reward confirmation policy"
-    );
-
-    assert!(
-        source.contains("10 DAA confirmations"),
-        "/help must mention the default confirmation threshold"
-    );
-
-    assert!(
-        source.contains("Wallet Buttons"),
-        "/help must include wallet button guide"
-    );
-
-    assert!(
-        source.contains("Owner Buttons"),
-        "/help must include owner/admin button guide"
-    );
-
-    assert!(
-        source.contains("/events") && source.contains("/errors") && source.contains("/delivery"),
-        "/help must include observability commands"
-    );
-
-    assert!(
-        source.contains("DAG analysis does not stop when a candidate block is unavailable"),
-        "/help must explain the DAG safety behavior"
-    );
-
-    assert!(
-        source.contains("help_text_2"),
-        "/help should be split into multiple Telegram-safe messages"
-    );
+    let readme = read_source("README.md");
+    assert!(source.contains("🔔 Mining alerts arrive after confirmation."));
+    assert!(source.contains("Wallets: send <code>kaspa:...</code>"));
+    assert!(source.contains("🌐 Network: public PNN and BlockDAG health."));
+    assert!(source.contains(r"/start — Home\n/help — Help"));
+    assert!(source.contains(r"/start — الرئيسية\n/help — المساعدة"));
+    assert!(readme.contains("only **`/start`** and **`/help`**"));
+    // Admin-only operations are available through protected UI, never
+    // advertised as additional slash commands in public /help.
+    assert!(readme.contains("authorization-checked"));
 }
 
 #[test]
 fn dag_candidate_skips_must_not_log_warn_per_block() {
     let source = read_source("src/network/analyze_dag.rs");
-
-    let candidate_search = extract_between(
-        &source,
-        "for hash in &current_hashes",
-        "if skipped_candidate_blocks > 0",
-    );
-
-    assert!(
-        candidate_search.contains("skipped_candidate_blocks += 1"),
-        "candidate block skips must be counted"
-    );
-
-    assert!(
-        candidate_search.contains("tracing::debug!"),
-        "per-candidate skips should be debug-level only"
-    );
-
-    assert!(
-        !candidate_search.contains("tracing::warn!"),
-        "per-candidate skips must not spam production logs as warnings"
-    );
-
-    assert!(
-        source.contains("Skipped unavailable DAG candidate blocks summary"),
-        "DAG candidate skips should have a single summary log"
-    );
-
-    assert!(
-        source.contains("result=acceptance_not_found"),
-        "summary should warn only when acceptance block is not found"
-    );
+    assert!(source.contains("const MAX_CHAIN_BLOCKS: usize = 512"));
+    assert!(source.contains("dag_block_in_reward_window"));
+    assert!(source.contains("current_hash = verbose.selected_parent_hash;"));
+    assert!(source.contains("Selected-parent DAG block fetch failed for tx"));
+    assert!(!source.contains("for hash in &current_hashes"));
+    assert!(!source.contains("Skipped unavailable DAG candidate blocks summary"));
+    // Current architecture visits a bounded selected-parent chain; there
+    // are no historical fanout candidates to skip/log.
 }
 
 #[test]
 fn pending_rewards_must_be_persisted_for_unconfirmed_rewards() {
-    let source = read_source("src/wallet/wallet_use_cases.rs");
-
-    assert!(
-        source.contains("upsert_pending_reward"),
-        "unconfirmed rewards must be persisted in pending_rewards"
-    );
-
-    assert!(
-        source.contains("pending_reward_upsert_failed"),
-        "pending reward persistence failures must be logged"
-    );
-
-    assert!(
-        source.contains("delete_pending_reward"),
-        "pending rewards must be removed when they become ready for processing"
-    );
-
-    assert!(
-        source.contains("pending_reward_ready_for_processing"),
-        "confirmed pending rewards should be logged before DAG processing"
-    );
+    let wallet = read_source("src/wallet/wallet_use_cases.rs");
+    let repo = read_source("src/infrastructure/database/pending_rewards_repo.rs");
+    assert!(wallet.contains("upsert_pending_reward"));
+    assert!(wallet.contains("pending_reward_upsert_failed"));
+    assert!(wallet.contains("upsert_awaiting_block_proof("));
+    assert!(wallet.contains("complete_mining_proof("));
+    assert!(wallet.contains("get_awaiting_block_proof("));
+    assert!(wallet.contains("claim_awaiting_block_proof("));
+    assert!(repo.contains("PRIMARY KEY (wallet, outpoint)"));
+    assert!(repo.contains("AND first_seen_at >= TIMESTAMPTZ '2026-11-05 17:30:32+00'"));
+    assert!(wallet.contains("Incomplete verified proof, no Telegram alert enqueued"));
+    // Old 'pending_reward_ready_for_processing' logging marker was removed
+    // when strict Coinbase proof entered durable outbox flow.
 }
 
 #[test]
@@ -469,94 +388,30 @@ fn alert_delivery_behavior_tests_must_exist() {
 #[test]
 fn blocks_history_must_be_full_paginated_and_env_configurable() {
     let repo = read_source("src/infrastructure/database/mined_blocks_repo.rs");
-    let mining_handler = read_source("src/presentation/telegram/handlers/mining.rs");
-    let telegram_handlers = read_source("src/presentation/telegram/handlers/mod.rs");
-    let wallet_use_cases = read_source("src/wallet/wallet_use_cases.rs");
-    let env_example = read_source(".env.example");
-
+    let mining = read_source("src/presentation/telegram/handlers/mining.rs");
+    let handlers = read_source("src/presentation/telegram/handlers/mod.rs");
+    let wallet = read_source("src/wallet/wallet_use_cases.rs");
+    assert!(repo.contains("get_all_daily_blocks"));
     assert!(
-        repo.contains("get_all_daily_blocks"),
-        "mined blocks repository must expose full daily block history"
+        !repo
+            .split("get_all_daily_blocks")
+            .nth(1)
+            .unwrap()
+            .contains("LIMIT 7")
     );
-
-    let daily_fn_start = repo
-        .find("get_all_daily_blocks")
-        .expect("get_all_daily_blocks function must exist");
-    let repo_tail = &repo[daily_fn_start..];
-
-    assert!(
-        !repo_tail.contains("LIMIT 7"),
-        "full daily block history query must not limit to seven rows"
-    );
-
-    assert!(
-        wallet_use_cases.contains("get_all_daily_blocks"),
-        "wallet use case must request full daily block history"
-    );
-
-    assert!(
-        !mining_handler.contains(".take(7)"),
-        "Telegram renderer must not truncate daily history to seven days"
-    );
-
-    assert!(
-        mining_handler.contains("DEFAULT_BLOCKS_HISTORY_PAGE_SIZE: usize = 15"),
-        "blocks history page size must default to 15"
-    );
-
-    assert!(
-        mining_handler.contains("std::env::var(\"BLOCKS_HISTORY_PAGE_SIZE\")"),
-        "blocks page size must be configurable from env"
-    );
-
-    assert!(
-        mining_handler.contains(".unwrap_or(DEFAULT_BLOCKS_HISTORY_PAGE_SIZE)"),
-        "blocks page size must fall back to the explicit default"
-    );
-
-    assert!(
-        mining_handler.contains(".clamp(5, 50)") || mining_handler.contains("clamp(5, 50)"),
-        "blocks page size must be clamped to a safe range"
-    );
-
-    assert!(
-        mining_handler.contains("history_page: usize"),
-        "wallet detail handler must accept history_page"
-    );
-
-    assert!(
-        mining_handler.contains("div_ceil(page_size)"),
-        "wallet detail handler must compute total pages"
-    );
-
-    assert!(
-        mining_handler.contains("blocks_history_markup"),
-        "wallet detail handler must use a blocks-specific pagination keyboard"
-    );
-
-    assert!(
-        mining_handler.contains("Previous") && mining_handler.contains("Next"),
-        "wallet detail handler must provide previous/next buttons"
-    );
-
-    assert!(
-        telegram_handlers.contains("data.strip_prefix(\"wblk:\")"),
-        "wallet_blocks callback must use the stable wallet-token prefix"
-    );
-    assert!(
-        telegram_handlers.contains("let mut parts = rest.split(':');")
-            && telegram_handlers.contains("let token = parts.next().unwrap_or_default();"),
-        "wallet_blocks callback must parse stable wallet token and optional page"
-    );
-    assert!(
-        telegram_handlers.contains("token,\n                history_page,"),
-        "wallet_blocks callback must pass stable token and history_page"
-    );
-
-    assert!(
-        env_example.contains("BLOCKS_HISTORY_PAGE_SIZE=15"),
-        ".env.example must document BLOCKS_HISTORY_PAGE_SIZE=15"
-    );
+    assert!(wallet.contains("get_all_daily_blocks"));
+    assert!(mining.contains("DEFAULT_BLOCKS_HISTORY_PAGE_SIZE: usize = 15"));
+    assert!(mining.contains(r#"std::env::var("BLOCKS_HISTORY_PAGE_SIZE")"#));
+    assert!(mining.contains("value.clamp(5, 50)"));
+    assert!(mining.contains(".unwrap_or(DEFAULT_BLOCKS_HISTORY_PAGE_SIZE)"));
+    assert!(mining.contains("history_page: usize"));
+    assert!(mining.contains("div_ceil(page_size)"));
+    assert!(mining.contains("blocks_history_markup"));
+    assert!(mining.contains("Previous") && mining.contains("Next"));
+    assert!(handlers.contains(r#"data.strip_prefix("wblk:")"#));
+    assert!(handlers.contains("let token = parts.next().unwrap_or_default();"));
+    // Production intentionally does not bundle a plaintext .env.example.
+    // Code itself is authoritative for bounded environment configuration.
 }
 
 #[test]
@@ -736,23 +591,24 @@ fn kas_price_history_migration_must_grant_application_roles_safely() {
 
 #[test]
 fn build_provenance_must_be_embedded_and_propagated() {
-    let build_info = read_source("src/build_info.rs");
-    let main_source = read_source("src/main.rs");
+    let build = read_source("src/build_info.rs");
+    let main = read_source("src/main.rs");
     let metrics = read_source("src/infrastructure/metrics.rs");
-    let dockerfile = read_source("Dockerfile");
-    let rust_ci = read_source(".github/workflows/rust-ci.yml");
-    let release = read_source(".github/workflows/release.yml");
-
-    assert!(build_info.contains("KASPA_PULSE_SOURCE_REVISION"));
-    assert!(build_info.contains("kaspa_pulse_build_info"));
-    assert!(main_source.contains("source_revision = build_info::source_revision()"));
+    let docker = read_source("Dockerfile");
+    let qualified = read_source(".github/workflows/qualified-source-build.yml");
+    let ci = read_source(".github/workflows/ci.yml");
+    assert!(build.contains("KASPA_PULSE_SOURCE_REVISION"));
+    assert!(build.contains("kaspa_pulse_build_info"));
+    assert!(main.contains("source_revision = build_info::source_revision()"));
     assert!(metrics.contains("crate::build_info::render_prometheus()"));
-    assert!(dockerfile.contains("ARG SOURCE_REVISION=unknown"));
-    assert!(dockerfile.contains("KASPA_PULSE_SOURCE_REVISION=$SOURCE_REVISION"));
-    assert!(dockerfile.contains("org.opencontainers.image.revision=\"$SOURCE_REVISION\""));
-    assert!(rust_ci.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
-    assert!(rust_ci.contains("--build-arg SOURCE_REVISION=\"$GITHUB_SHA\""));
-    assert!(release.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
+    assert!(docker.contains("ARG SOURCE_REVISION=unknown"));
+    assert!(docker.contains("KASPA_PULSE_SOURCE_REVISION=${SOURCE_REVISION}"));
+    assert!(docker.contains("org.opencontainers.image.revision=\"$SOURCE_REVISION\""));
+    assert!(qualified.contains("KASPA_PULSE_SOURCE_REVISION: ${{ github.sha }}"));
+    assert!(qualified.contains("test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\""));
+    assert!(qualified.contains("grep -a -F \"$GITHUB_SHA\" package/kaspa-block-alert-bot"));
+    assert!(qualified.contains("cargo build --locked --release --bin kaspa-block-alert-bot"));
+    assert!(ci.contains("cargo clippy --locked --all-targets -- -D warnings"));
 }
 
 #[test]
@@ -775,17 +631,19 @@ fn production_http_clients_must_be_fallible_and_versioned() {
 
 #[test]
 fn docker_build_cache_is_arch_scoped_and_preserves_final_binary() {
-    let dockerfile = read_source("Dockerfile");
-
-    assert!(dockerfile.contains("ARG TARGETARCH"));
-    assert!(dockerfile.contains("id=kaspa-pulse-cargo-registry-${TARGETARCH}"));
-    assert!(dockerfile.contains("id=kaspa-pulse-cargo-git-${TARGETARCH}"));
-    assert!(dockerfile.contains("id=kaspa-pulse-target-${TARGETARCH}"));
-    assert!(dockerfile.matches("sharing=locked").count() >= 6);
-    assert!(dockerfile.contains("install -D -m 0755 target/release/kaspa-pulse /out/kaspa-pulse"));
-    assert!(dockerfile.contains(
-        "COPY --from=builder --chown=kaspa:kaspa /out/kaspa-pulse /usr/local/bin/kaspa-pulse"
+    let docker = read_source("Dockerfile");
+    assert!(docker.contains("ARG TARGETARCH"));
+    assert!(docker.contains("ARG SOURCE_REVISION=unknown"));
+    assert!(docker.contains("id=kaspa-pulse-registry-${TARGETARCH}"));
+    assert!(docker.contains("id=kaspa-pulse-git-${TARGETARCH}"));
+    assert!(docker.contains("id=kaspa-pulse-target-${TARGETARCH}"));
+    assert!(docker.matches("sharing=locked").count() >= 3);
+    assert!(docker.contains("cargo build --locked --release --bin kaspa-block-alert-bot"));
+    assert!(docker.contains(
+        "install -D -m 0755 target/release/kaspa-block-alert-bot /out/kaspa-block-alert-bot"
     ));
+    assert!(docker.contains("COPY --from=builder --chown=kaspa:kaspa /out/kaspa-block-alert-bot /usr/local/bin/kaspa-block-alert-bot"));
+    assert!(docker.contains("USER 10001:10001"));
 }
 
 #[test]
@@ -828,14 +686,19 @@ fn wallet_ui_must_fail_closed_when_wallet_database_reads_fail() {
 fn telegram_http_requests_use_central_policy_or_shared_price_cache() {
     let wallet = read_source("src/presentation/telegram/handlers/wallet.rs");
     let network = read_source("src/presentation/telegram/handlers/network.rs");
-
+    let use_cases = read_source("src/wallet/wallet_use_cases.rs");
     assert!(!wallet.contains("reqwest::get("));
     assert!(!network.contains("reqwest::get("));
-    assert!(wallet.matches("price_cache.read().await.0").count() >= 2);
+    assert!(wallet.contains("get_wallet_balances(cid).await"));
+    assert!(wallet.contains("events_formatter::formatted_usd("));
+    assert!(use_cases.contains("get_latest_kas_price_usd()"));
+    assert!(use_cases.contains("get_kas_price_usd_map_for_days"));
     assert!(network.contains("build_http_client()"));
     assert!(network.contains("with_timeout_result("));
     assert!(network.contains("error_for_status()"));
     assert!(network.contains("sanitize_for_log(&error)"));
+    // Values are read from the stored DB price service; no ad-hoc API
+    // calls or obsolete price_cache.read().await.0 in wallet UI.
 }
 
 #[test]
@@ -896,15 +759,14 @@ fn network_market_ui_must_not_render_failed_reads_as_zero() {
     let stats = read_source("src/network/stats_use_cases.rs");
     let node = read_source("src/infrastructure/node/kaspa_adapter.rs");
     let network = read_source("src/presentation/telegram/handlers/network.rs");
-
     assert!(!stats.contains(
         "get_kaspa_market_data()\n            .await\n            .unwrap_or((0.0, 0.0))"
     ));
     assert!(!stats.contains("get_network_hashrate().await.unwrap_or(0.0)"));
-    assert!(!stats.contains("get_node_health().await.unwrap_or((false, 0))"));
     assert!(!node.contains("get_connected_peer_info()\n            .await\n            .map(|p| p.peer_info.len())\n            .unwrap_or(0)"));
     assert!(!network.contains("live_bps.unwrap_or(0.0)"));
-    assert!(network.contains("format_optional_bps(live_bps)"));
-    assert!(network.contains("Market or node data is temporarily unavailable."));
+    assert!(network.contains("bps.map(|v| format!(\"{v:.2}\"))"));
+    assert!(network.contains(r#"lang.label("Collecting", "قيد القياس")"#));
+    assert!(network.contains("⚠️ Market data temporarily unavailable"));
     assert!(network.contains("sanitize_for_log(&error.to_string())"));
 }

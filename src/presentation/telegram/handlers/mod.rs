@@ -104,6 +104,7 @@ fn maintenance_allows_command(command: &Command) -> bool {
         command,
         Command::Start
             | Command::Help
+            | Command::Version
             | Command::Remove(_)
             | Command::List
             | Command::Blocks
@@ -128,6 +129,7 @@ fn maintenance_allows_callback(data: &str) -> bool {
             | "cmd_remove_wallets"
             | "cmd_start"
             | "cmd_help"
+            | "ui:release"
             | "cmd_list"
             | "cmd_blocks"
             | "refresh_blocks"
@@ -447,6 +449,19 @@ pub fn handle_command(
                     .await;
             }
 
+            Command::Version => {
+                use crate::presentation::telegram::menus::{TelegramMenus, user_language};
+                let lang = user_language(&app_context.pool, actor_user_id as i64).await;
+                let card = crate::build_info::release_card(lang, is_admin);
+                let _ = crate::utils::send_logged_message(
+                    &bot,
+                    msg.chat.id,
+                    Some(msg.id),
+                    card,
+                    Some(TelegramMenus::release_markup(lang, is_admin)),
+                )
+                .await;
+            }
             Command::Help => {
                 use crate::presentation::telegram::menus::{Language, user_language};
                 let lang = user_language(&app_context.pool, actor_user_id as i64).await;
@@ -985,6 +1000,19 @@ pub async fn handle_callback(
             }
             lang = Language::from_db(selected);
             sync_private_native_commands(&bot, identity, callback_is_admin, lang).await;
+        }
+        // The version card owns a String, whereas ordinary menu titles are
+        // borrowed literals; render it separately without cloning every menu.
+        if data == "ui:release" {
+            let _ = bot.answer_callback_query(q.id.clone()).await;
+            edit_callback_state(
+                &bot,
+                &q,
+                crate::build_info::release_card(lang, callback_is_admin),
+                TelegramMenus::release_markup(lang, callback_is_admin),
+            )
+            .await;
+            return Ok(());
         }
         let (title, markup) = match data.as_str() {
             "ui:home" | "ui:lang:en" | "ui:lang:ar" => (
@@ -2213,6 +2241,7 @@ mod callback_execution_tests {
         for command in [
             Command::Start,
             Command::Help,
+            Command::Version,
             Command::Remove("kaspa:test".to_string()),
             Command::List,
             Command::Blocks,
@@ -2266,6 +2295,7 @@ mod callback_execution_tests {
             "cancel_action",
             "cmd_start",
             "cmd_help",
+            "ui:release",
             "cmd_wallets",
             "cmd_list",
             "cmd_blocks",

@@ -236,6 +236,7 @@ where
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    build_info::mark_process_started();
     install_rustls_crypto_provider()?;
     dotenv().ok();
 
@@ -277,6 +278,8 @@ async fn main() -> anyhow::Result<()> {
     info!(
         version = build_info::VERSION,
         source_revision = build_info::source_revision(),
+        git_commit = build_info::git_commit(),
+        build_utc = build_info::build_utc(),
         "Kaspa Pulse starting."
     );
 
@@ -343,6 +346,9 @@ async fn main() -> anyhow::Result<()> {
     // Fail-closed: an independently resolved public PNN standby is opt-in,
     // and never uses the old DNS/KAS local node paths.
     let mut standby_node_provider: Option<Arc<KaspaRpcAdapter>> = None;
+    // OP067: five individually-qualified public PNN endpoints for the
+    // transactional UTXO reader. Do not change other RPC consumers here.
+    let mut five_pnn_sources: Option<Vec<Arc<KaspaRpcAdapter>>> = None;
 
     tracing::info!("[SYSTEM] Running node pre-flight diagnostic with safe timeouts.");
     let preflight = tokio::time::timeout(
@@ -397,20 +403,114 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if std::env::var("KASPA_PNN_DISTINCT_STANDBY").as_deref() == Ok("1") {
+    if std::env::var("KASPA_PNN_FIVE_WAY_POOL").as_deref() == Ok("1") {
+        use kaspa_rpc_core::api::rpc::RpcApi as _;
+        use std::collections::HashSet;
+        let qualified = tokio::time::timeout(std::time::Duration::from_secs(95), async {
+            // OP068: reward PNN pool is independent of the primary
+            // subscription/ancillary wRPC connection. The latter may be
+            // unresolved or disconnected at boot and must never prevent
+            // five independently pinned and validated public reward sources.
+            let resolver = kaspa_wrpc_client::Resolver::default();
+            let mut seen_urls: HashSet<String> = HashSet::new();
+            let mut sources: Vec<Arc<KaspaRpcAdapter>> = Vec::with_capacity(5);
+            for _ in 0..45 {
+                if sources.len() >= 5 {
+                    break;
+                }
+                // Every public source must be a distinct URL. A URL that
+                // failed qualification is not silently retried forever.
+                let url = match tokio::time::timeout(
+                    std::time::Duration::from_secs(6),
+                    resolver.get_url(kaspa_wrpc_client::WrpcEncoding::Borsh, network_id),
+                )
+                .await
+                {
+                    Ok(Ok(url)) if seen_urls.insert(url.clone()) => url,
+                    _ => continue,
+                };
+                let alternate_client = kaspa_wrpc_client::KaspaRpcClient::new(
+                    kaspa_wrpc_client::WrpcEncoding::Borsh,
+                    Some(&url),
+                    None,
+                    Some(network_id),
+                    None,
+                )?;
+                if !matches!(
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(9),
+                        alternate_client.connect(Some(
+                            kaspa_wrpc_client::client::ConnectOptions::blocking_fallback()
+                        )),
+                    )
+                    .await,
+                    Ok(Ok(_))
+                ) {
+                    continue;
+                }
+                let qualified = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+                    let info = alternate_client.get_server_info().await?;
+                    let peers = alternate_client
+                        .get_connected_peer_info()
+                        .await?
+                        .peer_info
+                        .len();
+                    Ok::<_, kaspa_rpc_core::RpcError>((info, peers))
+                })
+                .await;
+                let is_eligible = matches!(qualified,
+                    Ok(Ok((ref info, peers)))
+                    if info.network_id.to_string() == "mainnet"
+                       && info.is_synced && info.has_utxo_index
+                       && info.virtual_daa_score > 0 && peers > 0
+                );
+                if is_eligible {
+                    sources.push(Arc::new(KaspaRpcAdapter::new_pinned(
+                        Arc::new(alternate_client),
+                        url.clone(),
+                    )));
+                } else {
+                    let _ = alternate_client.disconnect().await;
+                }
+            }
+            anyhow::ensure!(
+                sources.len() == 5,
+                "Five distinct qualified public PNN nodes unavailable"
+            );
+            Ok::<Vec<Arc<KaspaRpcAdapter>>, anyhow::Error>(sources)
+        })
+        .await;
+        match qualified {
+            Ok(Ok(sources)) => {
+                // OP075: reward source zero may be hot-replaced later.
+                // Do NOT retain a stale Arc just to signal availability to
+                // the unrelated ancillary primary node monitor.
+                crate::infrastructure::metrics::set_pnn_standby_qualified(true);
+                crate::infrastructure::metrics::set_pnn_pool_size(sources.len());
+                tracing::info!(
+                    sources = sources.len(),
+                    "[PNN POOL] Five distinct indexed synced public PNN sources qualified."
+                );
+                five_pnn_sources = Some(sources);
+            }
+            Ok(Err(error)) => tracing::error!(error=%error,
+                "[PNN POOL] Five-source admission rejected; no multi-source claim."),
+            Err(_) => tracing::error!(
+                "[PNN POOL] Five-source qualification timed out; no multi-source claim."
+            ),
+        }
+    } else if std::env::var("KASPA_PNN_DISTINCT_STANDBY").as_deref() == Ok("1") {
         use kaspa_rpc_core::api::rpc::RpcApi as _;
         let qualified = tokio::time::timeout(std::time::Duration::from_secs(38), async {
             let primary_url = node_provider
                 .client
                 .url()
                 .ok_or_else(|| anyhow::anyhow!("Primary public PNN URL unavailable"))?;
-            let primary_health = node_provider.get_server_info().await?;
-            anyhow::ensure!(
-                primary_health.network_id.to_string() == "mainnet"
-                    && primary_health.is_synced
-                    && primary_health.has_utxo_index,
-                "Primary not on synced indexed mainnet"
-            );
+            // OP066: Primary can be down precisely when a standby is needed.
+            // Qualify the standby independently against mainnet/index/sync;
+            // source failover checks primary eligibility on every scan.
+            // Never require the primary to be healthy to discover an alternate.
+
             let resolver = kaspa_wrpc_client::Resolver::default();
             let mut distinct_url = None;
             for _ in 0..4 {
@@ -468,6 +568,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(
                     "[PNN STANDBY] Independent public endpoint qualified for UTXO-only failover."
                 );
+                crate::infrastructure::metrics::set_pnn_standby_qualified(true);
                 standby_node_provider = Some(alternate);
             }
             Ok(Err(error)) => tracing::warn!(error=%error,
@@ -673,7 +774,10 @@ async fn main() -> anyhow::Result<()> {
     crate::presentation::telegram::workers::utxo_monitor::start_utxo_monitor(
         bot.clone(),
         node_provider.clone(),
-        standby_node_provider.clone(),
+        crate::presentation::telegram::workers::utxo_monitor::PnnSourceCandidates {
+            standby: standby_node_provider.clone(),
+            five_way_sources: five_pnn_sources.clone(),
+        },
         db_repo.clone(),
         app_context.live_sync_enabled.clone(),
         cancel_token.clone(),
@@ -689,7 +793,7 @@ async fn main() -> anyhow::Result<()> {
         (*app_context).clone(),
         bot.clone(),
         cancel_token.clone(),
-        standby_node_provider.clone(),
+        standby_node_provider.is_some() || five_pnn_sources.is_some(),
     );
 
     crate::infrastructure::external_services::system::spawn_price_monitor(
